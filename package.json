@@ -1,0 +1,20 @@
+{
+  "name": "aks-elite-dental-management",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build:types": "npm run build --workspace=@aks/shared-types",
+    "dev:api": "npm run start:dev --workspace=aks-api",
+    "dev:web": "npm run dev --workspace=aks-web",
+    "build": "npm run build:types && npm run build --workspace=aks-api && npm run build --workspace=aks-web",
+    "test:api": "npm run test --workspace=aks-api",
+    "test:web": "npm run test --workspace=aks-web"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

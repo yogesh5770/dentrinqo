@@ -1,0 +1,29 @@
+# ==============================================================================
+# Off-Site Database Backup Configuration Template
+# Path: /etc/dental-backup.conf (POSIX 0600, owned by root:root or postgres:postgres)
+# ==============================================================================
+
+# Enable off-site replication to S3-compatible object storage
+S3_ENABLED="true"
+
+# S3 Bucket destination (e.g., AWS S3, Cloudflare R2, MinIO, Wasabi, Backblaze B2)
+S3_DESTINATION="s3://aks-dental-offsite-backups"
+
+# S3 Custom Endpoint URL (Leave blank for AWS standard, specify for R2/MinIO/Wasabi/B2)
+# Example for Cloudflare R2: https://<account_id>.r2.cloudflarestorage.com
+# Example for Wasabi: https://s3.ap-southeast-1.wasabisys.com
+S3_ENDPOINT_URL=""
+
+# S3 Storage Region
+S3_REGION="ap-south-1"
+
+# Access Credentials (Restricted IAM user with PutObject permission only)
+AWS_ACCESS_KEY_ID="AKIA_SAMPLE_KEY_EXAMPLE"
+AWS_SECRET_ACCESS_KEY="SAMPLE_SECRET_ACCESS_KEY_EXAMPLE"
+
+# AES-256 Symmetric Client-Side Encryption Passphrase (PBKDF2)
+# The backup dump is encrypted before leaving the server.
+BACKUP_ENCRYPT_PASSPHRASE="SECURE_OFFSITE_ENCRYPTION_KEY_EXAMPLE"
+
+# Alerting Webhook (Triggered immediately upon dump, verify, encrypt, or upload failure)
+ALERT_WEBHOOK_URL="https://hooks.slack.com/services/EXAMPLE/WEBHOOK/URL"

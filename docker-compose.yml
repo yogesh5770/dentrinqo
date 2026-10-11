@@ -1,0 +1,39 @@
+﻿# AKS Elite Dental Clinic Management System
+# Production / Local Docker Compose configuration
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aks_dental_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-aks_admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-aks_secure_password}
+      POSTGRES_DB: ${DB_NAME:-aks_elite_dental}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aks_admin -d aks_elite_dental"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:RELEASE.2024-01-31T20-20-33Z
+    container_name: aks_dental_minio
+    restart: always
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-aks_minio_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-aks_minio_secret_key}
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+volumes:
+  pgdata:
+  miniodata:
