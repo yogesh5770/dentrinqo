@@ -1,4 +1,4 @@
-import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { AuthService } from '../auth.service';
 import { Request } from 'express';
 
@@ -29,6 +29,15 @@ export class AuthGuard implements CanActivate {
 
     // Attach user payload to request
     (request as any).user = payload;
+
+    // Tenant mismatch check: Ensure user session clinic matches host-resolved tenant
+    const hostClinicId = (request as any).clinicId || ((request as any).tenantClinic && (request as any).tenantClinic.id);
+    if (hostClinicId && payload.clinicId && hostClinicId !== payload.clinicId) {
+      if (payload.role !== 'SUPER_ADMIN') {
+        throw new ForbiddenException('Access denied: Authenticated session clinic does not match the tenant resolved from host.');
+      }
+    }
+
     return true;
   }
 }

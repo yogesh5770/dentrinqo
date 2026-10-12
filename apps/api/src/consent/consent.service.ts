@@ -59,56 +59,60 @@ export class ConsentService {
   }
 
   async findByPatient(clinicId: string, patientId: string) {
-    const patient = await this.prisma.patient.findFirst({
-      where: { id: patientId, clinicId },
-    });
-    if (!patient) throw new NotFoundException('Patient record not found');
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      const patient = await tx.patient.findFirst({
+        where: { id: patientId, clinicId },
+      });
+      if (!patient) throw new NotFoundException('Patient record not found');
 
-    return this.prisma.patientConsent.findMany({
-      where: { clinicId, patientId },
-      orderBy: { signedAt: 'desc' },
+      return tx.patientConsent.findMany({
+        where: { clinicId, patientId },
+        orderBy: { signedAt: 'desc' },
+      });
     });
   }
 
   async create(clinicId: string, dto: CreateConsentDto, actor: any, ip?: string) {
-    const patient = await this.prisma.patient.findFirst({
-      where: { id: dto.patientId, clinicId },
-    });
-    if (!patient) throw new NotFoundException('Patient record not found');
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      const patient = await tx.patient.findFirst({
+        where: { id: dto.patientId, clinicId },
+      });
+      if (!patient) throw new NotFoundException('Patient record not found');
 
-    const consent = await this.prisma.patientConsent.create({
-      data: {
+      const consent = await tx.patientConsent.create({
+        data: {
+          clinicId,
+          patientId: dto.patientId,
+          consentType: dto.consentType,
+          title: dto.title.trim(),
+          termsText: dto.termsText.trim(),
+          signerName: dto.signerName.trim(),
+          signerRelationship: dto.signerRelationship || 'SELF',
+          signerPhone: dto.signerPhone?.trim() || patient.phone,
+          signatureBase64: dto.signatureBase64,
+          doctorName: dto.doctorName?.trim() || actor.fullName || 'Doctor',
+          ipAddress: ip || null,
+          signedAt: new Date(),
+          version: '1.0',
+        },
+      });
+
+      await this.auditService.log({
         clinicId,
-        patientId: dto.patientId,
-        consentType: dto.consentType,
-        title: dto.title.trim(),
-        termsText: dto.termsText.trim(),
-        signerName: dto.signerName.trim(),
-        signerRelationship: dto.signerRelationship || 'SELF',
-        signerPhone: dto.signerPhone?.trim() || patient.phone,
-        signatureBase64: dto.signatureBase64,
-        doctorName: dto.doctorName?.trim() || actor.fullName,
-        ipAddress: ip || null,
-        signedAt: new Date(),
-        version: '1.0',
-      },
-    });
+        actorId: actor.userId || actor.id,
+        actorRole: actor.role || 'STAFF',
+        action: 'PATIENT_CONSENT_SIGNED',
+        entityType: 'PatientConsent',
+        entityId: consent.id,
+        details: {
+          patientUhid: patient.uhid,
+          consentType: consent.consentType,
+          signerName: consent.signerName,
+          relationship: consent.signerRelationship,
+        },
+      }, tx);
 
-    await this.auditService.log({
-      clinicId,
-      actorId: actor.userId,
-      actorRole: actor.role,
-      action: 'PATIENT_CONSENT_SIGNED',
-      entityType: 'PatientConsent',
-      entityId: consent.id,
-      details: {
-        patientUhid: patient.uhid,
-        consentType: consent.consentType,
-        signerName: consent.signerName,
-        relationship: consent.signerRelationship,
-      },
+      return consent;
     });
-
-    return consent;
   }
 }

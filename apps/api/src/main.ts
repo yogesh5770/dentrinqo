@@ -16,6 +16,10 @@ async function bootstrap() {
 
   const app = await NestFactory.create(AppModule);
 
+  // Trust proxy for Nginx headers (X-Forwarded-For, X-Forwarded-Host, Host)
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.set('trust proxy', 1);
+
   // Security & Middleware
   app.use(cookieParser(process.env.COOKIE_SECRET || 'aks-cookie-secret-2026'));
 

@@ -33,6 +33,8 @@ export interface User {
     gstin?: string;
     isDoctorVerified?: boolean;
     isBillingVerified?: boolean;
+    isOnLeave?: boolean;
+    leaveReason?: string;
   };
 }
 

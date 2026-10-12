@@ -32,8 +32,11 @@ model Clinic {
   lobbyCodeWindowSeconds  Int       @default(300) // 5 minutes (300s)
   requireLobbyCode        Boolean   @default(true)
   requireDeskConfirmation Boolean   @default(true)
+  allowPublicPhoneLookup  Boolean   @default(true)
   isDoctorVerified        Boolean   @default(false)
   isBillingVerified       Boolean   @default(false)
+  isOnLeave               Boolean   @default(false)
+  leaveReason             String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -175,6 +178,18 @@ model Patient {
   mergedAt              DateTime?
   mergedById            String?
 
+  // Registration Origin & Verification
+  source                String    @default("RECEPTION") // ONLINE, RECEPTION, SELF_QR
+  needsVerification     Boolean   @default(false)
+  verifiedAt            DateTime?
+  verifiedByStaffId     String?
+
+  // Patient Consent
+  consentDataUse        Boolean   @default(false)
+  consentWhatsapp       Boolean   @default(false)
+  consentVersion        String?   @default("v1.0")
+  consentAt             DateTime?
+
   isArchived            Boolean   @default(false)
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
@@ -196,6 +211,7 @@ model Patient {
   @@index([clinicId, phone])
   @@index([clinicId, fullName])
   @@index([clinicId, legacySlNo])
+  @@index([clinicId, needsVerification])
   @@index([uhid])
   @@index([accountId])
 }
@@ -221,6 +237,10 @@ model Appointment {
   confirmedAtDeskAt DateTime?
   confirmedByStaffId String?
   checkInSource   String?  @default("DESK") // "SELF_QR", "DESK", "PHONE"
+  tokenNumber     Int?
+  trackingCode    String?   @unique
+  expectedChairNumber Int?
+  preferredDentistId String?
   notes           String?
   isReappearance  Boolean  @default(false)
   legacySlNo      String?
@@ -232,6 +252,8 @@ model Appointment {
 
   @@index([clinicId, scheduledStart])
   @@index([clinicId, status, scheduledStart])
+  @@index([clinicId, tokenNumber])
+  @@index([clinicId, trackingCode])
   @@index([dentistId, scheduledStart, scheduledEnd])
   @@index([patientId])
 }

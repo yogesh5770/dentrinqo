@@ -103,171 +103,194 @@ export class PatientAuthService {
 
     // Resolve clinic
     const clinic = await this.prisma.clinic.findFirst({
-      where: dto.clinicCode ? { code: dto.clinicCode.toUpperCase() } : {},
+      where: dto.clinicCode ? { code: dto.clinicCode.toUpperCase() } : { status: 'ACTIVE' },
     });
     if (!clinic) {
       throw new NotFoundException('Clinic record could not be identified');
     }
 
-    // Check if account already exists on this phone
-    const existingAccount = await this.prisma.account.findUnique({
-      where: {
-        clinicId_phone: {
-          clinicId: clinic.id,
-          phone: normPhone,
-        },
-      },
-    });
-
-    if (existingAccount && existingAccount.passwordHash) {
-      throw new ConflictException(
-        'An account already exists for this mobile number. Please log in with your password or use forgot password.',
-      );
-    }
-
     const passwordHash = await hash(dto.password);
 
-    // Create or upgrade guest account
-    let account = existingAccount;
-    if (!account) {
-      account = await this.prisma.account.create({
-        data: {
+    return this.prisma.forTenant(clinic.id, async (tx) => {
+      // Check if account already exists on this phone
+      const existingAccount = await tx.account.findUnique({
+        where: {
+          clinicId_phone: {
+            clinicId: clinic.id,
+            phone: normPhone,
+          },
+        },
+      });
+
+      if (existingAccount && existingAccount.passwordHash) {
+        throw new ConflictException(
+          'An account already exists for this mobile number. Please log in with your password or use forgot password.',
+        );
+      }
+
+      // Create or upgrade guest account
+      let account = existingAccount;
+      if (!account) {
+        account = await tx.account.create({
+          data: {
+            clinicId: clinic.id,
+            phone: normPhone,
+            passwordHash,
+            consentDataUse: dto.consentDataUse,
+            consentWhatsapp: dto.consentWhatsapp ?? true,
+            consentVersion: 'v1.0-dpdp',
+            consentAt: new Date(),
+          },
+        });
+      } else {
+        account = await tx.account.update({
+          where: { id: account.id },
+          data: {
+            passwordHash,
+            consentDataUse: dto.consentDataUse,
+            consentWhatsapp: dto.consentWhatsapp ?? true,
+            consentVersion: 'v1.0-dpdp',
+            consentAt: new Date(),
+            failedLoginCount: 0,
+            lockedUntil: null,
+          },
+        });
+      }
+
+      // Check if a patient record with this phone already exists (e.g. created by reception)
+      const existingPatients = await tx.patient.findMany({
+        where: {
           clinicId: clinic.id,
-          phone: normPhone,
-          passwordHash,
-          consentDataUse: dto.consentDataUse,
-          consentWhatsapp: dto.consentWhatsapp ?? true,
-          consentVersion: 'v1.0-dpdp',
-          consentAt: new Date(),
-        },
-      });
-    } else {
-      account = await this.prisma.account.update({
-        where: { id: account.id },
-        data: {
-          passwordHash,
-          consentDataUse: dto.consentDataUse,
-          consentWhatsapp: dto.consentWhatsapp ?? true,
-          consentVersion: 'v1.0-dpdp',
-          consentAt: new Date(),
-          failedLoginCount: 0,
-          lockedUntil: null,
-        },
-      });
-    }
-
-    // Check if a patient record with this phone already exists (e.g. created by reception)
-    const existingPatients = await this.prisma.patient.findMany({
-      where: {
-        clinicId: clinic.id,
-        phone: { contains: normPhone.slice(-10) },
-        isArchived: false,
-      },
-    });
-
-    let primaryPatient: any = null;
-    let matchedExisting = false;
-
-    // Check for exact Name match among existing unlinked patients
-    const cleanSignupName = dto.fullName.trim().toLowerCase();
-    const candidate = existingPatients.find(
-      p => !p.accountId && p.fullName.trim().toLowerCase() === cleanSignupName,
-    );
-
-    if (candidate) {
-      // Link existing reception patient
-      primaryPatient = await this.prisma.patient.update({
-        where: { id: candidate.id },
-        data: {
-          accountId: account.id,
-          relationToAccount: 'SELF',
-          dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : candidate.dateOfBirth,
-          age: dto.age ?? candidate.age,
-          gender: dto.gender,
-        },
-      });
-      matchedExisting = true;
-    } else {
-      // Create initial SELF patient profile
-      const year = new Date().getFullYear();
-      const patientCount = await this.prisma.patient.count({ where: { clinicId: clinic.id } });
-      const uhid = `${clinic.code}-${year}-${String(patientCount + 1).padStart(4, '0')}`;
-
-      primaryPatient = await this.prisma.patient.create({
-        data: {
-          clinicId: clinic.id,
-          accountId: account.id,
-          relationToAccount: 'SELF',
-          uhid,
-          fullName: dto.fullName.trim(),
-          phone: normPhone,
-          gender: dto.gender,
-          dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
-          age: dto.age ?? null,
-          dobApproximate: !dto.dateOfBirth && !!dto.age,
-          notes: 'Self-registered patient account via web portal',
+          phone: { contains: normPhone.slice(-10) },
+          isArchived: false,
         },
       });
 
-      // If other patients exist on this phone with different names, flag them as possible duplicates for reception
-      for (const ep of existingPatients) {
-        if (!ep.accountId && ep.id !== primaryPatient.id) {
-          await this.prisma.patient.update({
-            where: { id: ep.id },
-            data: { possibleDuplicate: true },
-          });
+      let primaryPatient: any = null;
+      let matchedExisting = false;
+
+      // Check for exact Name match among existing unlinked patients
+      const cleanSignupName = dto.fullName.trim().toLowerCase();
+      const candidate = existingPatients.find(
+        p => !p.accountId && p.fullName.trim().toLowerCase() === cleanSignupName,
+      );
+
+      if (candidate) {
+        // Link existing reception patient
+        primaryPatient = await tx.patient.update({
+          where: { id: candidate.id },
+          data: {
+            accountId: account.id,
+            relationToAccount: 'SELF',
+            dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : candidate.dateOfBirth,
+            age: dto.age ?? candidate.age,
+            gender: dto.gender,
+          },
+        });
+        matchedExisting = true;
+      } else {
+        // Create initial SELF patient profile
+        const year = new Date().getFullYear();
+        const patientCount = await tx.patient.count({ where: { clinicId: clinic.id } });
+        const uhid = `${clinic.code}-${year}-${String(patientCount + 1).padStart(4, '0')}`;
+
+        primaryPatient = await tx.patient.create({
+          data: {
+            clinicId: clinic.id,
+            accountId: account.id,
+            relationToAccount: 'SELF',
+            uhid,
+            fullName: dto.fullName.trim(),
+            phone: normPhone,
+            gender: dto.gender,
+            dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
+            age: dto.age ?? null,
+            dobApproximate: !dto.dateOfBirth && !!dto.age,
+            notes: 'Self-registered patient account via web portal',
+          },
+        });
+
+        // If other patients exist on this phone with different names, flag them as possible duplicates for reception
+        for (const ep of existingPatients) {
+          if (!ep.accountId && ep.id !== primaryPatient.id) {
+            await tx.patient.update({
+              where: { id: ep.id },
+              data: { possibleDuplicate: true },
+            });
+          }
         }
       }
-    }
 
-    const token = this.createPatientToken(account);
-    return {
-      success: true,
-      token,
-      account: {
-        id: account.id,
-        phone: account.phone,
-      },
-      patient: {
-        id: primaryPatient.id,
-        uhid: primaryPatient.uhid,
-        fullName: primaryPatient.fullName,
-        relationToAccount: primaryPatient.relationToAccount,
-      },
-      matchedExisting,
-    };
+      const token = this.createPatientToken(account);
+      return {
+        success: true,
+        token,
+        account: {
+          id: account.id,
+          phone: account.phone,
+        },
+        patient: {
+          id: primaryPatient.id,
+          uhid: primaryPatient.uhid,
+          fullName: primaryPatient.fullName,
+          relationToAccount: primaryPatient.relationToAccount,
+        },
+        matchedExisting,
+      };
+    });
   }
 
   // Patient Login with Lockout Protection
   async login(dto: PatientLoginDto) {
     const normPhone = normalizePhone(dto.phone);
 
-    const clinic = await this.prisma.clinic.findFirst({
-      where: dto.clinicCode ? { code: dto.clinicCode.toUpperCase() } : {},
-    });
-    if (!clinic) {
-      throw new NotFoundException('Clinic record could not be identified');
+    const findAccountInClinic = async (cId: string) => {
+      return this.prisma.forTenant(cId, async (tx) => {
+        return tx.account.findUnique({
+          where: {
+            clinicId_phone: {
+              clinicId: cId,
+              phone: normPhone,
+            },
+          },
+          include: {
+            patients: {
+              where: { isArchived: false },
+              orderBy: { createdAt: 'asc' },
+            },
+          },
+        });
+      });
+    };
+
+    let account: any = null;
+    let targetClinicId: string | null = null;
+
+    if (dto.clinicCode) {
+      const clinic = await this.prisma.clinic.findFirst({
+        where: { code: dto.clinicCode.toUpperCase() },
+      });
+      if (clinic) {
+        account = await findAccountInClinic(clinic.id);
+        if (account) targetClinicId = clinic.id;
+      }
     }
 
-    const account = await this.prisma.account.findUnique({
-      where: {
-        clinicId_phone: {
-          clinicId: clinic.id,
-          phone: normPhone,
-        },
-      },
-      include: {
-        patients: {
-          where: { isArchived: false },
-          orderBy: { createdAt: 'asc' },
-        },
-      },
-    });
+    if (!account) {
+      const clinics = await this.prisma.clinic.findMany({ select: { id: true } });
+      for (const c of clinics) {
+        account = await findAccountInClinic(c.id);
+        if (account) {
+          targetClinicId = c.id;
+          break;
+        }
+      }
+    }
 
     // Identical error response whether phone exists or password fails to prevent user enumeration
     const genericAuthError = new UnauthorizedException('Invalid mobile number or password.');
 
-    if (!account || !account.passwordHash) {
+    if (!account || !account.passwordHash || !targetClinicId) {
       throw genericAuthError;
     }
 
@@ -288,12 +311,14 @@ export class PatientAuthService {
         this.logger.warn(`Account locked for phone ${normPhone} after 5 failed login attempts`);
       }
 
-      await this.prisma.account.update({
-        where: { id: account.id },
-        data: {
-          failedLoginCount: newFailedCount,
-          lockedUntil,
-        },
+      await this.prisma.forTenant(targetClinicId, async (tx) => {
+        return tx.account.update({
+          where: { id: account.id },
+          data: {
+            failedLoginCount: newFailedCount,
+            lockedUntil,
+          },
+        });
       });
 
       if (newFailedCount >= 5) {
@@ -305,13 +330,15 @@ export class PatientAuthService {
     }
 
     // Successful login: reset failed counters and update lastLoginAt
-    await this.prisma.account.update({
-      where: { id: account.id },
-      data: {
-        failedLoginCount: 0,
-        lockedUntil: null,
-        lastLoginAt: new Date(),
-      },
+    await this.prisma.forTenant(targetClinicId, async (tx) => {
+      return tx.account.update({
+        where: { id: account.id },
+        data: {
+          failedLoginCount: 0,
+          lockedUntil: null,
+          lastLoginAt: new Date(),
+        },
+      });
     });
 
     const token = this.createPatientToken(account);
@@ -323,7 +350,7 @@ export class PatientAuthService {
         phone: account.phone,
         lastLoginAt: account.lastLoginAt,
       },
-      familyMembers: account.patients.map(p => ({
+      familyMembers: account.patients.map((p: any) => ({
         id: p.id,
         uhid: p.uhid,
         fullName: p.fullName,
@@ -337,16 +364,32 @@ export class PatientAuthService {
   }
 
   // Get Current Account & Family Members
-  async getMe(accountId: string) {
-    const account = await this.prisma.account.findUnique({
-      where: { id: accountId },
-      include: {
-        patients: {
-          where: { isArchived: false },
-          orderBy: { createdAt: 'asc' },
-        },
-      },
-    });
+  async getMe(accountId: string, clinicId?: string) {
+    const resolveAccount = async (cId: string) => {
+      return this.prisma.forTenant(cId, async (tx) => {
+        return tx.account.findUnique({
+          where: { id: accountId },
+          include: {
+            patients: {
+              where: { isArchived: false },
+              orderBy: { createdAt: 'asc' },
+            },
+          },
+        });
+      });
+    };
+
+    let account: any = null;
+    if (clinicId) {
+      account = await resolveAccount(clinicId);
+    } else {
+      const clinics = await this.prisma.clinic.findMany({ select: { id: true } });
+      for (const c of clinics) {
+        account = await resolveAccount(c.id);
+        if (account) break;
+      }
+    }
+
     if (!account) {
       throw new NotFoundException('Account not found');
     }
@@ -355,7 +398,7 @@ export class PatientAuthService {
       id: account.id,
       phone: account.phone,
       lastLoginAt: account.lastLoginAt,
-      familyMembers: account.patients.map(p => ({
+      familyMembers: account.patients.map((p: any) => ({
         id: p.id,
         uhid: p.uhid,
         fullName: p.fullName,
@@ -369,48 +412,71 @@ export class PatientAuthService {
   }
 
   // Add Family Member under Logged-in Account
-  async addFamilyMember(accountId: string, dto: AddFamilyMemberDto) {
-    const account = await this.prisma.account.findUnique({
-      where: { id: accountId },
-      include: { clinic: true },
-    });
-    if (!account) {
+  async addFamilyMember(accountId: string, dto: AddFamilyMemberDto, clinicId?: string) {
+    const findAccount = async (cId: string) => {
+      return this.prisma.forTenant(cId, async (tx) => {
+        return tx.account.findUnique({
+          where: { id: accountId },
+          include: { clinic: true },
+        });
+      });
+    };
+
+    let account: any = null;
+    let targetClinicId = clinicId;
+
+    if (targetClinicId) {
+      account = await findAccount(targetClinicId);
+    } else {
+      const clinics = await this.prisma.clinic.findMany({ select: { id: true } });
+      for (const c of clinics) {
+        account = await findAccount(c.id);
+        if (account) {
+          targetClinicId = c.id;
+          break;
+        }
+      }
+    }
+
+    if (!account || !targetClinicId) {
       throw new NotFoundException('Account not found');
     }
 
-    const year = new Date().getFullYear();
-    const count = await this.prisma.patient.count({ where: { clinicId: account.clinicId } });
-    const uhid = `${account.clinic.code}-${year}-${String(count + 1).padStart(4, '0')}`;
+    return this.prisma.forTenant(targetClinicId, async (tx) => {
+      const year = new Date().getFullYear();
+      const count = await tx.patient.count({ where: { clinicId: targetClinicId } });
+      const uhid = `${account.clinic.code}-${year}-${String(count + 1).padStart(4, '0')}`;
 
-    const newPatient = await this.prisma.patient.create({
-      data: {
-        clinicId: account.clinicId,
-        accountId: account.id,
-        relationToAccount: dto.relationToAccount,
-        uhid,
-        fullName: dto.fullName.trim(),
-        phone: account.phone,
-        gender: dto.gender,
-        dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
-        age: dto.age ?? null,
-        dobApproximate: dto.dobApproximate || (!dto.dateOfBirth && !!dto.age),
-        notes: dto.notes ? `Family member: ${dto.notes}` : `Family member under account ${account.phone}`,
-      },
+      const newPatient = await tx.patient.create({
+        data: {
+          clinicId: targetClinicId,
+          accountId: account.id,
+          relationToAccount: dto.relationToAccount,
+          uhid,
+          fullName: dto.fullName.trim(),
+          phone: account.phone,
+          gender: dto.gender,
+          dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
+          age: dto.age ?? null,
+          dobApproximate: dto.dobApproximate || (!dto.dateOfBirth && !!dto.age),
+          notes: dto.notes ? `Family member: ${dto.notes}` : `Family member under account ${account.phone}`,
+        },
+      });
+
+      return {
+        success: true,
+        patient: {
+          id: newPatient.id,
+          uhid: newPatient.uhid,
+          fullName: newPatient.fullName,
+          relationToAccount: newPatient.relationToAccount,
+          gender: newPatient.gender,
+          age: newPatient.age,
+          dateOfBirth: newPatient.dateOfBirth,
+          dobApproximate: newPatient.dobApproximate,
+        },
+      };
     });
-
-    return {
-      success: true,
-      patient: {
-        id: newPatient.id,
-        uhid: newPatient.uhid,
-        fullName: newPatient.fullName,
-        relationToAccount: newPatient.relationToAccount,
-        gender: newPatient.gender,
-        age: newPatient.age,
-        dateOfBirth: newPatient.dateOfBirth,
-        dobApproximate: newPatient.dobApproximate,
-      },
-    };
   }
 
   // Staff Password Reset (Receptionist or Admin only, with mandatory reason)
@@ -419,42 +485,44 @@ export class PatientAuthService {
       throw new BadRequestException('A valid reason of at least 10 characters is mandatory to reset patient password');
     }
 
-    const account = await this.prisma.account.findUnique({
-      where: { id: accountId },
-    });
-    if (!account) {
-      throw new NotFoundException('Patient account not found');
-    }
+    return this.prisma.forTenant(staffUser.clinicId, async (tx) => {
+      const account = await tx.account.findUnique({
+        where: { id: accountId },
+      });
+      if (!account) {
+        throw new NotFoundException('Patient account not found');
+      }
 
-    const newHash = await hash(dto.newPassword);
-    await this.prisma.account.update({
-      where: { id: accountId },
-      data: {
-        passwordHash: newHash,
-        failedLoginCount: 0,
-        lockedUntil: null,
-      },
-    });
+      const newHash = await hash(dto.newPassword);
+      await tx.account.update({
+        where: { id: accountId },
+        data: {
+          passwordHash: newHash,
+          failedLoginCount: 0,
+          lockedUntil: null,
+        },
+      });
 
-    // Write audit trail
-    await this.auditService.log({
-      clinicId: staffUser.clinicId,
-      actorId: staffUser.userId,
-      actorRole: staffUser.role,
-      action: 'PATIENT_PASSWORD_RESET_BY_STAFF',
-      entityType: 'Account',
-      entityId: account.id,
-      details: {
-        phone: account.phone,
-        reason: dto.reason.trim(),
-        resetBy: staffUser.username || staffUser.email,
-      },
-    });
+      // Write audit trail
+      await this.auditService.log({
+        clinicId: staffUser.clinicId,
+        actorId: staffUser.userId,
+        actorRole: staffUser.role,
+        action: 'PATIENT_PASSWORD_RESET_BY_STAFF',
+        entityType: 'Account',
+        entityId: account.id,
+        details: {
+          phone: account.phone,
+          reason: dto.reason.trim(),
+          resetBy: staffUser.username || staffUser.email,
+        },
+      }, tx);
 
-    return {
-      success: true,
-      message: 'Patient password has been successfully reset by clinic staff.',
-    };
+      return {
+        success: true,
+        message: 'Patient password has been successfully reset by clinic staff.',
+      };
+    });
   }
 
   // Future Extension Point: SMS OTP Login
@@ -471,49 +539,71 @@ export class PatientAuthService {
   }
 
   // Strict IDOR-protected visits query for logged-in account
-  async getMyVisits(accountId: string) {
-    const account = await this.prisma.account.findUnique({
-      where: { id: accountId },
-      include: {
-        patients: {
-          where: { isArchived: false },
-          select: { id: true, fullName: true, uhid: true, relationToAccount: true },
-        },
-      },
-    });
-    if (!account) throw new NotFoundException('Account not found');
+  async getMyVisits(accountId: string, clinicId?: string) {
+    const resolveVisits = async (cId: string) => {
+      return this.prisma.forTenant(cId, async (tx) => {
+        const account = await tx.account.findUnique({
+          where: { id: accountId },
+          include: {
+            patients: {
+              where: { isArchived: false },
+              select: { id: true, fullName: true, uhid: true, relationToAccount: true },
+            },
+          },
+        });
+        if (!account) return null;
 
-    const patientIds = account.patients.map(p => p.id);
-    if (patientIds.length === 0) return [];
+        const patientIds = account.patients.map(p => p.id);
+        if (patientIds.length === 0) return [];
 
-    const appointments = await this.prisma.appointment.findMany({
-      where: {
-        patientId: { in: patientIds },
-      },
-      include: {
-        patient: {
-          select: { id: true, fullName: true, uhid: true, relationToAccount: true },
-        },
-        dentist: {
-          select: { id: true, fullName: true, designation: true },
-        },
-      },
-      orderBy: { scheduledStart: 'desc' },
-      take: 50,
-    });
+        const appointments = await tx.appointment.findMany({
+          where: {
+            clinicId: cId,
+            patientId: { in: patientIds },
+          },
+          include: {
+            patient: {
+              select: { id: true, fullName: true, uhid: true, relationToAccount: true },
+            },
+            dentist: {
+              select: { id: true, fullName: true, designation: true },
+            },
+          },
+          orderBy: { scheduledStart: 'desc' },
+          take: 50,
+        });
 
-    return appointments.map(a => ({
-      id: a.id,
-      patientName: a.patient.fullName,
-      patientUhid: a.patient.uhid,
-      relation: a.patient.relationToAccount || 'SELF',
-      dentistName: a.dentist?.fullName || 'Doctor on Duty',
-      chairNumber: a.chairNumber,
-      scheduledStart: a.scheduledStart,
-      scheduledEnd: a.scheduledEnd,
-      reason: a.reason,
-      status: a.status,
-      notes: a.notes,
-    }));
+        return appointments.map(a => ({
+          id: a.id,
+          patientName: a.patient.fullName,
+          patientUhid: a.patient.uhid,
+          relation: a.patient.relationToAccount || 'SELF',
+          dentistName: a.dentist?.fullName || 'Doctor on Duty',
+          chairNumber: a.chairNumber,
+          scheduledStart: a.scheduledStart,
+          scheduledEnd: a.scheduledEnd,
+          reason: a.reason,
+          status: a.status,
+          notes: a.notes,
+        }));
+      });
+    };
+
+    let visits: any = null;
+    if (clinicId) {
+      visits = await resolveVisits(clinicId);
+    } else {
+      const clinics = await this.prisma.clinic.findMany({ select: { id: true } });
+      for (const c of clinics) {
+        visits = await resolveVisits(c.id);
+        if (visits !== null) break;
+      }
+    }
+
+    if (visits === null) {
+      throw new NotFoundException('Account not found');
+    }
+
+    return visits;
   }
 }

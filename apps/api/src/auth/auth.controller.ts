@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Res, UseGuards, HttpCode, HttpStatus, BadRequestException } from '@nestjs/common';
+import { Controller, Post, Get, Body, Req, Res, UseGuards, HttpCode, HttpStatus, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { Response } from 'express';
 import { AuthService } from './auth.service';
@@ -6,6 +6,7 @@ import { LoginDto } from './dto-login';
 import { AuthGuard } from './guards/auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { resolveUserPermissions } from '@aks/shared-types';
+import { TenantRequest } from '../common/middleware/tenant-context.middleware';
 
 @ApiTags('Authentication')
 @Controller('api/auth')
@@ -19,6 +20,7 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
   async login(
     @Body() dto: LoginDto,
+    @Req() req: TenantRequest,
     @Res({ passthrough: true }) res: Response,
   ) {
     const identifier = dto.emailOrUsername || dto.email || dto.username;
@@ -26,7 +28,7 @@ export class AuthController {
       throw new BadRequestException('Please provide an email or username');
     }
 
-    const user = await this.authService.validateUserCredentials(identifier, dto.password);
+    const user = await this.authService.validateUserCredentials(identifier, dto.password, req.clinicId);
     const token = this.authService.createToken(user);
 
     const isProduction = process.env.NODE_ENV === 'production';
@@ -71,6 +73,8 @@ export class AuthController {
           subdomain: user.clinic.subdomain,
           upiVpa: user.clinic.upiVpa,
           workingHours: user.clinic.workingHours,
+          isOnLeave: (user.clinic as any).isOnLeave ?? false,
+          leaveReason: (user.clinic as any).leaveReason ?? null,
         },
       },
     };

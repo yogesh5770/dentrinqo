@@ -39,7 +39,8 @@ export class TenantContextMiddleware implements NestMiddleware {
       let clinic: any = null;
 
       // 1. Resolve via public hostname using ClinicDomain table
-      const host = req.hostname ? req.hostname.toLowerCase() : '';
+      const rawHost = (req.headers['x-forwarded-host'] as string) || (req.headers['host'] as string) || req.hostname || '';
+      const host = rawHost.split(':')[0].toLowerCase();
       if (!identifier && host) {
         const cachedDomain = TenantContextMiddleware.clinicCache.get(host);
         if (cachedDomain && cachedDomain.expiresAt > Date.now()) {

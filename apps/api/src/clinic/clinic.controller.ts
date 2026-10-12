@@ -14,14 +14,16 @@ export class ClinicController {
   @Get('public-info')
   @ApiOperation({ summary: 'Get public clinic information for booking and public kiosks' })
   async getPublicInfo(@Query('code') code?: string, @Req() req?: any) {
-    const identifier = code || req?.clinicId || req?.headers?.['x-clinic-id'] || req?.headers?.['x-clinic-code'];
+    const rawHost = (req?.headers?.['x-forwarded-host'] || req?.headers?.['host'] || '').split(':')[0].toLowerCase();
+    const identifier = code || req?.clinicId || (req?.tenantClinic && req?.tenantClinic.id) || req?.headers?.['x-clinic-id'] || req?.headers?.['x-clinic-code'] || rawHost;
     return this.clinicService.getPublicInfo(identifier);
   }
 
   @Get('resolve')
   @ApiOperation({ summary: 'Resolve tenant clinic info by host/header' })
   async resolveClinic(@Req() req: any, @Query('code') code?: string) {
-    const identifier = code || req?.clinicId || req?.headers?.['x-clinic-id'] || req?.headers?.['x-clinic-code'];
+    const rawHost = (req?.headers?.['x-forwarded-host'] || req?.headers?.['host'] || '').split(':')[0].toLowerCase();
+    const identifier = code || req?.clinicId || (req?.tenantClinic && req?.tenantClinic.id) || req?.headers?.['x-clinic-id'] || req?.headers?.['x-clinic-code'] || rawHost;
     return this.clinicService.getPublicInfo(identifier);
   }
 
@@ -38,5 +40,16 @@ export class ClinicController {
   @ApiOperation({ summary: 'Update clinic settings (Admin only)' })
   async updateSettings(@CurrentUser() user: any, @Body() body: any) {
     return this.clinicService.updateSettings(user.clinicId, body, user);
+  }
+
+  @Put('toggle-leave')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('CLINIC_ADMIN', 'RECEPTIONIST')
+  @ApiOperation({ summary: 'Toggle clinic holiday / leave status (Admin & Receptionist)' })
+  async toggleLeave(
+    @CurrentUser() user: any,
+    @Body() body: { isOnLeave: boolean; leaveReason?: string },
+  ) {
+    return this.clinicService.toggleLeave(user.clinicId, body.isOnLeave, body.leaveReason, user);
   }
 }

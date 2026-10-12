@@ -11,138 +11,147 @@ export class DentalChartService {
   ) {}
 
   async getPatientChart(clinicId: string, patientId: string) {
-    const patient = await this.prisma.patient.findFirst({
-      where: { id: patientId, clinicId },
-    });
-    if (!patient) throw new NotFoundException('Patient record not found');
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      const patient = await tx.patient.findFirst({
+        where: { id: patientId, clinicId },
+      });
+      if (!patient) throw new NotFoundException('Patient record not found');
 
-    const entries = await this.prisma.dentalChartEntry.findMany({
-      where: { patientId },
-      orderBy: [{ toothNumber: 'asc' }, { createdAt: 'desc' }],
-    });
+      const entries = await tx.dentalChartEntry.findMany({
+        where: { patientId, clinicId },
+        orderBy: [{ toothNumber: 'asc' }, { createdAt: 'desc' }],
+      });
 
-    return entries;
+      return entries;
+    });
   }
 
   async recordCondition(clinicId: string, dto: RecordToothConditionDto, actor: any) {
-    const patient = await this.prisma.patient.findFirst({
-      where: { id: dto.patientId, clinicId },
-    });
-    if (!patient) throw new NotFoundException('Patient record not found');
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      const patient = await tx.patient.findFirst({
+        where: { id: dto.patientId, clinicId },
+      });
+      if (!patient) throw new NotFoundException('Patient record not found');
 
-    // If condition is HEALTHY, remove existing pathology on that tooth & surface
-    if (dto.condition === 'HEALTHY') {
-      const existing = await this.prisma.dentalChartEntry.findMany({
+      // If condition is HEALTHY, remove existing pathology on that tooth & surface
+      if (dto.condition === 'HEALTHY') {
+        const existing = await tx.dentalChartEntry.findMany({
+          where: {
+            clinicId,
+            patientId: dto.patientId,
+            toothNumber: dto.toothNumber,
+            surface: dto.surface as any,
+          },
+        });
+
+        if (existing.length > 0) {
+          await tx.dentalChartEntry.deleteMany({
+            where: {
+              clinicId,
+              patientId: dto.patientId,
+              toothNumber: dto.toothNumber,
+              surface: dto.surface as any,
+            },
+          });
+        }
+
+        await this.auditService.log({
+          clinicId,
+          actorId: actor.userId || actor.id,
+          actorRole: actor.role || 'DENTIST',
+          action: 'DENTAL_CHART_CLEARED_HEALTHY',
+          entityType: 'DentalChartEntry',
+          entityId: `${dto.toothNumber}-${dto.surface}`,
+          details: { patientUhid: patient.uhid, tooth: dto.toothNumber, surface: dto.surface },
+        }, tx);
+
+        return { message: 'Marked healthy / condition cleared', toothNumber: dto.toothNumber, surface: dto.surface };
+      }
+
+      // Check if an existing entry exists for the same tooth and surface
+      const existingEntry = await tx.dentalChartEntry.findFirst({
         where: {
+          clinicId,
           patientId: dto.patientId,
           toothNumber: dto.toothNumber,
           surface: dto.surface as any,
         },
       });
 
-      if (existing.length > 0) {
-        await this.prisma.dentalChartEntry.deleteMany({
-          where: {
+      let entry;
+      if (existingEntry) {
+        entry = await tx.dentalChartEntry.update({
+          where: { id: existingEntry.id },
+          data: {
+            condition: dto.condition as any,
+            notes: dto.notes?.trim() || null,
+            consultationId: dto.consultationId || null,
+            recordedById: actor.userId || actor.id,
+          },
+        });
+      } else {
+        entry = await tx.dentalChartEntry.create({
+          data: {
+            clinicId,
             patientId: dto.patientId,
             toothNumber: dto.toothNumber,
             surface: dto.surface as any,
+            condition: dto.condition as any,
+            notes: dto.notes?.trim() || null,
+            consultationId: dto.consultationId || null,
+            recordedById: actor.userId || actor.id,
           },
         });
       }
 
       await this.auditService.log({
         clinicId,
-        actorId: actor.userId,
-        actorRole: actor.role,
-        action: 'DENTAL_CHART_CLEARED_HEALTHY',
+        actorId: actor.userId || actor.id,
+        actorRole: actor.role || 'DENTIST',
+        action: 'DENTAL_CHART_RECORDED',
         entityType: 'DentalChartEntry',
-        entityId: `${dto.toothNumber}-${dto.surface}`,
-        details: { patientUhid: patient.uhid, tooth: dto.toothNumber, surface: dto.surface },
-      });
-
-      return { message: 'Marked healthy / condition cleared', toothNumber: dto.toothNumber, surface: dto.surface };
-    }
-
-    // Check if an existing entry exists for the same tooth and surface
-    const existingEntry = await this.prisma.dentalChartEntry.findFirst({
-      where: {
-        patientId: dto.patientId,
-        toothNumber: dto.toothNumber,
-        surface: dto.surface as any,
-      },
-    });
-
-    let entry;
-    if (existingEntry) {
-      entry = await this.prisma.dentalChartEntry.update({
-        where: { id: existingEntry.id },
-        data: {
-          condition: dto.condition as any,
-          notes: dto.notes?.trim() || null,
-          consultationId: dto.consultationId || null,
-          recordedById: actor.userId,
+        entityId: entry.id,
+        details: {
+          patientUhid: patient.uhid,
+          tooth: dto.toothNumber,
+          surface: dto.surface,
+          condition: dto.condition,
         },
-      });
-    } else {
-      entry = await this.prisma.dentalChartEntry.create({
-        data: {
-          clinicId,
-          patientId: dto.patientId,
-          toothNumber: dto.toothNumber,
-          surface: dto.surface as any,
-          condition: dto.condition as any,
-          notes: dto.notes?.trim() || null,
-          consultationId: dto.consultationId || null,
-          recordedById: actor.userId,
-        },
-      });
-    }
+      }, tx);
 
-    await this.auditService.log({
-      clinicId,
-      actorId: actor.userId,
-      actorRole: actor.role,
-      action: 'DENTAL_CHART_RECORDED',
-      entityType: 'DentalChartEntry',
-      entityId: entry.id,
-      details: {
-        patientUhid: patient.uhid,
-        tooth: dto.toothNumber,
-        surface: dto.surface,
-        condition: dto.condition,
-      },
+      return entry;
     });
-
-    return entry;
   }
 
   async removeEntry(clinicId: string, entryId: string, actor: any) {
-    const entry = await this.prisma.dentalChartEntry.findUnique({
-      where: { id: entryId },
-      include: { patient: true },
-    });
-    if (!entry || entry.patient.clinicId !== clinicId) {
-      throw new NotFoundException('Chart entry not found');
-    }
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      const entry = await tx.dentalChartEntry.findUnique({
+        where: { id: entryId },
+        include: { patient: true },
+      });
+      if (!entry || entry.clinicId !== clinicId) {
+        throw new NotFoundException('Chart entry not found');
+      }
 
-    await this.prisma.dentalChartEntry.delete({
-      where: { id: entryId },
-    });
+      await tx.dentalChartEntry.delete({
+        where: { id: entryId },
+      });
 
-    await this.auditService.log({
-      clinicId,
-      actorId: actor.userId,
-      actorRole: actor.role,
-      action: 'DENTAL_CHART_DELETED',
-      entityType: 'DentalChartEntry',
-      entityId: entryId,
-      details: {
-        patientUhid: entry.patient.uhid,
-        tooth: entry.toothNumber,
-        surface: entry.surface,
-      },
-    });
+      await this.auditService.log({
+        clinicId,
+        actorId: actor.userId || actor.id,
+        actorRole: actor.role || 'DENTIST',
+        action: 'DENTAL_CHART_DELETED',
+        entityType: 'DentalChartEntry',
+        entityId: entryId,
+        details: {
+          patientUhid: entry.patient?.uhid,
+          tooth: entry.toothNumber,
+          surface: entry.surface,
+        },
+      }, tx);
 
-    return { message: 'Chart entry removed successfully' };
+      return { message: 'Chart entry removed successfully' };
+    });
   }
 }

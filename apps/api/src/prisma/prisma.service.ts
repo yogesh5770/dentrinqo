@@ -34,6 +34,6 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         await tx.$executeRaw`SELECT set_config('app.clinic_id', ${clinicId}, true)`;
       }
       return operation(tx as unknown as PrismaClient);
-    });
+    }, { maxWait: 20000, timeout: 20000 });
   }
 }

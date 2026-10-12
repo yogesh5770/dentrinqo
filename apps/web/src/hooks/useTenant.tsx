@@ -19,6 +19,8 @@ export interface TenantClinic {
   workingHours?: any;
   isDoctorVerified?: boolean;
   isBillingVerified?: boolean;
+  isOnLeave?: boolean;
+  leaveReason?: string | null;
 }
 
 interface TenantContextType {
@@ -67,6 +69,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           workingHours: user.clinic.workingHours,
           isDoctorVerified: (user.clinic as any).isDoctorVerified,
           isBillingVerified: (user.clinic as any).isBillingVerified,
+          isOnLeave: user.clinic.isOnLeave,
+          leaveReason: user.clinic.leaveReason,
         };
         setClinic(fallback);
         return fallback;

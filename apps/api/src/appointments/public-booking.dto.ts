@@ -73,6 +73,26 @@ export class CreatePublicAppointmentDto {
   @IsString()
   patientId?: string;
 
+  @ApiPropertyOptional({ example: '1995-08-20', description: 'Patient date of birth (YYYY-MM-DD)' })
+  @IsOptional()
+  @IsString()
+  dateOfBirth?: string;
+
+  @ApiPropertyOptional({ example: true, description: 'DPDP explicit consent for medical data processing' })
+  @IsOptional()
+  @IsBoolean()
+  consentDataUse?: boolean;
+
+  @ApiPropertyOptional({ example: true, description: 'Explicit consent for WhatsApp notifications' })
+  @IsOptional()
+  @IsBoolean()
+  consentWhatsapp?: boolean;
+
+  @ApiPropertyOptional({ example: 'v1.0' })
+  @IsOptional()
+  @IsString()
+  consentVersion?: string;
+
   @ApiPropertyOptional({ description: 'Cloudflare Turnstile CAPTCHA response token' })
   @IsOptional()
   @IsString()

@@ -1,10 +1,11 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Req, Headers } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Req, Headers, Header } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { AppointmentsService } from './appointments.service';
-import { CreateAppointmentDto, UpdateAppointmentStatusDto, RescheduleAppointmentDto } from './appointment.dto';
+import { CreateAppointmentDto, UpdateAppointmentStatusDto, RescheduleAppointmentDto, ReceptionQuickConsultDto, PublicLookupDto } from './appointment.dto';
 import { CreatePublicAppointmentDto, PublicCheckInDto } from './public-booking.dto';
+import { AuthService } from '../auth/auth.service';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -13,7 +14,10 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 @ApiTags('Appointment Scheduling')
 @Controller('api/appointments')
 export class AppointmentsController {
-  constructor(private readonly appointmentsService: AppointmentsService) {}
+  constructor(
+    private readonly appointmentsService: AppointmentsService,
+    private readonly authService: AuthService,
+  ) {}
 
   @Post('public-request')
   @Throttle({ default: { limit: 5, ttl: 60000 } })
@@ -40,7 +44,8 @@ export class AppointmentsController {
   async publicCheckIn(@Body() dto: PublicCheckInDto, @Req() req: Request) {
     const forwarded = req.headers['x-forwarded-for'];
     const clientIp = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : (req.ip || req.socket.remoteAddress);
-    return this.appointmentsService.publicSelfCheckIn(dto, dto.clinicCode, clientIp);
+    const hostClinicId = (req as any).clinicId || ((req as any).tenantClinic && (req as any).tenantClinic.id);
+    return this.appointmentsService.publicSelfCheckIn(dto, dto.clinicCode, clientIp, hostClinicId);
   }
 
   @Get('lobby-code')
@@ -50,8 +55,27 @@ export class AppointmentsController {
     @Headers('x-display-token') displayToken?: string,
     @Req() req?: any,
   ) {
-    // If not display token, authenticate via session cookie / bearer token
-    return this.appointmentsService.getLobbyCodeForDisplayOrStaff(displayToken, req?.user);
+    let staffUser = req?.user;
+    if (!displayToken && !staffUser) {
+      let token = req?.cookies ? req?.cookies['aks_session'] : undefined;
+      if (!token && req?.headers?.authorization) {
+        const parts = req.headers.authorization.split(' ');
+        if (parts.length === 2 && parts[0] === 'Bearer') {
+          token = parts[1];
+        }
+      }
+      if (token) {
+        staffUser = this.authService.verifyToken(token);
+      }
+    }
+    return this.appointmentsService.getLobbyCodeForDisplayOrStaff(displayToken, staffUser);
+  }
+
+  @Get('live-lobby-code')
+  @UseGuards(AuthGuard)
+  @ApiOperation({ summary: 'Get live 4-digit TV arrival code for reception staff' })
+  async getLiveLobbyCode(@CurrentUser() user: any) {
+    return this.appointmentsService.getLobbyCodeForDisplayOrStaff(undefined, user);
   }
 
   @Patch(':id/confirm-presence')
@@ -95,21 +119,61 @@ export class AppointmentsController {
     return this.appointmentsService.revokeDisplayToken(user.clinicId, id, user);
   }
 
-  @Get('lookup-phone')
-  @Throttle({ default: { limit: 15, ttl: 60000 } })
-  @ApiOperation({ summary: 'Lookup existing patient profiles on a phone number for family booking selection' })
-  async lookupPhone(
-    @Query('phone') phone: string,
-    @Query('clinicCode') clinicCode?: string,
+  @Post('reception-quick-consult')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('CLINIC_ADMIN', 'RECEPTIONIST', 'DENTIST')
+  @ApiOperation({ summary: 'One-click reception consultation booking with atomic token and chair dispatch' })
+  async receptionQuickConsult(
+    @CurrentUser() user: any,
+    @Body() dto: ReceptionQuickConsultDto,
+    @Req() req: Request,
   ) {
-    return this.appointmentsService.lookupPatientsByPhone(phone, clinicCode);
+    const forwarded = req.headers['x-forwarded-for'];
+    const clientIp = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : (req.ip || req.socket.remoteAddress);
+    return this.appointmentsService.receptionQuickConsult(user.clinicId, dto, user, clientIp);
+  }
+
+  @Get('track/:code')
+  @Throttle({ default: { limit: 60, ttl: 60000 } })
+  @Header('Referrer-Policy', 'no-referrer')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
+  @ApiOperation({ summary: 'Public tracking of queue position and assigned chair by 128-bit unguessable code' })
+  async trackByCode(@Param('code') code: string, @Req() req: any) {
+    const hostClinicId = req.clinicId || (req.tenantClinic && req.tenantClinic.id);
+    const forwarded = req.headers ? req.headers['x-forwarded-for'] : undefined;
+    const clientIp = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : (req.ip || (req.socket && req.socket.remoteAddress) || '127.0.0.1');
+    return this.appointmentsService.trackByCode(code, hostClinicId, clientIp);
+  }
+
+  @Post('public-lookup')
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Header('Referrer-Policy', 'no-referrer')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
+  @ApiOperation({ summary: 'Safe rate-limited public queue lookup by mobile number and optional token' })
+  async publicLookup(@Body() dto: PublicLookupDto, @Req() req: any) {
+    const forwarded = req.headers['x-forwarded-for'];
+    const clientIp = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : (req.ip || req.socket.remoteAddress || '127.0.0.1');
+    const clinicId = req.clinicId || (req.tenantClinic && req.tenantClinic.id) || dto.clinicCode;
+    return this.appointmentsService.publicLookup(dto, clinicId, clientIp);
+  }
+
+  @Get('lookup-phone')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('CLINIC_ADMIN', 'RECEPTIONIST', 'DENTIST')
+  @ApiOperation({ summary: 'Lookup existing patient profiles on a phone number for family booking selection (Staff only)' })
+  async lookupPhone(
+    @CurrentUser() user: any,
+    @Query('phone') phone: string,
+  ) {
+    return this.appointmentsService.lookupPatientsByPhone(phone, user.clinicId);
   }
 
   @Get('public-status/:identifier')
   @Throttle({ default: { limit: 60, ttl: 60000 } })
-  @ApiOperation({ summary: 'Query appointment status and queue token by public reference or phone number' })
-  async publicStatus(@Param('identifier') identifier: string) {
-    return this.appointmentsService.getPublicStatus(identifier);
+  @ApiOperation({ summary: 'Query appointment status and queue token by public reference' })
+  async publicStatus(@Param('identifier') identifier: string, @Req() req: any) {
+    const clinicId = req.clinicId || (req.tenantClinic && req.tenantClinic.id);
+    return this.appointmentsService.getPublicStatus(identifier, clinicId);
   }
 
   @Get('public-chair-status')
@@ -127,6 +191,16 @@ export class AppointmentsController {
     @Query('date') date?: string,
   ) {
     return this.appointmentsService.getPublicBookedSlots(clinicCode, date);
+  }
+
+  @Get('chair-loads')
+  @UseGuards(AuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Get appointment load count per operatory chair for a date' })
+  async getChairLoads(
+    @CurrentUser() user: any,
+    @Query('date') date?: string,
+  ) {
+    return this.appointmentsService.getChairLoads(user.clinicId, date);
   }
 
   @Patch('chair-toggle')

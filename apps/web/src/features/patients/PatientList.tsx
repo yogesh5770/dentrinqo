@@ -47,9 +47,10 @@ interface Patient {
 
 interface PatientListProps {
   onOpenNewPatient: (mode?: 'STANDARD' | 'LEGACY_ARCHIVE') => void;
+  onOpenBooking?: (patient?: any) => void;
 }
 
-export const PatientList: React.FC<PatientListProps> = ({ onOpenNewPatient }) => {
+export const PatientList: React.FC<PatientListProps> = ({ onOpenNewPatient, onOpenBooking }) => {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -269,17 +270,29 @@ export const PatientList: React.FC<PatientListProps> = ({ onOpenNewPatient }) =>
                     )}
 
                     <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs" onClick={e => e.stopPropagation()}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedReconsultPatient(p);
-                          setReconsultModalOpen(true);
-                        }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 font-black text-xs cursor-pointer active:scale-95"
-                      >
-                        <Stethoscope className="w-3.5 h-3.5 text-amber-700" />
-                        <span>Re-Consult</span>
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        {onOpenBooking && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenBooking(p)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-black text-xs cursor-pointer active:scale-95 shadow-xs"
+                          >
+                            <Calendar className="w-3.5 h-3.5" />
+                            <span>Book Appt</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedReconsultPatient(p);
+                            setReconsultModalOpen(true);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 font-black text-xs cursor-pointer active:scale-95"
+                        >
+                          <Stethoscope className="w-3.5 h-3.5 text-amber-700" />
+                          <span>Re-Consult</span>
+                        </button>
+                      </div>
                       <button
                         type="button"
                         onClick={() => navigate(`/patients/${p.id}`)}
@@ -376,6 +389,17 @@ export const PatientList: React.FC<PatientListProps> = ({ onOpenNewPatient }) =>
                       </td>
                       <td className="py-4 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5" onClick={e => e.stopPropagation()}>
+                          {onOpenBooking && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenBooking(p)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-black text-xs transition-colors cursor-pointer active:scale-95 shadow-xs"
+                              title="Book Appointment for Patient"
+                            >
+                              <Calendar className="w-3.5 h-3.5" />
+                              <span>Book Appt</span>
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => {

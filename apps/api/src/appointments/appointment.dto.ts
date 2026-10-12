@@ -15,9 +15,13 @@ export class CreateAppointmentDto {
   @ApiPropertyOptional({ example: 1 })
   @IsOptional()
   @IsInt()
-  @Min(1)
-  @Max(5)
+  @Min(0)
+  @Max(10)
   chairNumber?: number;
+
+  @ApiPropertyOptional({ example: false })
+  @IsOptional()
+  overrideLeave?: boolean;
 
   @ApiProperty({ example: '2026-10-10T10:00:00.000Z' })
   @IsDateString()
@@ -48,7 +52,28 @@ export class CreateAppointmentDto {
 }
 
 export class UpdateAppointmentStatusDto {
-  @ApiProperty({ example: 'CONFIRMED', enum: ['PENDING_CONFIRMATION', 'SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'CALLED', 'IN_CHAIR', 'COMPLETED', 'CANCELLED', 'NO_SHOW'] })
+  @ApiProperty({
+    example: 'CONFIRMED',
+    enum: [
+      'PENDING_CONFIRMATION',
+      'SCHEDULED',
+      'CONFIRMED',
+      'CHECKED_IN',
+      'CALLED',
+      'IN_CHAIR',
+      'TREATED',
+      'BILLED',
+      'PAID',
+      'COMPLETED',
+      'CANCELLED',
+      'NO_SHOW',
+      'LATE',
+      'SKIPPED',
+      'STEPPED_OUT',
+      'CLOSED',
+      'RESCHEDULED',
+    ],
+  })
   @IsString()
   @IsNotEmpty()
   status: string;
@@ -64,6 +89,10 @@ export class UpdateAppointmentStatusDto {
   @IsOptional()
   @IsString()
   emergencyReason?: string;
+
+  @ApiPropertyOptional({ description: 'Explicit reception confirmation to override upcoming booking on chair' })
+  @IsOptional()
+  overrideConflict?: boolean;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -91,4 +120,97 @@ export class RescheduleAppointmentDto {
   @IsOptional()
   @IsString()
   reason?: string;
+}
+
+export class ReceptionQuickConsultDto {
+  @ApiPropertyOptional({ example: 'patient-uuid', description: 'Selected existing patient ID under this phone' })
+  @IsOptional()
+  @IsString()
+  patientId?: string;
+
+  @ApiProperty({ example: '+919876543210' })
+  @IsString()
+  @IsNotEmpty()
+  phone: string;
+
+  @ApiPropertyOptional({ example: 'Karthik Raja' })
+  @IsOptional()
+  @IsString()
+  fullName?: string;
+
+  @ApiPropertyOptional({ example: 34 })
+  @IsOptional()
+  @IsInt()
+  age?: number;
+
+  @ApiPropertyOptional({ example: '1990-05-15' })
+  @IsOptional()
+  @IsString()
+  dateOfBirth?: string;
+
+  @ApiPropertyOptional({ example: 'MALE' })
+  @IsOptional()
+  @IsString()
+  gender?: string;
+
+  @ApiPropertyOptional({ example: ['Penicillin'] })
+  @IsOptional()
+  allergies?: string[];
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  consentDataUse?: boolean;
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  consentWhatsapp?: boolean;
+
+  @ApiPropertyOptional({ example: false, description: 'True if age was entered instead of exact DOB' })
+  @IsOptional()
+  dobApproximate?: boolean;
+
+  @ApiPropertyOptional({ example: 'v1.0' })
+  @IsOptional()
+  @IsString()
+  consentVersion?: string;
+
+  @ApiPropertyOptional({ example: false, description: 'Emergency registration bypass if patient unable to consent' })
+  @IsOptional()
+  allowEmergencyBypassWithoutConsent?: boolean;
+
+  @ApiPropertyOptional({ example: 'dentist-uuid' })
+  @IsOptional()
+  @IsString()
+  preferredDentistId?: string;
+
+  @ApiPropertyOptional({ example: 'Routine Consultation' })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @ApiPropertyOptional({ example: false })
+  @IsOptional()
+  overrideLeave?: boolean;
+}
+
+export class PublicLookupDto {
+  @ApiProperty({ example: '+919876543210' })
+  @IsString()
+  @IsNotEmpty()
+  phone: string;
+
+  @ApiPropertyOptional({ example: 'AKS-2026-AB123 or 5' })
+  @IsOptional()
+  @IsString()
+  tokenOrReference?: string;
+
+  @ApiPropertyOptional({ example: 'AED or clinic UUID', description: 'Clinic code or UUID identifier' })
+  @IsOptional()
+  @IsString()
+  clinicCode?: string;
 }

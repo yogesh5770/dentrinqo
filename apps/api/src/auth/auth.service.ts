@@ -74,17 +74,33 @@ export class AuthService {
     }
   }
 
-  async validateUserCredentials(identifier: string, plainPass: string) {
+  async validateUserCredentials(identifier: string, plainPass: string, tenantClinicId?: string) {
     const clean = identifier.toLowerCase().trim();
-    const user = await this.prisma.user.findFirst({
-      where: {
-        OR: [
-          { email: clean },
-          { username: clean },
-        ],
-      },
-      include: { clinic: true },
-    });
+
+    const fetchUser = async (clinicId: string) => {
+      return this.prisma.forTenant(clinicId, async (tx) => {
+        return tx.user.findFirst({
+          where: {
+            OR: [
+              { email: clean },
+              { username: clean },
+            ],
+          },
+          include: { clinic: true },
+        });
+      });
+    };
+
+    let user: any = null;
+    if (tenantClinicId) {
+      user = await fetchUser(tenantClinicId);
+    } else {
+      const clinics = await this.prisma.clinic.findMany({ select: { id: true } });
+      for (const c of clinics) {
+        user = await fetchUser(c.id);
+        if (user) break;
+      }
+    }
 
     if (!user) {
       this.logger.warn(`Failed login attempt for unknown user/email: ${identifier}`);
@@ -101,9 +117,11 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email/username or password');
     }
 
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: { lastLoginAt: new Date() },
+    await this.prisma.forTenant(user.clinicId, async (tx) => {
+      return tx.user.update({
+        where: { id: user.id },
+        data: { lastLoginAt: new Date() },
+      });
     });
 
     return user;
@@ -257,6 +275,8 @@ export class AuthService {
             upiVpa: true,
             workingHours: true,
             gstin: true,
+            isOnLeave: true,
+            leaveReason: true,
           },
         },
       },

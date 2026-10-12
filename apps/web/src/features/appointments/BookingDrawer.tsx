@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiRequest } from '../../lib/api';
-import { X, Calendar, Clock, Armchair, Stethoscope, AlertTriangle, UserCheck, AlertCircle, CalendarPlus, MessageCircle, CheckCircle2 } from 'lucide-react';
+import { X, Calendar, Clock, Armchair, Stethoscope, AlertTriangle, UserCheck, AlertCircle, CalendarPlus, MessageCircle, CheckCircle2, Zap, KeyRound, Ticket } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { openWhatsApp, generateAppointmentWhatsAppText } from '../../lib/whatsapp';
 import { triggerClinicSync } from '../../lib/sync';
@@ -36,12 +36,19 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
 
   const { user } = useAuth();
   const totalChairs = user?.clinic?.chairCount || 3;
+  const isOnLeave = Boolean(user?.clinic?.isOnLeave);
+  const leaveReason = user?.clinic?.leaveReason;
 
   const [patients, setPatients] = useState<any[]>([]);
   const [selectedPatientId, setSelectedPatientId] = useState<string>(preSelectedPatient?.id || '');
   const [dentists, setDentists] = useState<any[]>([]);
   const [selectedDentistId, setSelectedDentistId] = useState<string>('');
   const [chairNumber, setChairNumber] = useState<number>(1);
+  const [isAutoAllocate, setIsAutoAllocate] = useState<boolean>(true);
+  const [chairLoads, setChairLoads] = useState<Record<number, any>>({});
+  const [recommendedChair, setRecommendedChair] = useState<number>(1);
+  const [lobbyCode, setLobbyCode] = useState<string>('');
+
   const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [time, setTime] = useState<string>(() => getSmartCurrentTime());
   const [duration, setDuration] = useState<number>(30);
@@ -54,10 +61,44 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
     date: string;
     time: string;
     chairNumber: number;
+    tokenNumber?: number;
+    trackingCode?: string;
     doctorName?: string;
     reason?: string;
+    lobbyCode?: string;
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Fetch chair loads and lobby code
+  useEffect(() => {
+    const fetchLoadsAndCode = async () => {
+      try {
+        const [loadsRes, codeRes] = await Promise.all([
+          apiRequest<{ totalChairs: number; chairLoads: Record<number, any>; recommendedChair: number }>(
+            `/appointments/chair-loads?date=${date}`
+          ).catch(() => null),
+          apiRequest<{ code: string }>('/appointments/lobby-code').catch(() => null),
+        ]);
+
+        if (loadsRes) {
+          setChairLoads(loadsRes.chairLoads || {});
+          if (loadsRes.recommendedChair) {
+            setRecommendedChair(loadsRes.recommendedChair);
+            if (isAutoAllocate) {
+              setChairNumber(loadsRes.recommendedChair);
+            }
+          }
+        }
+        if (codeRes && codeRes.code) {
+          setLobbyCode(codeRes.code);
+        }
+      } catch (err) {
+        console.error('Failed to load chair loads or lobby code', err);
+      }
+    };
+
+    fetchLoadsAndCode();
+  }, [date]);
 
   useEffect(() => {
     // Fetch patients and dentists
@@ -93,18 +134,23 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isOnLeave) {
+      setConflictError(`Hospital is currently marked as CLOSED for Holiday / Leave (${leaveReason || 'Holiday'}). Please turn Hospital Status to OPEN before scheduling.`);
+      return;
+    }
+
     setConflictError(null);
     setSubmitting(true);
 
     try {
       const scheduledStart = new Date(`${date}T${time}:00.000+05:30`).toISOString();
 
-      await apiRequest('/appointments', {
+      const res = await apiRequest<any>('/appointments', {
         method: 'POST',
         body: JSON.stringify({
           patientId: selectedPatientId,
           dentistId: selectedDentistId,
-          chairNumber,
+          chairNumber: isAutoAllocate ? 0 : chairNumber, // 0 signals backend auto-allocation
           scheduledStart,
           durationMinutes: duration,
           reason,
@@ -115,12 +161,15 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
       const pObj = patients.find(p => p.id === selectedPatientId) || preSelectedPatient;
       const dObj = dentists.find(d => d.id === selectedDentistId);
       setBookingSuccessData({
-        patient: pObj,
+        patient: res?.patient || pObj,
         date,
         time,
-        chairNumber,
-        doctorName: dObj?.fullName,
+        chairNumber: res?.chairNumber || chairNumber,
+        tokenNumber: res?.tokenNumber,
+        trackingCode: res?.trackingCode,
+        doctorName: res?.dentist?.fullName || dObj?.fullName,
         reason,
+        lobbyCode: lobbyCode || 'Live on TV',
       });
 
       triggerClinicSync('appointment_booked');
@@ -144,7 +193,7 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
             <div>
               <h3 className="font-black text-base text-slate-900">Schedule Appointment</h3>
               <p className="text-xs text-slate-600 font-medium">
-                Select dental chair, date, and time slot
+                Auto-allocate free chair or select manually
               </p>
             </div>
           </div>
@@ -156,42 +205,95 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
           </button>
         </div>
 
+        {/* Hospital On Leave Alert */}
+        {isOnLeave && (
+          <div className="p-4 bg-rose-50 border-b border-rose-300 text-rose-950 text-xs flex items-start gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-black text-rose-900">⛔ Hospital Closed for Holiday / Leave</p>
+              <p className="mt-0.5 font-medium text-rose-800">
+                Hospital is set to Leave ({leaveReason || 'Holiday'}). All patient bookings are blocked. Toggle hospital status to "Open" in the top bar to enable booking.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Conflict Warning */}
         {conflictError && (
           <div className="p-4 bg-rose-50 border-b border-rose-300 text-rose-900 text-xs flex items-start gap-2.5">
             <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
             <div>
-              <p className="font-black">Schedule Conflict Detected</p>
+              <p className="font-black">Schedule Notice</p>
               <p className="mt-0.5 font-medium">{conflictError}</p>
             </div>
           </div>
         )}
 
         {bookingSuccessData ? (
-          <div className="flex-1 p-6 flex flex-col justify-between items-center text-center">
-            <div className="w-full space-y-5 my-auto">
+          <div className="flex-1 p-6 flex flex-col justify-between items-center text-center overflow-y-auto">
+            <div className="w-full space-y-4 my-auto">
               <div className="w-16 h-16 rounded-2xl bg-emerald-100 text-emerald-600 mx-auto flex items-center justify-center shadow-xs">
                 <CheckCircle2 className="w-9 h-9" />
               </div>
               <div>
                 <h3 className="text-xl font-black text-slate-900">Appointment Confirmed!</h3>
-                <p className="text-xs text-slate-500 font-medium mt-1">
-                  Slot has been successfully locked in the calendar
+                <p className="text-xs text-slate-500 font-medium mt-0.5">
+                  Slot has been successfully locked in calendar and queue
                 </p>
               </div>
 
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-left space-y-2.5 text-xs">
-                <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+              {/* HIGH VISIBILITY RECEPTIONIST VERBAL CALLOUT CARD */}
+              <div className="bg-gradient-to-br from-teal-900 via-teal-800 to-slate-900 text-white rounded-2xl p-5 shadow-lg border border-teal-700 text-left space-y-3">
+                <div className="flex items-center justify-between border-b border-teal-700/60 pb-2">
+                  <div className="flex items-center gap-1.5 text-teal-300 text-xs font-black uppercase tracking-wider">
+                    <Ticket className="w-4 h-4" />
+                    <span>Live Queue Credentials</span>
+                  </div>
+                  <span className="text-[10px] bg-teal-500/20 text-teal-200 border border-teal-400/40 px-2 py-0.5 rounded-full font-bold">
+                    Tell Patient Now
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 text-center py-1">
+                  <div className="bg-white/10 rounded-xl p-2.5 backdrop-blur-xs border border-white/10">
+                    <div className="text-[10px] uppercase font-bold text-teal-200">Token</div>
+                    <div className="font-mono text-2xl font-black text-amber-300">
+                      #{bookingSuccessData.tokenNumber || '—'}
+                    </div>
+                  </div>
+                  <div className="bg-white/10 rounded-xl p-2.5 backdrop-blur-xs border border-white/10">
+                    <div className="text-[10px] uppercase font-bold text-teal-200">Chair</div>
+                    <div className="font-mono text-2xl font-black text-emerald-300">
+                      #{bookingSuccessData.chairNumber}
+                    </div>
+                  </div>
+                  <div className="bg-white/10 rounded-xl p-2.5 backdrop-blur-xs border border-white/10">
+                    <div className="text-[10px] uppercase font-bold text-teal-200">TV Code</div>
+                    <div className="font-mono text-2xl font-black text-white">
+                      {bookingSuccessData.lobbyCode || '4281'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-teal-950/70 rounded-xl p-3 border border-teal-600/30 text-xs text-teal-100 font-medium leading-relaxed">
+                  <strong className="text-amber-300 block mb-0.5">🗣️ Verbal Instruction for Receptionist:</strong>
+                  "Please tell the patient: 'Your appointment is booked for <strong>Chair #{bookingSuccessData.chairNumber}</strong> with <strong>Token #{bookingSuccessData.tokenNumber || '—'}</strong>. When you arrive at the clinic lobby, check the waiting room TV or verify with reception!'"
+                </div>
+              </div>
+
+              {/* Details Summary */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-left space-y-2 text-xs">
+                <div className="flex justify-between items-center border-b border-slate-200 pb-1.5">
                   <span className="text-slate-500 font-bold">Patient:</span>
                   <span className="font-black text-slate-900">{bookingSuccessData.patient?.fullName} ({bookingSuccessData.patient?.phone})</span>
                 </div>
-                <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                <div className="flex justify-between items-center border-b border-slate-200 pb-1.5">
                   <span className="text-slate-500 font-bold">Schedule:</span>
                   <span className="font-black text-teal-700">{bookingSuccessData.date} at {bookingSuccessData.time}</span>
                 </div>
-                <div className="flex justify-between items-center border-b border-slate-200 pb-2">
-                  <span className="text-slate-500 font-bold">Operatory Chair:</span>
-                  <span className="font-black text-slate-900">Chair #{bookingSuccessData.chairNumber}</span>
+                <div className="flex justify-between items-center border-b border-slate-200 pb-1.5">
+                  <span className="text-slate-500 font-bold">Operatory:</span>
+                  <span className="font-black text-slate-900">Chair #{bookingSuccessData.chairNumber} (Unit #{bookingSuccessData.chairNumber})</span>
                 </div>
                 {bookingSuccessData.doctorName && (
                   <div className="flex justify-between items-center">
@@ -202,14 +304,11 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
               </div>
 
               {/* Instant WhatsApp Action */}
-              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl space-y-3">
+              <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl space-y-2.5">
                 <div className="flex items-center gap-2 text-emerald-800 text-xs font-black">
                   <MessageCircle className="w-4 h-4 text-emerald-600" />
                   <span>1-Click Patient Confirmation</span>
                 </div>
-                <p className="text-xs text-emerald-700 font-medium text-left">
-                  Dispatch branded WhatsApp message with date, chair number, doctor, and clinic address.
-                </p>
                 <button
                   type="button"
                   onClick={() => {
@@ -228,7 +327,7 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
                       }),
                     );
                   }}
-                  className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer shadow-md transition-all active:scale-[0.98]"
+                  className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer shadow-md transition-all active:scale-[0.98]"
                 >
                   <MessageCircle className="w-4 h-4" />
                   Send WhatsApp Confirmation
@@ -299,29 +398,67 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
 
           {/* Dental Chair */}
           <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="block font-black text-slate-800">Operatory Dental Chair</label>
-              <span className="text-xs text-teal-700 font-bold">{totalChairs} Available Units</span>
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <label className="block font-black text-slate-800">Operatory Dental Chair</label>
+                <span className="text-[11px] text-slate-500 font-medium">Smart balance & free chair allocation</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !isAutoAllocate;
+                  setIsAutoAllocate(next);
+                  if (next && recommendedChair) setChairNumber(recommendedChair);
+                }}
+                className={`px-2.5 py-1 rounded-xl text-xs font-black flex items-center gap-1 transition-all cursor-pointer ${
+                  isAutoAllocate
+                    ? 'bg-amber-400 text-slate-950 shadow-xs ring-2 ring-amber-300'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>{isAutoAllocate ? '⚡ Auto-Allocate: ON' : 'Manual Pick'}</span>
+              </button>
             </div>
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
-              {Array.from({ length: totalChairs }, (_, i) => i + 1).map(c => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setChairNumber(c)}
-                  className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
-                    chairNumber === c
-                      ? 'bg-teal-50 border-2 border-teal-600 text-teal-900 font-black shadow-xs ring-2 ring-teal-500/20'
-                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 font-bold'
-                  }`}
-                >
-                  <Armchair className={`w-4 h-4 mx-auto mb-1 ${chairNumber === c ? 'text-teal-700' : 'text-slate-500'}`} />
-                  <div className="text-xs font-black">Chair {c}</div>
-                  <div className="text-[10px] text-slate-500 font-medium truncate">
-                    Unit #{c}
-                  </div>
-                </button>
-              ))}
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {Array.from({ length: totalChairs }, (_, i) => i + 1).map(c => {
+                const load = chairLoads[c];
+                const patientCount = load?.total ?? 0;
+                const isRec = c === recommendedChair;
+                const isSelected = chairNumber === c;
+
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => {
+                      setChairNumber(c);
+                      setIsAutoAllocate(false);
+                    }}
+                    className={`p-3 rounded-xl border text-center transition-all cursor-pointer relative ${
+                      isSelected
+                        ? 'bg-teal-50 border-2 border-teal-600 text-teal-900 font-black shadow-xs ring-2 ring-teal-500/20'
+                        : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 font-bold'
+                    }`}
+                  >
+                    {isRec && (
+                      <span className="absolute -top-2 left-1/2 -translate-x-1/2 bg-amber-400 text-slate-950 text-[9px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-wider shadow-2xs whitespace-nowrap">
+                        ⭐ Best Fit
+                      </span>
+                    )}
+                    <Armchair className={`w-4 h-4 mx-auto mb-1 ${isSelected ? 'text-teal-700' : 'text-slate-500'}`} />
+                    <div className="text-xs font-black">Chair {c}</div>
+                    <div className="text-[10px] font-bold mt-1">
+                      {patientCount === 0 ? (
+                        <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">🟢 Free (0 appts)</span>
+                      ) : (
+                        <span className="text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">{patientCount} booked</span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 

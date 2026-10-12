@@ -51,105 +51,107 @@ export class MedicalFilesService {
     meta: { category?: string; notes?: string; toothNumber?: number; consultationId?: string },
     actor: any,
   ) {
-    // Verify patient belongs to this clinic
-    const patient = await this.prisma.patient.findFirst({
-      where: { id: patientId, clinicId },
-    });
-    if (!patient) {
-      throw new NotFoundException('Patient record not found');
-    }
-
-    const category = meta.category && MEDICAL_CATEGORIES.includes(meta.category as any)
-      ? meta.category
-      : 'OTHER';
-
-    const isImage = mimeType.startsWith('image/');
-    const fileExt = path.extname(originalName).toLowerCase() || (mimeType.startsWith('audio/') ? '.webm' : '.bin');
-    const originalSize = buffer.length;
-
-    let processedBuffer = buffer;
-    let finalMimeType = mimeType;
-    let finalExt = fileExt;
-
-    // Advanced Clinical Compression Pipeline using Sharp (only for images)
-    if (isImage) {
-      try {
-        const image = getSharp(buffer);
-        const metadata = await image.metadata();
-
-        // 1. Auto-orient based on EXIF (crucial for mobile camera captures)
-        let pipeline = image.rotate();
-
-        // 2. Intelligent downscaling: limit max width/height to 2560px for clinical monitors
-        if (metadata.width && metadata.height && (metadata.width > 2560 || metadata.height > 2560)) {
-          pipeline = pipeline.resize(2560, 2560, {
-            fit: 'inside',
-            withoutEnlargement: true,
-            kernel: getSharp().kernel?.lanczos3 || 'lanczos3',
-          });
-        }
-
-        // 3. Compress to high-quality WebP with 4:4:4 chroma subsampling for dental diagnostics
-        processedBuffer = await pipeline
-          .webp({
-            quality: 88,
-            effort: 4,
-            smartSubsample: false,
-          })
-          .toBuffer();
-
-        finalMimeType = 'image/webp';
-        finalExt = '.webp';
-
-        this.logger.log(
-          `Compressed ${originalName}: ${originalSize} bytes -> ${processedBuffer.length} bytes (${Math.round(
-            (1 - processedBuffer.length / originalSize) * 100,
-          )}% saved)`,
-        );
-      } catch (err) {
-        this.logger.warn(`Sharp image processing failed, storing original buffer: ${err.message}`);
-        processedBuffer = buffer;
-      }
-    }
-
-    // Generate unique storage key and SHA256 hash for forensic integrity
-    const hash = crypto.createHash('sha256').update(processedBuffer).digest('hex');
-    const storageKey = `${patientId}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${finalExt}`;
-    const filePath = path.join(this.uploadDir, storageKey);
-
-    // Save to server SSD
-    await fs.promises.writeFile(filePath, processedBuffer);
-
-    // Persist record to database
-    const fileRecord = await this.prisma.medicalFile.create({
-      data: {
-        clinicId,
-        patientId,
-        consultationId: meta.consultationId || null,
-        category,
-        fileName: originalName,
-        storageKey,
-        mimeType: finalMimeType,
-        sizeBytes: processedBuffer.length,
-        sha256Hash: hash,
-        uploadedById: actor?.userId || 'system',
-      },
-    });
-
-    // Audit log if actor provided
-    if (actor && actor.userId) {
-      await this.auditService.log({
-        clinicId,
-        actorId: actor.userId,
-        actorRole: actor.role || 'DENTIST',
-        action: 'MEDICAL_FILE_UPLOADED',
-        entityType: 'MedicalFile',
-        entityId: fileRecord.id,
-        details: { category, fileName: originalName, sizeBytes: processedBuffer.length },
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      // Verify patient belongs to this clinic
+      const patient = await tx.patient.findFirst({
+        where: { id: patientId, clinicId },
       });
-    }
+      if (!patient) {
+        throw new NotFoundException('Patient record not found');
+      }
 
-    return fileRecord;
+      const category = meta.category && MEDICAL_CATEGORIES.includes(meta.category as any)
+        ? meta.category
+        : 'OTHER';
+
+      const isImage = mimeType.startsWith('image/');
+      const fileExt = path.extname(originalName).toLowerCase() || (mimeType.startsWith('audio/') ? '.webm' : '.bin');
+      const originalSize = buffer.length;
+
+      let processedBuffer = buffer;
+      let finalMimeType = mimeType;
+      let finalExt = fileExt;
+
+      // Advanced Clinical Compression Pipeline using Sharp (only for images)
+      if (isImage) {
+        try {
+          const image = getSharp(buffer);
+          const metadata = await image.metadata();
+
+          // 1. Auto-orient based on EXIF (crucial for mobile camera captures)
+          let pipeline = image.rotate();
+
+          // 2. Intelligent downscaling: limit max width/height to 2560px for clinical monitors
+          if (metadata.width && metadata.height && (metadata.width > 2560 || metadata.height > 2560)) {
+            pipeline = pipeline.resize(2560, 2560, {
+              fit: 'inside',
+              withoutEnlargement: true,
+              kernel: getSharp().kernel?.lanczos3 || 'lanczos3',
+            });
+          }
+
+          // 3. Compress to high-quality WebP with 4:4:4 chroma subsampling for dental diagnostics
+          processedBuffer = await pipeline
+            .webp({
+              quality: 88,
+              effort: 4,
+              smartSubsample: false,
+            })
+            .toBuffer();
+
+          finalMimeType = 'image/webp';
+          finalExt = '.webp';
+
+          this.logger.log(
+            `Compressed ${originalName}: ${originalSize} bytes -> ${processedBuffer.length} bytes (${Math.round(
+              (1 - processedBuffer.length / originalSize) * 100,
+            )}% saved)`,
+          );
+        } catch (err: any) {
+          this.logger.warn(`Sharp image processing failed, storing original buffer: ${err.message}`);
+          processedBuffer = buffer;
+        }
+      }
+
+      // Generate unique storage key and SHA256 hash for forensic integrity
+      const hash = crypto.createHash('sha256').update(processedBuffer).digest('hex');
+      const storageKey = `${patientId}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${finalExt}`;
+      const filePath = path.join(this.uploadDir, storageKey);
+
+      // Save to server SSD
+      await fs.promises.writeFile(filePath, processedBuffer);
+
+      // Persist record to database
+      const fileRecord = await tx.medicalFile.create({
+        data: {
+          clinicId,
+          patientId,
+          consultationId: meta.consultationId || null,
+          category,
+          fileName: originalName,
+          storageKey,
+          mimeType: finalMimeType,
+          sizeBytes: processedBuffer.length,
+          sha256Hash: hash,
+          uploadedById: actor?.userId || actor?.id || 'system',
+        },
+      });
+
+      // Audit log if actor provided
+      if (actor && (actor.userId || actor.id)) {
+        await this.auditService.log({
+          clinicId,
+          actorId: actor.userId || actor.id,
+          actorRole: actor.role || 'DENTIST',
+          action: 'MEDICAL_FILE_UPLOADED',
+          entityType: 'MedicalFile',
+          entityId: fileRecord.id,
+          details: { category, fileName: originalName, sizeBytes: processedBuffer.length },
+        }, tx);
+      }
+
+      return fileRecord;
+    });
   }
 
   async saveBase64(
@@ -205,23 +207,27 @@ export class MedicalFilesService {
   }
 
   async getPatientFiles(clinicId: string, patientId: string) {
-    const patient = await this.prisma.patient.findFirst({
-      where: { id: patientId, clinicId },
-    });
-    if (!patient) throw new NotFoundException('Patient record not found');
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      const patient = await tx.patient.findFirst({
+        where: { id: patientId, clinicId },
+      });
+      if (!patient) throw new NotFoundException('Patient record not found');
 
-    return this.prisma.medicalFile.findMany({
-      where: { patientId },
-      include: { annotations: { orderBy: { pinNumber: 'asc' } } },
-      orderBy: { uploadedAt: 'desc' },
+      return tx.medicalFile.findMany({
+        where: { patientId, clinicId },
+        include: { annotations: { orderBy: { pinNumber: 'asc' } } },
+        orderBy: { uploadedAt: 'desc' },
+      });
     });
   }
 
   async getAnnotations(clinicId: string, fileId: string) {
-    const { record } = await this.getFileById(clinicId, fileId);
-    return this.prisma.fileAnnotation.findMany({
-      where: { medicalFileId: record.id },
-      orderBy: { pinNumber: 'asc' },
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      const { record } = await this.getFileByIdWithTx(tx, clinicId, fileId);
+      return tx.fileAnnotation.findMany({
+        where: { medicalFileId: record.id, clinicId },
+        orderBy: { pinNumber: 'asc' },
+      });
     });
   }
 
@@ -231,35 +237,39 @@ export class MedicalFilesService {
     dto: { pinNumber: number; xPercent: number; yPercent: number; noteText: string },
     actor: any,
   ) {
-    const { record } = await this.getFileById(clinicId, fileId);
-    return this.prisma.fileAnnotation.create({
-      data: {
-        clinicId,
-        medicalFileId: record.id,
-        pinNumber: dto.pinNumber,
-        xPercent: dto.xPercent,
-        yPercent: dto.yPercent,
-        noteText: dto.noteText.trim(),
-        authorName: actor?.fullName || 'Doctor',
-      },
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      const { record } = await this.getFileByIdWithTx(tx, clinicId, fileId);
+      return tx.fileAnnotation.create({
+        data: {
+          clinicId,
+          medicalFileId: record.id,
+          pinNumber: dto.pinNumber,
+          xPercent: dto.xPercent,
+          yPercent: dto.yPercent,
+          noteText: dto.noteText.trim(),
+          authorName: actor?.fullName || 'Doctor',
+        },
+      });
     });
   }
 
   async removeAnnotation(clinicId: string, fileId: string, annotationId: string) {
-    await this.getFileById(clinicId, fileId);
-    await this.prisma.fileAnnotation.deleteMany({
-      where: { id: annotationId, medicalFileId: fileId },
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      await this.getFileByIdWithTx(tx, clinicId, fileId);
+      await tx.fileAnnotation.deleteMany({
+        where: { id: annotationId, medicalFileId: fileId, clinicId },
+      });
+      return { success: true };
     });
-    return { success: true };
   }
 
-  async getFileById(clinicId: string, id: string) {
-    const record = await this.prisma.medicalFile.findUnique({
+  private async getFileByIdWithTx(tx: any, clinicId: string, id: string) {
+    const record = await tx.medicalFile.findUnique({
       where: { id },
       include: { patient: { select: { clinicId: true, fullName: true, uhid: true } } },
     });
 
-    if (!record || record.patient.clinicId !== clinicId) {
+    if (!record || record.clinicId !== clinicId) {
       throw new NotFoundException('Medical record not found');
     }
 
@@ -271,36 +281,44 @@ export class MedicalFilesService {
     return { record, filePath };
   }
 
+  async getFileById(clinicId: string, id: string) {
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      return this.getFileByIdWithTx(tx, clinicId, id);
+    });
+  }
+
   async deleteFile(clinicId: string, id: string, actor: any) {
-    const { record, filePath } = await this.getFileById(clinicId, id);
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      const { record, filePath } = await this.getFileByIdWithTx(tx, clinicId, id);
 
-    // Delete physical file from disk
-    if (fs.existsSync(filePath)) {
-      try {
-        await fs.promises.unlink(filePath);
-      } catch (err) {
-        this.logger.error(`Error deleting physical file: ${err.message}`);
+      // Delete physical file from disk
+      if (fs.existsSync(filePath)) {
+        try {
+          await fs.promises.unlink(filePath);
+        } catch (err: any) {
+          this.logger.error(`Error deleting physical file: ${err.message}`);
+        }
       }
-    }
 
-    // Delete database record
-    await this.prisma.medicalFile.delete({
-      where: { id },
+      // Delete database record
+      await tx.medicalFile.delete({
+        where: { id },
+      });
+
+      await this.auditService.log({
+        clinicId,
+        actorId: actor.userId || actor.id,
+        actorRole: actor.role || 'STAFF',
+        action: 'MEDICAL_FILE_DELETED',
+        entityType: 'MedicalFile',
+        entityId: id,
+        details: {
+          fileName: record.fileName,
+          storageKey: record.storageKey,
+        },
+      }, tx);
+
+      return { message: 'File deleted successfully' };
     });
-
-    await this.auditService.log({
-      clinicId,
-      actorId: actor.userId,
-      actorRole: actor.role,
-      action: 'MEDICAL_FILE_DELETED',
-      entityType: 'MedicalFile',
-      entityId: id,
-      details: {
-        fileName: record.fileName,
-        storageKey: record.storageKey,
-      },
-    });
-
-    return { message: 'File deleted successfully' };
   }
 }

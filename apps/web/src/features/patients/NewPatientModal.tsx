@@ -661,6 +661,21 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
               <button
                 type="button"
                 disabled={submitting}
+                onClick={() => handleRegister('SCHEDULE_LATER')}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-black text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-300 transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
+                title="Save patient and immediately schedule an appointment"
+              >
+                <Calendar className="w-3.5 h-3.5 text-teal-700" />
+                <span>
+                  {submitting && submitMode === 'SCHEDULE_LATER'
+                    ? 'Saving...'
+                    : 'Save & Book Appointment 📅'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                disabled={submitting}
                 onClick={() => handleRegister('WALK_IN_NOW')}
                 className={`w-full sm:w-auto px-5 py-2.5 rounded-xl text-xs font-black text-white shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-95 ${
                   recordMode === 'LEGACY_ARCHIVE'

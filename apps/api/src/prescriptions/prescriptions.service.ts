@@ -108,113 +108,119 @@ export class PrescriptionsService {
   }
 
   async create(clinicId: string, dto: CreatePrescriptionDto, actor: any) {
-    const patient = await this.prisma.patient.findFirst({
-      where: { id: dto.patientId, clinicId },
-    });
-    if (!patient) throw new NotFoundException('Patient record not found');
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      const patient = await tx.patient.findFirst({
+        where: { id: dto.patientId, clinicId },
+      });
+      if (!patient) throw new NotFoundException('Patient record not found');
 
-    // Generate unique prescription number: RX-YYYY-COUNT
-    const currentYear = new Date().getFullYear();
-    const count = await this.prisma.prescription.count({ where: { clinicId } });
-    const prescriptionNumber = `RX-${currentYear}-${String(count + 1).padStart(4, '0')}`;
+      // Generate unique prescription number: RX-YYYY-COUNT
+      const currentYear = new Date().getFullYear();
+      const count = await tx.prescription.count({ where: { clinicId } });
+      const prescriptionNumber = `RX-${currentYear}-${String(count + 1).padStart(4, '0')}`;
 
-    const prescription = await this.prisma.prescription.create({
-      data: {
-        clinicId,
-        patientId: dto.patientId,
-        dentistId: actor.userId,
-        consultationId: dto.consultationId || null,
-        prescriptionNumber,
-        status: 'FINALIZED',
-        finalizedAt: new Date(),
-        instructions: dto.instructions?.trim() || null,
-        dietAdvice: dto.dietAdvice?.trim() || null,
-        items: {
-          create: dto.items.map(item => ({
-            clinicId,
-            medicineName: item.medicineName.trim(),
-            dosage: item.dosage.trim(),
-            form: item.form.trim(),
-            frequency: item.frequency.trim(),
-            durationDays: item.durationDays,
-            timing: item.timing.trim(),
-            instructions: item.instructions?.trim() || null,
-          })),
+      const prescription = await tx.prescription.create({
+        data: {
+          clinicId,
+          patientId: dto.patientId,
+          dentistId: actor.userId || actor.id,
+          consultationId: dto.consultationId || null,
+          prescriptionNumber,
+          status: 'FINALIZED',
+          finalizedAt: new Date(),
+          instructions: dto.instructions?.trim() || null,
+          dietAdvice: dto.dietAdvice?.trim() || null,
+          items: {
+            create: dto.items.map(item => ({
+              clinicId,
+              medicineName: item.medicineName.trim(),
+              dosage: item.dosage.trim(),
+              form: item.form.trim(),
+              frequency: item.frequency.trim(),
+              durationDays: item.durationDays,
+              timing: item.timing.trim(),
+              instructions: item.instructions?.trim() || null,
+            })),
+          },
         },
-      },
-      include: {
-        items: true,
-        dentist: { select: { fullName: true, specialization: true, licenseNumber: true } },
-        patient: { select: { fullName: true, uhid: true, age: true, gender: true, phone: true, allergies: true } },
-      },
-    });
+        include: {
+          items: true,
+          dentist: { select: { fullName: true, specialization: true, licenseNumber: true } },
+          patient: { select: { fullName: true, uhid: true, age: true, gender: true, phone: true, allergies: true } },
+        },
+      });
 
-    await this.auditService.log({
-      clinicId,
-      actorId: actor.userId,
-      actorRole: actor.role,
-      action: 'PRESCRIPTION_CREATED',
-      entityType: 'Prescription',
-      entityId: prescription.id,
-      details: {
-        prescriptionNumber,
-        patientUhid: patient.uhid,
-        itemsCount: prescription.items.length,
-      },
-    });
+      await this.auditService.log({
+        clinicId,
+        actorId: actor.userId || actor.id,
+        actorRole: actor.role || 'DENTIST',
+        action: 'PRESCRIPTION_CREATED',
+        entityType: 'Prescription',
+        entityId: prescription.id,
+        details: {
+          prescriptionNumber,
+          patientUhid: patient.uhid,
+          itemsCount: prescription.items.length,
+        },
+      }, tx);
 
-    return prescription;
+      return prescription;
+    });
   }
 
   async findByPatient(clinicId: string, patientId: string) {
-    const patient = await this.prisma.patient.findFirst({
-      where: { id: patientId, clinicId },
-    });
-    if (!patient) throw new NotFoundException('Patient record not found');
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      const patient = await tx.patient.findFirst({
+        where: { id: patientId, clinicId },
+      });
+      if (!patient) throw new NotFoundException('Patient record not found');
 
-    return this.prisma.prescription.findMany({
-      where: { patientId },
-      include: {
-        items: true,
-        dentist: { select: { fullName: true, specialization: true, licenseNumber: true } },
-      },
-      orderBy: { createdAt: 'desc' },
+      return tx.prescription.findMany({
+        where: { patientId, clinicId },
+        include: {
+          items: true,
+          dentist: { select: { fullName: true, specialization: true, licenseNumber: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
     });
   }
 
   async getById(clinicId: string, id: string) {
-    const prescription = await this.prisma.prescription.findUnique({
-      where: { id },
-      include: {
-        items: true,
-        dentist: { select: { fullName: true, specialization: true, licenseNumber: true } },
-        patient: {
-          select: {
-            clinicId: true,
-            fullName: true,
-            uhid: true,
-            age: true,
-            gender: true,
-            phone: true,
-            address: true,
-            allergies: true,
-            medicalConditions: true,
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      const prescription = await tx.prescription.findUnique({
+        where: { id },
+        include: {
+          items: true,
+          dentist: { select: { fullName: true, specialization: true, licenseNumber: true } },
+          patient: {
+            select: {
+              clinicId: true,
+              fullName: true,
+              uhid: true,
+              age: true,
+              gender: true,
+              phone: true,
+              address: true,
+              allergies: true,
+              medicalConditions: true,
+            },
           },
         },
-      },
+      });
+
+      if (!prescription || prescription.clinicId !== clinicId) {
+        throw new NotFoundException('Prescription not found');
+      }
+
+      const clinic = await tx.clinic.findUnique({
+        where: { id: clinicId },
+      });
+
+      return {
+        ...prescription,
+        clinic,
+      };
     });
-
-    if (!prescription || prescription.patient?.clinicId !== clinicId) {
-      throw new NotFoundException('Prescription not found');
-    }
-
-    const clinic = await this.prisma.clinic.findUnique({
-      where: { id: clinicId },
-    });
-
-    return {
-      ...prescription,
-      clinic,
-    };
   }
 }

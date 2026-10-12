@@ -119,6 +119,7 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
   const [bookingRef, setBookingRef] = useState<string | null>(null);
   const [tokenNumber, setTokenNumber] = useState<number | null>(null);
   const [patientUhid, setPatientUhid] = useState<string | null>(null);
+  const [trackingCode, setTrackingCode] = useState<string | null>(null);
   const [copiedRef, setCopiedRef] = useState<boolean>(false);
   const [lobbyCode, setLobbyCode] = useState<string>('');
 
@@ -262,6 +263,11 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
       }
     }
 
+    if (tenantClinic?.isOnLeave) {
+      alert(`The hospital is currently closed for Holiday / Leave (${tenantClinic.leaveReason || 'Holiday'}). Public appointment booking is paused.`);
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const reasonObj = COMMON_REASONS.find((r) => r.id === selectedReason);
@@ -297,6 +303,7 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
         setBookingRef(res.reference);
         if (res.tokenNumber) setTokenNumber(res.tokenNumber);
         if (res.uhid) setPatientUhid(res.uhid);
+        if ((res as any).trackingCode) setTrackingCode((res as any).trackingCode);
         setStep(3);
         window.scrollTo({ top: 0, behavior: 'smooth' });
       } else {
@@ -544,6 +551,18 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
               <p className="text-xs text-slate-600 font-medium">
                 {doctorName} • {clinicAddress}
               </p>
+
+              {tenantClinic?.isOnLeave && (
+                <div className="mt-3 p-4 rounded-2xl bg-rose-50 border-2 border-rose-400 text-rose-950 text-xs font-medium space-y-1 text-left shadow-sm">
+                  <div className="flex items-center gap-2 font-black text-rose-900 text-sm">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>⛔ Hospital Closed for Holiday / Leave</span>
+                  </div>
+                  <p className="text-rose-800">
+                    {clinicName} is currently observing a holiday ({tenantClinic.leaveReason || 'Holiday'}). Online booking is paused. For dental emergencies, please call {clinicPhone}.
+                  </p>
+                </div>
+              )}
 
               {/* Trust Badges */}
               <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-[11px] font-bold text-slate-600">
@@ -1339,6 +1358,31 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
                     </span>
                   </div>
                 </div>
+
+                {/* Smartphone Live Queue Tracker CTA */}
+                {trackingCode && (
+                  <div className="p-4 rounded-2xl bg-gradient-to-r from-teal-950 via-slate-900 to-teal-900 text-white flex flex-col sm:flex-row items-center justify-between gap-3 shadow-md border border-teal-500/30">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-teal-500/20 text-teal-300 flex items-center justify-center font-black">
+                        <Sparkles className="w-5 h-5 text-amber-300" />
+                      </div>
+                      <div>
+                        <div className="font-black text-sm flex items-center gap-2">
+                          <span>Live Smartphone Queue Tracker</span>
+                          <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500 text-slate-950">Active</span>
+                        </div>
+                        <p className="text-xs text-teal-200 font-medium">Track your queue progress & operatory call on your phone</p>
+                      </div>
+                    </div>
+                    <Link
+                      to={`/track/${trackingCode}`}
+                      className="px-4 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-black text-xs transition cursor-pointer flex items-center gap-1.5 active:scale-95 shrink-0"
+                    >
+                      <span>Track My Token Live</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </Link>
+                  </div>
+                )}
 
                 {/* Details Grid */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 py-2 border-b border-slate-100 pb-5 text-xs">

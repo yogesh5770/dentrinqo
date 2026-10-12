@@ -82,7 +82,7 @@ export class PatientAuthController {
   @UseGuards(PatientAuthGuard)
   @ApiOperation({ summary: 'Get current patient account details and family members' })
   async getMe(@Req() req: any) {
-    return this.patientAuthService.getMe(req.patientAccount.accountId);
+    return this.patientAuthService.getMe(req.patientAccount.accountId, req.patientAccount.clinicId);
   }
 
   @Post('family')
@@ -92,14 +92,14 @@ export class PatientAuthController {
     @Req() req: any,
     @Body() dto: AddFamilyMemberDto,
   ) {
-    return this.patientAuthService.addFamilyMember(req.patientAccount.accountId, dto);
+    return this.patientAuthService.addFamilyMember(req.patientAccount.accountId, dto, req.patientAccount.clinicId);
   }
 
   @Get('visits')
   @UseGuards(PatientAuthGuard)
   @ApiOperation({ summary: 'List visits for all family members under patient account (IDOR safe)' })
   async getMyVisits(@Req() req: any) {
-    return this.patientAuthService.getMyVisits(req.patientAccount.accountId);
+    return this.patientAuthService.getMyVisits(req.patientAccount.accountId, req.patientAccount.clinicId);
   }
 
   @Patch('reset/:accountId')

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { TenantContextMiddleware } from '../common/middleware/tenant-context.middleware';
 
 @Injectable()
 export class ClinicService {
@@ -22,6 +23,16 @@ export class ClinicService {
           ],
         },
       });
+
+      if (!clinic) {
+        const domainEntry = await this.prisma.clinicDomain.findUnique({
+          where: { domain: clean.toLowerCase() },
+          include: { clinic: true },
+        });
+        if (domainEntry?.clinic) {
+          clinic = domainEntry.clinic;
+        }
+      }
     } else {
       clinic = await this.prisma.clinic.findFirst({
         where: { status: 'ACTIVE' },
@@ -50,6 +61,8 @@ export class ClinicService {
       chairCount: clinic.chairCount,
       subdomain: clinic.subdomain,
       upiVpa: clinic.upiVpa,
+      isOnLeave: (clinic as any).isOnLeave ?? false,
+      leaveReason: (clinic as any).leaveReason ?? null,
       workingHours: clinic.workingHours
         ? (() => {
             try {
@@ -96,6 +109,8 @@ export class ClinicService {
       lobbyCodeWindowSeconds: clinic.lobbyCodeWindowSeconds ?? 300,
       isDoctorVerified: clinic.isDoctorVerified ?? false,
       isBillingVerified: clinic.isBillingVerified ?? false,
+      isOnLeave: (clinic as any).isOnLeave ?? false,
+      leaveReason: (clinic as any).leaveReason ?? null,
       workingHours: clinic.workingHours
         ? (() => {
             try {
@@ -132,13 +147,17 @@ export class ClinicService {
         lobbyCodeWindowSeconds: data.lobbyCodeWindowSeconds ? parseInt(data.lobbyCodeWindowSeconds, 10) : undefined,
         isDoctorVerified: data.isDoctorVerified !== undefined ? Boolean(data.isDoctorVerified) : undefined,
         isBillingVerified: data.isBillingVerified !== undefined ? Boolean(data.isBillingVerified) : undefined,
+        isOnLeave: data.isOnLeave !== undefined ? Boolean(data.isOnLeave) : undefined,
+        leaveReason: data.leaveReason !== undefined ? data.leaveReason : undefined,
       },
     });
 
+    TenantContextMiddleware.clearClinicCache(clinicId);
+
     await this.auditService.log({
       clinicId,
-      actorId: actor.userId,
-      actorRole: actor.role,
+      actorId: actor?.userId || actor?.id,
+      actorRole: actor?.role || 'STAFF',
       action: 'CLINIC_SETTINGS_UPDATED',
       entityType: 'Clinic',
       entityId: clinicId,
@@ -146,6 +165,31 @@ export class ClinicService {
     });
 
     // Exclude lobbySecret from returned object
+    const { lobbySecret, ...safeClinic } = updated as any;
+    return safeClinic;
+  }
+
+  async toggleLeave(clinicId: string, isOnLeave: boolean, leaveReason?: string, actor?: any) {
+    const updated = await this.prisma.clinic.update({
+      where: { id: clinicId },
+      data: {
+        isOnLeave: Boolean(isOnLeave),
+        leaveReason: leaveReason !== undefined ? leaveReason : (isOnLeave ? 'Hospital Closed / Holiday' : null),
+      },
+    });
+
+    TenantContextMiddleware.clearClinicCache(clinicId);
+
+    await this.auditService.log({
+      clinicId,
+      actorId: actor?.userId || actor?.id,
+      actorRole: actor?.role || 'STAFF',
+      action: isOnLeave ? 'HOSPITAL_LEAVE_ON' : 'HOSPITAL_LEAVE_OFF',
+      entityType: 'Clinic',
+      entityId: clinicId,
+      details: { isOnLeave: Boolean(isOnLeave), leaveReason },
+    });
+
     const { lobbySecret, ...safeClinic } = updated as any;
     return safeClinic;
   }

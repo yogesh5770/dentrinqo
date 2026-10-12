@@ -114,4 +114,15 @@ export class PatientsController {
   ) {
     return this.patientsService.checkInReappearance(user.clinicId, id, body, user);
   }
+
+  @Patch(':id/verify-first-visit')
+  @Roles('CLINIC_ADMIN', 'RECEPTIONIST', 'DENTIST')
+  @ApiOperation({ summary: 'Verify demographic and allergy details for first-visit online/walk-in patient' })
+  async verifyFirstVisit(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() body: { phone?: string; dateOfBirth?: string; address?: string; allergies?: string[] },
+  ) {
+    return this.patientsService.verifyFirstVisit(user.clinicId, id, body, user);
+  }
 }

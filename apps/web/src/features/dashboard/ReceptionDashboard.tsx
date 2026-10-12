@@ -36,6 +36,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useClinicSync, triggerClinicSync, playClinicAlertChime } from '../../lib/sync';
 import { QuickReconsultModal } from '../../components/QuickReconsultModal';
+import { WalkinConsultModal } from '../../components/WalkinConsultModal';
+import { VerifyFirstVisitModal } from '../../components/VerifyFirstVisitModal';
 
 interface Appointment {
   id: string;
@@ -52,6 +54,11 @@ interface Appointment {
   status: 'SCHEDULED' | 'CONFIRMED' | 'CHECKED_IN' | 'CALLED' | 'IN_CHAIR' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW';
   checkInTime?: string | null;
   isConfirmedAtDesk?: boolean;
+  tokenNumber?: number;
+  trackingCode?: string;
+  expectedChairNumber?: number;
+  needsVerification?: boolean;
+  source?: string;
 }
 
 interface ReceptionDashboardProps {
@@ -77,6 +84,13 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
   const [togglingChair, setTogglingChair] = useState<number | null>(null);
   const [showQrModal, setShowQrModal] = useState<boolean>(false);
   const [quickReconsultOpen, setQuickReconsultOpen] = useState<boolean>(false);
+  const [walkinModalOpen, setWalkinModalOpen] = useState<boolean>(false);
+  const [verifyPatientModal, setVerifyPatientModal] = useState<{
+    patientId: string;
+    patientName: string;
+    patientPhone: string;
+    patientUhid?: string;
+  } | null>(null);
   const navigate = useNavigate();
   const { user } = useAuth();
   const totalChairs = user?.clinic?.chairCount || 2;
@@ -171,10 +185,17 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
       if (res && res.code) {
         setLobbyCode(res.code);
         setLobbyCodeExpiresAt(new Date(res.expiresAt));
+        return;
       }
-    } catch (err) {
-      // ignore
-    }
+    } catch (err) {}
+
+    try {
+      const res2 = await apiRequest<{ code: string; expiresAt: string }>('/appointments/live-lobby-code');
+      if (res2 && res2.code) {
+        setLobbyCode(res2.code);
+        setLobbyCodeExpiresAt(new Date(res2.expiresAt));
+      }
+    } catch (err) {}
   };
 
   const handleConfirmPresence = async (apptId: string) => {
@@ -571,17 +592,24 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          {lobbyCode && (
-            <div className="flex items-center gap-2 bg-amber-50 border border-amber-300 text-amber-950 font-black text-xs py-2 px-3 rounded-xl shadow-2xs">
-              <KeyRound className="w-4 h-4 text-amber-700" />
-              <span>Arrival Code: <strong className="font-mono text-sm text-teal-900 bg-white px-2 py-0.5 rounded border border-amber-200">{lobbyCode}</strong></span>
-              {lobbyCodeExpiresAt && (
-                <span className="text-[10px] text-slate-500 font-sans font-bold">
-                  ({Math.max(0, Math.floor((lobbyCodeExpiresAt.getTime() - Date.now()) / 60000))}m left)
-                </span>
-              )}
+          <div className="flex items-center gap-2.5 bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-400 text-amber-950 font-black text-xs py-2 px-3.5 rounded-xl shadow-xs">
+            <KeyRound className="w-5 h-5 text-amber-700 shrink-0" />
+            <div>
+              <span className="text-[10px] uppercase tracking-wider text-amber-800 font-extrabold block -mb-0.5">
+                Live TV Arrival Code
+              </span>
+              <div className="flex items-center gap-2">
+                <strong className="font-mono text-base tracking-widest text-teal-950 bg-white px-2.5 py-0.5 rounded-lg border border-amber-300 shadow-2xs font-black">
+                  {lobbyCode || '••••'}
+                </strong>
+                {lobbyCodeExpiresAt && (
+                  <span className="text-[10px] text-amber-900 font-sans font-bold">
+                    ({Math.max(0, Math.floor((lobbyCodeExpiresAt.getTime() - Date.now()) / 60000))}m)
+                  </span>
+                )}
+              </div>
             </div>
-          )}
+          </div>
 
           <button
             onClick={() => navigate('/admin/duplicates')}
@@ -598,6 +626,15 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
           >
             <QrCode className="w-4 h-4 text-teal-400" />
             <span>🖨️ Standee QR</span>
+          </button>
+
+          <button
+            onClick={() => setWalkinModalOpen(true)}
+            className="flex items-center gap-1.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-xs py-2.5 px-4 rounded-xl shadow-md transition-all cursor-pointer active:scale-95"
+            title="Instant 1-Click Walk-in Registration, Token & Chair Dispatch"
+          >
+            <Zap className="w-4 h-4 text-amber-300 fill-amber-300" />
+            <span>⚡ Walk-in Consultation</span>
           </button>
 
           <button
@@ -1087,7 +1124,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-900 text-white font-mono font-black text-[11px] shadow-2xs">
-                            TOKEN #{idx + 1}
+                            TOKEN #{appt.tokenNumber || (idx + 1)}
                           </span>
                           <span className="font-mono font-extrabold text-teal-800 text-xs">
                             {startTime}
@@ -1109,7 +1146,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                           <span>{appt.patientName}</span>
                           <ArrowRight className="w-3.5 h-3.5 text-teal-600" />
                         </div>
-                        <div className="text-xs text-slate-500 font-mono font-bold mt-0.5 flex items-center gap-2">
+                        <div className="text-xs text-slate-500 font-mono font-bold mt-0.5 flex items-center gap-2 flex-wrap">
                           <span>{appt.patientUhid} • {appt.patientPhone}</span>
                           {isWalkin ? (
                             <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-black text-[10px]">
@@ -1119,6 +1156,21 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                             <span className="px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-900 border border-blue-300 font-black text-[10px]">
                               🌐 ONLINE
                             </span>
+                          )}
+                          {appt.needsVerification && (
+                            <button
+                              onClick={() => setVerifyPatientModal({
+                                patientId: appt.patientId,
+                                patientName: appt.patientName,
+                                patientPhone: appt.patientPhone,
+                                patientUhid: appt.patientUhid,
+                              })}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-400 hover:bg-amber-500 text-slate-950 font-black text-[10px] shadow-xs cursor-pointer animate-pulse transition"
+                              title="First-visit patient profile unverified. Click to confirm phone, DOB, address, and allergies."
+                            >
+                              <AlertTriangle className="w-2.5 h-2.5 text-slate-950 shrink-0" />
+                              <span>⚠️ Verify Profile</span>
+                            </button>
                           )}
                         </div>
                       </div>
@@ -1310,7 +1362,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                         <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
                           <div className="flex items-center gap-2">
                             <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-900 text-white font-mono font-black text-xs shadow-2xs">
-                              TOKEN #{idx + 1}
+                              TOKEN #{appt.tokenNumber || (idx + 1)}
                             </span>
                             <span className="text-slate-900 font-extrabold">{startTime}</span>
                           </div>
@@ -1334,8 +1386,23 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                             <span>{appt.patientName}</span>
                             <ArrowRight className="w-3.5 h-3.5 text-teal-600" />
                           </div>
-                          <div className="text-xs text-slate-600 font-mono font-bold mt-0.5">
-                            {appt.patientUhid} • {appt.patientPhone}
+                          <div className="text-xs text-slate-600 font-mono font-bold mt-0.5 flex items-center gap-2">
+                            <span>{appt.patientUhid} • {appt.patientPhone}</span>
+                            {appt.needsVerification && (
+                              <button
+                                onClick={() => setVerifyPatientModal({
+                                  patientId: appt.patientId,
+                                  patientName: appt.patientName,
+                                  patientPhone: appt.patientPhone,
+                                  patientUhid: appt.patientUhid,
+                                })}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-400 hover:bg-amber-500 text-slate-950 font-black text-[10px] shadow-xs cursor-pointer animate-pulse transition"
+                                title="First-visit patient profile unverified. Click to confirm phone, DOB, address, and allergies."
+                              >
+                                <AlertTriangle className="w-2.5 h-2.5 text-slate-950 shrink-0" />
+                                <span>⚠️ Verify Profile</span>
+                              </button>
+                            )}
                           </div>
                         </td>
                         <td className="py-3.5 px-4">
@@ -2073,6 +2140,25 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
         }}
         onOpenNewPatientWithSerial={() => {
           onOpenNewPatient();
+        }}
+      />
+
+      {/* Instant 1-Click Walk-in Registration, Token & Chair Dispatch Modal */}
+      <WalkinConsultModal
+        isOpen={walkinModalOpen}
+        onClose={() => setWalkinModalOpen(false)}
+        onSuccess={() => {
+          fetchTodayAppointments(true);
+        }}
+      />
+
+      {/* Desk Verification Modal for First-Visit Patients */}
+      <VerifyFirstVisitModal
+        isOpen={Boolean(verifyPatientModal)}
+        onClose={() => setVerifyPatientModal(null)}
+        patient={verifyPatientModal}
+        onVerified={() => {
+          fetchTodayAppointments(true);
         }}
       />
     </div>
