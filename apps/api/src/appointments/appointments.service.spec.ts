@@ -20,6 +20,7 @@ describe('AppointmentsService', () => {
             },
             patient: {
               findFirst: jest.fn().mockResolvedValue({ id: 'p1' }),
+              findMany: jest.fn().mockResolvedValue([]),
               create: jest.fn(),
               count: jest.fn().mockResolvedValue(10),
             },
@@ -31,6 +32,10 @@ describe('AppointmentsService', () => {
               create: jest.fn(),
               findMany: jest.fn(),
               update: jest.fn(),
+              count: jest.fn().mockResolvedValue(0),
+            },
+            dailyQueueSequence: {
+              upsert: jest.fn().mockResolvedValue({ lastSequence: 1 }),
             },
           },
         },
@@ -215,7 +220,7 @@ describe('AppointmentsService', () => {
       jest.spyOn(prisma.appointment, 'findFirst').mockResolvedValueOnce(null);
 
       // Verify that patient lookup strictly checks clinicId = 'clinic-jdc-id'
-      const patientSpy = jest.spyOn(prisma.patient, 'findFirst').mockResolvedValueOnce(null);
+      const patientSpy = jest.spyOn(prisma.patient, 'findMany').mockResolvedValueOnce([]);
 
       jest.spyOn(prisma.patient, 'count').mockResolvedValueOnce(1);
       jest.spyOn(prisma.patient, 'create').mockResolvedValueOnce({
@@ -241,6 +246,91 @@ describe('AppointmentsService', () => {
           where: expect.objectContaining({
             clinicId: 'clinic-jdc-id',
           }),
+        }),
+      );
+    });
+    it('should automatically mark hospital walk-in bookings as CHECKED_IN always', async () => {
+      jest.spyOn(prisma.clinic, 'findFirst').mockResolvedValueOnce({
+        id: 'clinic-aks-id',
+        code: 'AKS',
+        name: 'AKS Elite Dental Clinic',
+      } as any);
+
+      jest.spyOn(prisma.appointment, 'findFirst').mockResolvedValueOnce(null);
+      jest.spyOn(prisma.patient, 'findMany').mockResolvedValueOnce([]);
+      jest.spyOn(prisma.patient, 'count').mockResolvedValueOnce(1);
+      jest.spyOn(prisma.patient, 'create').mockResolvedValueOnce({
+        id: 'patient-walkin-id',
+        fullName: 'Ramesh Walkin',
+        clinicId: 'clinic-aks-id',
+      } as any);
+
+      jest.spyOn(prisma.user, 'findFirst')
+        .mockResolvedValueOnce({ id: 'u1' } as any)
+        .mockResolvedValueOnce({ id: 'd1' } as any);
+
+      const createSpy = jest.spyOn(prisma.appointment, 'create').mockResolvedValueOnce({
+        id: 'appt-walkin-1',
+        clinicId: 'clinic-aks-id',
+        status: 'CHECKED_IN',
+        scheduledStart: new Date(),
+        scheduledEnd: new Date(),
+      } as any);
+
+      const walkinDto = {
+        fullName: 'Ramesh Walkin',
+        phone: '9876543210',
+        service: '[HOSPITAL WALK-IN] Consultation',
+        preferredDate: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+        preferredSlot: 'WALK-IN IMMEDIATE QUEUE',
+        isWalkin: true,
+        clinicCode: 'AKS',
+      };
+
+      const result = await service.createPublicRequest(walkinDto);
+
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('CHECKED_IN');
+      expect(result.isCheckedIn).toBe(true);
+      expect(result.requiresConfirmation).toBe(false);
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: 'CHECKED_IN',
+            checkInTime: expect.any(Date),
+          }),
+        }),
+      );
+    });
+
+    it('should transition scheduled appointment to CHECKED_IN via publicSelfCheckIn when arriving at hospital', async () => {
+      const mockAppt = {
+        id: 'appt-self-1',
+        clinicId: 'clinic-aks-id',
+        status: 'SCHEDULED',
+        scheduledStart: new Date(),
+        createdAt: new Date(),
+        patient: { id: 'p1', fullName: 'Anitha Rajan', phone: '9876543210', uhid: 'AKS-2026-0001' },
+        dentist: { fullName: 'Dr. Khalidh' },
+        clinic: { name: 'AKS Elite Dental Clinic', code: 'AKS' },
+      };
+
+      jest.spyOn(prisma.appointment, 'findFirst').mockResolvedValueOnce(mockAppt as any);
+      const updateSpy = jest.spyOn(prisma.appointment, 'update').mockResolvedValueOnce({
+        ...mockAppt,
+        status: 'CHECKED_IN',
+        checkInTime: new Date(),
+      } as any);
+      jest.spyOn(prisma.appointment, 'findMany').mockResolvedValueOnce([{ id: 'appt-self-1', status: 'CHECKED_IN' }] as any);
+
+      const res = await service.publicSelfCheckIn('9876543210');
+      expect(res.success).toBe(true);
+      expect(res.status).toBe('CHECKED_IN');
+      expect(res.tokenNumber).toBe(1);
+      expect(updateSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'appt-self-1' },
+          data: expect.objectContaining({ status: 'CHECKED_IN' }),
         }),
       );
     });

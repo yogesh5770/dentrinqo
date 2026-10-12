@@ -4,7 +4,7 @@ import { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { AppointmentsService } from './appointments.service';
 import { CreateAppointmentDto, UpdateAppointmentStatusDto, RescheduleAppointmentDto } from './appointment.dto';
-import { CreatePublicAppointmentDto } from './public-booking.dto';
+import { CreatePublicAppointmentDto, PublicCheckInDto } from './public-booking.dto';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -24,11 +24,35 @@ export class AppointmentsController {
   async publicRequest(@Body() dto: CreatePublicAppointmentDto, @Req() req: Request) {
     const forwarded = req.headers['x-forwarded-for'];
     const clientIp = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : (req.ip || req.socket.remoteAddress);
-    return this.appointmentsService.createPublicRequest(dto, clientIp);
+
+    let patientToken = req.cookies ? req.cookies['aks_patient_session'] : undefined;
+    if (!patientToken && req.headers.authorization?.startsWith('Bearer ')) {
+      patientToken = req.headers.authorization.split(' ')[1];
+    }
+
+    return this.appointmentsService.createPublicRequest(dto, clientIp, patientToken);
+  }
+
+  @Post('public-checkin')
+  @Throttle({ default: { limit: 15, ttl: 60000 } })
+  @ApiOperation({ summary: 'Self check-in for arriving patient via QR scan (by phone or booking reference)' })
+  @ApiResponse({ status: 200, description: 'Check-in processed and queue token returned' })
+  async publicCheckIn(@Body() dto: PublicCheckInDto) {
+    return this.appointmentsService.publicSelfCheckIn(dto);
+  }
+
+  @Get('lookup-phone')
+  @Throttle({ default: { limit: 15, ttl: 60000 } })
+  @ApiOperation({ summary: 'Lookup existing patient profiles on a phone number for family booking selection' })
+  async lookupPhone(
+    @Query('phone') phone: string,
+    @Query('clinicCode') clinicCode?: string,
+  ) {
+    return this.appointmentsService.lookupPatientsByPhone(phone, clinicCode);
   }
 
   @Get('public-status/:identifier')
-  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Throttle({ default: { limit: 60, ttl: 60000 } })
   @ApiOperation({ summary: 'Query appointment status and queue token by public reference or phone number' })
   async publicStatus(@Param('identifier') identifier: string) {
     return this.appointmentsService.getPublicStatus(identifier);
@@ -39,6 +63,16 @@ export class AppointmentsController {
   @ApiOperation({ summary: 'Query active operatory chair status and availability' })
   async publicChairStatus(@Query('clinicCode') clinicCode?: string) {
     return this.appointmentsService.getPublicChairStatus(clinicCode);
+  }
+
+  @Get('public-booked-slots')
+  @Throttle({ default: { limit: 60, ttl: 60000 } })
+  @ApiOperation({ summary: 'Query occupied / booked slots for a given clinic, date and operatory' })
+  async publicBookedSlots(
+    @Query('clinicCode') clinicCode?: string,
+    @Query('date') date?: string,
+  ) {
+    return this.appointmentsService.getPublicBookedSlots(clinicCode, date);
   }
 
   @Patch('chair-toggle')

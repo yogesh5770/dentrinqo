@@ -71,6 +71,59 @@ export const playClinicAlertChime = () => {
 };
 
 /**
+ * Synthesizes an unmistakable 4-tone ascending hospital paging chime for patient mobile beeper
+ * Plays two consecutive bursts (C5 -> E5 -> G5 -> C6) and triggers device vibration
+ */
+export const playPatientTurnBeeper = () => {
+  try {
+    // 1. Device Vibration (Android / mobile devices supporting Navigator Vibration API)
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      try {
+        navigator.vibrate([400, 200, 400, 200, 600]);
+      } catch {}
+    }
+
+    // 2. Synthesized Audio Pager Chime via Web Audio API
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
+    const playBurst = (startTimeOffset: number) => {
+      const notes = [
+        { freq: 523.25, time: 0.00, dur: 0.22, vol: 0.25 }, // C5
+        { freq: 659.25, time: 0.16, dur: 0.22, vol: 0.28 }, // E5
+        { freq: 783.99, time: 0.32, dur: 0.25, vol: 0.30 }, // G5
+        { freq: 1046.50, time: 0.50, dur: 0.45, vol: 0.35 }, // C6
+      ];
+
+      notes.forEach(({ freq, time, dur, vol }) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle'; // triangle gives a warm, rich bell-like acoustic
+        const noteStart = ctx.currentTime + startTimeOffset + time;
+        osc.frequency.setValueAtTime(freq, noteStart);
+        gain.gain.setValueAtTime(vol, noteStart);
+        gain.gain.exponentialRampToValueAtTime(0.0001, noteStart + dur);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(noteStart);
+        osc.stop(noteStart + dur);
+      });
+    };
+
+    // Burst 1
+    playBurst(0.05);
+    // Burst 2 repeated after 0.85s for guaranteed arrival notice
+    playBurst(0.90);
+  } catch {
+    // Audio context suppressed or blocked
+  }
+};
+
+/**
  * Triggers an instant update across all views and open browser tabs/windows
  */
 export const triggerClinicSync = (reason?: string, payload?: any) => {

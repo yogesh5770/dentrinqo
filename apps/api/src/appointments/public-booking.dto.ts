@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString, IsOptional, Length, Matches, IsInt, Min, Max } from 'class-validator';
+import { IsNotEmpty, IsString, IsOptional, Length, Matches, IsInt, Min, Max, IsBoolean } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreatePublicAppointmentDto {
@@ -67,4 +67,41 @@ export class CreatePublicAppointmentDto {
   @IsOptional()
   @IsString()
   lobbyCode?: string;
+
+  @ApiPropertyOptional({ example: 'b8196142-3a3a-442a-9cb8-8e6f1e83161a', description: 'Existing patient ID if selected by user' })
+  @IsOptional()
+  @IsString()
+  patientId?: string;
+
+  @ApiPropertyOptional({ description: 'Cloudflare Turnstile CAPTCHA response token' })
+  @IsOptional()
+  @IsString()
+  turnstileToken?: string;
+
+  @ApiPropertyOptional({ description: 'Explicit flag indicating hospital lobby walk-in booking' })
+  @IsOptional()
+  @IsBoolean()
+  isWalkin?: boolean;
+}
+
+export class PublicCheckInDto {
+  @ApiProperty({ example: '9876543210', description: 'Patient phone number (full or last 4 digits) or booking reference code' })
+  @IsString()
+  @IsNotEmpty()
+  identifier: string;
+
+  @ApiPropertyOptional({ example: 'A8B2C1', description: 'Daily rotating lobby Standee QR verification salt code' })
+  @IsOptional()
+  @IsString()
+  lobbyCode?: string;
+
+  @ApiPropertyOptional({ example: 'Raman', description: 'Patient first or full name for verification when entering phone tail' })
+  @IsOptional()
+  @IsString()
+  patientName?: string;
+
+  @ApiPropertyOptional({ example: 'AKS', description: 'Clinic code identifier' })
+  @IsOptional()
+  @IsString()
+  clinicCode?: string;
 }
