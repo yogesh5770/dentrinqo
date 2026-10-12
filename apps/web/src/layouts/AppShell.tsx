@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { apiRequest } from '../lib/api';
+import { ClinicHoursClosureModal } from '../components/ClinicHoursClosureModal';
 import {
   LayoutDashboard,
   Users,
@@ -75,48 +76,30 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
   const [changePassError, setChangePassError] = useState<string | null>(null);
   const [changePassSuccess, setChangePassSuccess] = useState<string | null>(null);
 
-  // Hospital Holiday / Leave Mode State
-  const [showLeaveModal, setShowLeaveModal] = useState(false);
-  const [leaveMode, setLeaveMode] = useState<boolean>(user?.clinic?.isOnLeave ?? false);
-  const [leaveReasonInput, setLeaveReasonInput] = useState<string>(user?.clinic?.leaveReason || '');
-  const [savingLeave, setSavingLeave] = useState(false);
-  const [leaveSuccessMsg, setLeaveSuccessMsg] = useState<string | null>(null);
+  // Clinic Hours & Operational Status State
+  const [showHoursClosureModal, setShowHoursClosureModal] = useState(false);
+  const [clinicOperationalStatus, setClinicOperationalStatus] = useState<{
+    isOpen: boolean;
+    status: string;
+    message: string;
+    nextOpenAt: string | null;
+    activeClosure: any | null;
+  } | null>(null);
 
-  useEffect(() => {
-    if (user?.clinic) {
-      setLeaveMode(Boolean(user.clinic.isOnLeave));
-      setLeaveReasonInput(user.clinic.leaveReason || '');
-    }
-  }, [user?.clinic?.isOnLeave, user?.clinic?.leaveReason]);
-
-  const handleToggleLeave = async (targetLeaveStatus: boolean, reasonText: string) => {
-    setSavingLeave(true);
-    setLeaveSuccessMsg(null);
+  const fetchClinicOperationalStatus = async () => {
     try {
-      await apiRequest('/clinic/toggle-leave', {
-        method: 'PUT',
-        body: JSON.stringify({
-          isOnLeave: targetLeaveStatus,
-          leaveReason: targetLeaveStatus ? (reasonText.trim() || 'Hospital Closed / Holiday') : null,
-        }),
-      });
-      await refreshProfile();
-      setLeaveMode(targetLeaveStatus);
-      setLeaveSuccessMsg(
-        targetLeaveStatus
-          ? 'Hospital marked on Holiday / Leave. All new bookings suspended.'
-          : 'Hospital is now OPEN. Bookings and walk-ins are active.'
-      );
-      setTimeout(() => {
-        setShowLeaveModal(false);
-        setLeaveSuccessMsg(null);
-      }, 1200);
-    } catch (err: any) {
-      alert(err.message || 'Failed to update hospital status');
-    } finally {
-      setSavingLeave(false);
+      const res = await apiRequest<any>('/clinic/status');
+      setClinicOperationalStatus(res);
+    } catch (err) {
+      console.error('Failed to load clinic status', err);
     }
   };
+
+  useEffect(() => {
+    fetchClinicOperationalStatus();
+    const interval = setInterval(fetchClinicOperationalStatus, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const updateTime = () => {
@@ -606,21 +589,29 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
             </div>
           )}
 
-          {/* Hospital Leave / Holiday Status Toggle (Admin & Receptionist) */}
-          {(user?.role === 'CLINIC_ADMIN' || user?.role === 'RECEPTIONIST') && (
+          {/* Clinic Hours & Closures Status Pill */}
+          {(user?.role === 'CLINIC_ADMIN' || user?.role === 'RECEPTIONIST' || user?.role === 'DENTIST') && (
             <button
               type="button"
-              onClick={() => setShowLeaveModal(true)}
+              onClick={() => setShowHoursClosureModal(true)}
               className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs border mx-1 ${
-                leaveMode
-                  ? 'bg-rose-50 text-rose-700 border-rose-300 hover:bg-rose-100 ring-2 ring-rose-500/20'
-                  : 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                clinicOperationalStatus?.isOpen
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                  : 'bg-rose-50 text-rose-700 border-rose-300 hover:bg-rose-100 ring-2 ring-rose-500/20'
               }`}
-              title="Hospital Operational Status: Click to toggle Clinic Open / Holiday Leave"
+              title="Clinic Operating Status: Click to view/manage weekly hours & closures"
             >
-              <span className={`w-2 h-2 rounded-full shrink-0 ${leaveMode ? 'bg-rose-600 animate-ping' : 'bg-emerald-600'}`} />
-              <span className="hidden sm:inline">{leaveMode ? '⛔ Holiday (Leave ON)' : '🟢 Clinic Open'}</span>
-              <span className="sm:hidden">{leaveMode ? '⛔ Closed' : '🟢 Open'}</span>
+              <span className={`w-2 h-2 rounded-full shrink-0 ${clinicOperationalStatus?.isOpen ? 'bg-emerald-600' : 'bg-rose-600 animate-ping'}`} />
+              <span className="hidden sm:inline">
+                {clinicOperationalStatus?.isOpen
+                  ? '● OPEN'
+                  : `● CLOSED${
+                      clinicOperationalStatus?.nextOpenAt
+                        ? ` until ${new Date(clinicOperationalStatus.nextOpenAt).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+                        : ''
+                    }`}
+              </span>
+              <span className="sm:hidden">{clinicOperationalStatus?.isOpen ? '● Open' : '● Closed'}</span>
             </button>
           )}
 
@@ -670,20 +661,27 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
           </div>
         </header>
 
-        {/* Global Hospital Closed / Holiday Notice Banner */}
-        {leaveMode && (
+        {/* Global Clinic Closed / Closure Notice Banner */}
+        {clinicOperationalStatus && !clinicOperationalStatus.isOpen && (
           <div className="bg-gradient-to-r from-rose-600 via-rose-700 to-amber-700 text-white px-4 py-2.5 text-xs font-black flex items-center justify-between shadow-md shrink-0">
             <div className="flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-200 shrink-0 animate-pulse" />
-              <span>HOSPITAL CLOSED / HOLIDAY MODE ACTIVE: {user?.clinic?.leaveReason || 'New bookings and walk-ins are suspended.'}</span>
+              <span>
+                CLINIC CLOSED: {clinicOperationalStatus.message}
+                {clinicOperationalStatus.nextOpenAt && (
+                  <span className="font-medium ml-1.5 text-rose-100">
+                    (Auto-resumes: {new Date(clinicOperationalStatus.nextOpenAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })})
+                  </span>
+                )}
+              </span>
             </div>
             {(user?.role === 'CLINIC_ADMIN' || user?.role === 'RECEPTIONIST') && (
               <button
                 type="button"
-                onClick={() => setShowLeaveModal(true)}
-                className="bg-white/20 hover:bg-white/30 text-white px-3 py-1 rounded-lg text-[11px] font-extrabold cursor-pointer border border-white/30 transition-colors"
+                onClick={() => setShowHoursClosureModal(true)}
+                className="bg-white/20 hover:bg-white/30 text-white px-3 py-1 rounded-lg text-[11px] font-extrabold cursor-pointer border border-white/30 transition-colors ml-2 shrink-0"
               >
-                Re-Open Hospital
+                Manage Hours & Closures
               </button>
             )}
           </div>
@@ -1150,109 +1148,12 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
         </div>
       )}
 
-      {/* Hospital Holiday / Leave Mode Modal */}
-      {showLeaveModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden text-slate-900 animate-in fade-in zoom-in-95 duration-200">
-            <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
-              <div className="flex items-center gap-2.5">
-                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${leaveMode ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                  {leaveMode ? <AlertTriangle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
-                </div>
-                <div>
-                  <h3 className="font-black text-base text-slate-900">Hospital Operational Status</h3>
-                  <p className="text-xs text-slate-500 font-medium">Control appointment booking & walk-in availability</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowLeaveModal(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-5 text-xs">
-              {leaveSuccessMsg && (
-                <div className="p-3 bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-xl font-bold flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>{leaveSuccessMsg}</span>
-                </div>
-              )}
-
-              {/* Status Mode Select Buttons */}
-              <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50 space-y-3">
-                <span className="font-extrabold text-slate-800 uppercase tracking-wider block">Status Mode</span>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setLeaveMode(false)}
-                    className={`py-3 px-4 rounded-xl font-black text-xs flex items-center justify-center gap-2 transition-all cursor-pointer border ${
-                      !leaveMode
-                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-md ring-2 ring-emerald-500/20'
-                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-300" />
-                    <span>Clinic Open</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setLeaveMode(true)}
-                    className={`py-3 px-4 rounded-xl font-black text-xs flex items-center justify-center gap-2 transition-all cursor-pointer border ${
-                      leaveMode
-                        ? 'bg-rose-600 text-white border-rose-600 shadow-md ring-2 ring-rose-500/20'
-                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    <span className="w-2.5 h-2.5 rounded-full bg-rose-300" />
-                    <span>Holiday / Closed</span>
-                  </button>
-                </div>
-              </div>
-
-              {leaveMode && (
-                <div className="space-y-2">
-                  <label className="block font-black text-slate-800">
-                    Holiday / Leave Reason <span className="text-slate-400 font-medium">(Shown to patients & staff)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={leaveReasonInput}
-                    onChange={e => setLeaveReasonInput(e.target.value)}
-                    placeholder="e.g. Deepavali Public Holiday, Sunday Closed, Annual Staff Leave"
-                    className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-900 focus:border-rose-600 focus:bg-white placeholder:text-slate-400"
-                  />
-                  <p className="text-[11px] text-rose-700 font-medium">
-                    ⚠️ When Holiday mode is active, online bookings and kiosk self check-ins are blocked.
-                  </p>
-                </div>
-              )}
-
-              <div className="pt-3 border-t border-slate-200 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowLeaveModal(false)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 font-bold cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={savingLeave}
-                  onClick={() => handleToggleLeave(leaveMode, leaveReasonInput)}
-                  className={`px-5 py-2.5 rounded-xl text-white font-extrabold cursor-pointer shadow-md transition-all ${
-                    leaveMode ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-700'
-                  }`}
-                >
-                  {savingLeave ? 'Saving Status...' : 'Apply Status'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Clinic Hours & Closures Modal */}
+      <ClinicHoursClosureModal
+        isOpen={showHoursClosureModal}
+        onClose={() => setShowHoursClosureModal(false)}
+        onStatusChanged={fetchClinicOperationalStatus}
+      />
     </div>
   );
 };

@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { CreateAppointmentDto, UpdateAppointmentStatusDto, RescheduleAppointmentDto, ReceptionQuickConsultDto, PublicLookupDto } from './appointment.dto';
 import { CreatePublicAppointmentDto } from './public-booking.dto';
+import { ClinicHoursService } from '../clinic/clinic-hours.service';
 
 function parseJsonArray(val: any): string[] {
   if (!val) return [];
@@ -43,6 +44,7 @@ export class AppointmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly clinicHoursService: ClinicHoursService,
   ) {}
 
   private static ipFailures: Map<string, { count: number; resetAt: number }> = new Map();
@@ -183,8 +185,20 @@ export class AppointmentsService {
     }
   }
 
-  // Smart Chair Auto-Allocation: Allocates free chair or chair with least load
-  async autoAllocateChair(clinicId: string, start: Date, end: Date, tx: any): Promise<{ chairNumber: number; isFreeSlot: boolean; chairLoads: Record<number, number> }> {
+  // Candidate Chair Selection for Timed Booking (Requirement 6)
+  async getCandidateChairsForSlot(
+    clinicId: string,
+    start: Date,
+    end: Date,
+    preferredDentistId?: string | null,
+    tx?: any,
+  ): Promise<number[]> {
+    if (!tx || tx === this.prisma) {
+      return this.prisma.forTenant(clinicId, async (tenantTx) => {
+        return this.getCandidateChairsForSlot(clinicId, start, end, preferredDentistId, tenantTx);
+      });
+    }
+
     const clinic = await tx.clinic.findUnique({ where: { id: clinicId } });
     const totalChairs = clinic?.chairCount || 3;
 
@@ -206,8 +220,9 @@ export class AppointmentsService {
     }
     if (onDutyChairs.length === 0) onDutyChairs.push(1);
 
-    const activeStatuses = ['PENDING_CONFIRMATION', 'SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'IN_CHAIR'];
+    const activeStatuses = ['PENDING_CONFIRMATION', 'SCHEDULED', 'CONFIRMED', 'CALLED', 'IN_CHAIR'];
 
+    // 1. Find conflicting bookings on each on-duty chair
     const conflictingAppts = await tx.appointment.findMany({
       where: {
         clinicId,
@@ -222,8 +237,13 @@ export class AppointmentsService {
     });
 
     const busyChairsInSlot = new Set(conflictingAppts.map((a: any) => a.chairNumber));
-    const freeChairsInSlot = onDutyChairs.filter(c => !busyChairsInSlot.has(c));
+    const freeChairsInSlot = onDutyChairs.filter((c) => !busyChairsInSlot.has(c));
 
+    if (freeChairsInSlot.length === 0) {
+      return [];
+    }
+
+    // 2. Count day bookings for each free chair
     const dayStart = new Date(start);
     dayStart.setHours(0, 0, 0, 0);
     const dayEnd = new Date(start);
@@ -232,28 +252,52 @@ export class AppointmentsService {
     const dayAppts = await tx.appointment.findMany({
       where: {
         clinicId,
-        chairNumber: { in: onDutyChairs },
+        chairNumber: { in: freeChairsInSlot },
         status: { in: activeStatuses },
         scheduledStart: { gte: dayStart, lte: dayEnd },
       },
-      select: { chairNumber: true },
+      select: { chairNumber: true, dentistId: true },
     });
 
     const chairLoads: Record<number, number> = {};
-    for (const c of onDutyChairs) chairLoads[c] = 0;
+    for (const c of freeChairsInSlot) chairLoads[c] = 0;
     for (const a of dayAppts) {
       if (a.chairNumber && chairLoads[a.chairNumber] !== undefined) {
         chairLoads[a.chairNumber]++;
       }
     }
 
-    if (freeChairsInSlot.length > 0) {
-      freeChairsInSlot.sort((a, b) => (chairLoads[a] || 0) - (chairLoads[b] || 0));
-      return { chairNumber: freeChairsInSlot[0], isFreeSlot: true, chairLoads };
+    // Determine preferred chair if preferred dentist specified
+    let preferredChair: number | null = null;
+    if (preferredDentistId) {
+      const allDentists = await tx.user.findMany({
+        where: { clinicId, role: 'DENTIST', isActive: true },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      });
+      const dIndex = allDentists.findIndex((d) => d.id === preferredDentistId);
+      if (dIndex >= 0 && dIndex < totalChairs) {
+        preferredChair = dIndex + 1;
+      }
     }
 
-    const sortedByLoad = [...onDutyChairs].sort((a, b) => (chairLoads[a] || 0) - (chairLoads[b] || 0));
-    return { chairNumber: sortedByLoad[0], isFreeSlot: false, chairLoads };
+    // 3. Sort candidates:
+    // - Preferred doctor chair first
+    // - Fewest bookings that day ascending
+    // - Ties broken by lowest chair number ascending
+    freeChairsInSlot.sort((a, b) => {
+      const aIsPref = preferredChair === a ? 1 : 0;
+      const bIsPref = preferredChair === b ? 1 : 0;
+      if (aIsPref !== bIsPref) return bIsPref - aIsPref;
+
+      const loadA = chairLoads[a] || 0;
+      const loadB = chairLoads[b] || 0;
+      if (loadA !== loadB) return loadA - loadB;
+
+      return a - b;
+    });
+
+    return freeChairsInSlot;
   }
 
   async create(clinicId: string, dto: CreateAppointmentDto, actor: any) {
@@ -265,15 +309,17 @@ export class AppointmentsService {
     const duration = dto.durationMinutes || 30;
     const end = new Date(start.getTime() + duration * 60 * 1000);
 
-    return this.prisma.forTenant(clinicId, async (tx) => {
-      const clinic = await tx.clinic.findUnique({ where: { id: clinicId } });
-      if (clinic?.isOnLeave && !(dto as any).overrideLeave) {
-        throw new BadRequestException(
-          `Hospital is currently closed for Holiday / Leave (${clinic.leaveReason || 'Holiday'}). Please turn Hospital Status to OPEN before scheduling appointments.`,
-        );
-      }
+    // 1. Unified assertOpen check
+    await this.clinicHoursService.assertOpen(
+      clinicId,
+      start,
+      'RECEPTION_BOOKING',
+      dto.overrideReason,
+      actor,
+    );
 
-      // Verify patient and resolve dentist (allow auto-resolving to on-duty dentist if not specified)
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      // Verify patient and resolve dentist
       const patient = await tx.patient.findFirst({ where: { id: dto.patientId, clinicId } });
       if (!patient) throw new NotFoundException('Patient record not found');
 
@@ -288,19 +334,6 @@ export class AppointmentsService {
       }
       if (!dentist) throw new NotFoundException('Dentist record not found or no active dentist available in clinic');
 
-      // Smart Chair Auto-Allocation:
-      // If chairNumber is not specified or 0, find the free chair or the chair with the fewest appointments!
-      let chair = dto.chairNumber;
-      if (!chair || chair === 0) {
-        const alloc = await this.autoAllocateChair(clinicId, start, end, tx);
-        chair = alloc.chairNumber;
-      }
-
-      // Run concurrency & overlap check (skip chair blocking for lobby check-ins where patients are waiting in reception)
-      if (dto.status !== 'CHECKED_IN') {
-        await this.checkConflict(clinicId, dentist.id, chair, start, end, undefined, tx);
-      }
-
       const todayStart = new Date(start);
       todayStart.setHours(0, 0, 0, 0);
       const todayEnd = new Date(start);
@@ -311,38 +344,118 @@ export class AppointmentsService {
       const tokenNumber = (dto as any).tokenNumber || (countToday + 1);
       const trackingCode = (dto as any).trackingCode || crypto.randomBytes(16).toString('hex');
 
-      let appt: any;
-      try {
-        appt = await tx.appointment.create({
-          data: {
-            clinicId,
-            patientId: dto.patientId,
-            dentistId: dentist.id,
-            createdById: actor.userId || actor.id,
-            chairNumber: chair,
-            expectedChairNumber: chair,
-            tokenNumber,
-            trackingCode,
-            scheduledStart: start,
-            scheduledEnd: end,
-            durationMinutes: duration,
-            reason: dto.reason.trim(),
-            status: dto.status || 'SCHEDULED',
-            checkInTime: dto.status === 'CHECKED_IN' ? new Date() : null,
-            notes: dto.notes,
-          },
-          include: {
-            patient: { select: { fullName: true, phone: true, uhid: true, legacySlNo: true } },
-            dentist: { select: { fullName: true } },
-          },
-        });
-      } catch (err: any) {
-        if (err.message?.includes('no_overlapping_chair_booking') || err.code === '23P01') {
+      let appt: any = null;
+
+      // Check if specific chair explicitly requested
+      let chair = dto.chairNumber;
+      if (chair && chair > 0) {
+        const clinic = await tx.clinic.findUnique({ where: { id: clinicId } });
+        let isOffDuty = false;
+        if (clinic?.workingHours) {
+          try {
+            const parsed = JSON.parse(clinic.workingHours);
+            if (parsed.chairStatus && parsed.chairStatus[String(chair)] === false) {
+              isOffDuty = true;
+            }
+          } catch {}
+        }
+        if (isOffDuty) {
+          throw new BadRequestException(`Operatory Chair ${chair} is currently OFF DUTY. Please select an active chair.`);
+        }
+
+        if (dto.status !== 'CHECKED_IN') {
+          await this.checkConflict(clinicId, dentist.id, chair, start, end, undefined, tx);
+        }
+
+        try {
+          appt = await tx.appointment.create({
+            data: {
+              clinicId,
+              patientId: dto.patientId,
+              dentistId: dentist.id,
+              createdById: actor.userId || actor.id,
+              chairNumber: chair,
+              expectedChairNumber: chair,
+              preferredDentistId: dto.dentistId || null,
+              tokenNumber,
+              trackingCode,
+              scheduledStart: start,
+              scheduledEnd: end,
+              durationMinutes: duration,
+              reason: dto.reason.trim(),
+              status: dto.status || 'SCHEDULED',
+              checkInTime: dto.status === 'CHECKED_IN' ? new Date() : null,
+              notes: dto.notes,
+            },
+            include: {
+              patient: { select: { fullName: true, phone: true, uhid: true, legacySlNo: true } },
+              dentist: { select: { fullName: true } },
+            },
+          });
+        } catch (err: any) {
+          if (err.message?.includes('no_overlapping_chair_booking') || err.code === '23P01') {
+            throw new ConflictException(
+              `Dental Operatory Chair ${chair} is already occupied during this time window by another confirmed patient.`,
+            );
+          }
+          throw err;
+        }
+      } else {
+        // Automatic Intelligent Chair Allocation with Concurrency Retry Loop (Requirement 6)
+        const candidates = await this.getCandidateChairsForSlot(clinicId, start, end, dto.dentistId, tx);
+        if (candidates.length === 0) {
           throw new ConflictException(
-            `Dental Operatory Chair ${chair} is already occupied during this time window by another confirmed patient.`,
+            'All operatory chairs are fully booked for this time slot. Please choose another time.',
           );
         }
-        throw err;
+
+        let createdSuccess = false;
+        for (const candidateChair of candidates) {
+          try {
+            if (dto.status !== 'CHECKED_IN') {
+              await this.checkConflict(clinicId, dentist.id, candidateChair, start, end, undefined, tx);
+            }
+
+            appt = await tx.appointment.create({
+              data: {
+                clinicId,
+                patientId: dto.patientId,
+                dentistId: dentist.id,
+                createdById: actor.userId || actor.id,
+                chairNumber: candidateChair,
+                expectedChairNumber: candidateChair,
+                preferredDentistId: dto.dentistId || null,
+                tokenNumber,
+                trackingCode,
+                scheduledStart: start,
+                scheduledEnd: end,
+                durationMinutes: duration,
+                reason: dto.reason.trim(),
+                status: dto.status || 'SCHEDULED',
+                checkInTime: dto.status === 'CHECKED_IN' ? new Date() : null,
+                notes: dto.notes,
+              },
+              include: {
+                patient: { select: { fullName: true, phone: true, uhid: true, legacySlNo: true } },
+                dentist: { select: { fullName: true } },
+              },
+            });
+            createdSuccess = true;
+            break;
+          } catch (err: any) {
+            // GiST exclusion violation or concurrent overlap -> retry next candidate!
+            if (err.code === '23P01' || err.message?.includes('no_overlapping_chair_booking') || err instanceof ConflictException) {
+              continue;
+            }
+            throw err;
+          }
+        }
+
+        if (!createdSuccess || !appt) {
+          throw new ConflictException(
+            'All operatory chairs are fully booked for this time slot. Please choose another time.',
+          );
+        }
       }
 
       await this.auditService.log({
@@ -626,17 +739,30 @@ export class AppointmentsService {
   }
 
   async reschedule(clinicId: string, id: string, dto: RescheduleAppointmentDto, actor: any) {
+    const newStart = new Date(dto.newScheduledStart);
+    if (isNaN(newStart.getTime())) {
+      throw new BadRequestException('Invalid scheduled start time');
+    }
+
+    // Unified assertOpen check (Requirement 3)
+    await this.clinicHoursService.assertOpen(
+      clinicId,
+      newStart,
+      'RESCHEDULE',
+      dto.overrideReason,
+      actor,
+    );
+
     return this.prisma.forTenant(clinicId, async (tx) => {
       const appt = await tx.appointment.findFirst({ where: { id, clinicId } });
       if (!appt) throw new NotFoundException('Appointment not found');
 
-      const newStart = new Date(dto.newScheduledStart);
       const duration = dto.durationMinutes || appt.durationMinutes;
       const newEnd = new Date(newStart.getTime() + duration * 60 * 1000);
       const chair = dto.chairNumber || appt.chairNumber;
 
       // Check conflict excluding current appointment
-      await this.checkConflict(clinicId, appt.dentistId, chair, newStart, newEnd, id);
+      await this.checkConflict(clinicId, appt.dentistId, chair, newStart, newEnd, id, tx);
 
       const updated = await tx.appointment.update({
         where: { id },
@@ -656,8 +782,8 @@ export class AppointmentsService {
 
       await this.auditService.log({
         clinicId,
-        actorId: actor.userId,
-        actorRole: actor.role,
+        actorId: actor?.userId || actor?.id || 'staff',
+        actorRole: actor?.role || 'STAFF',
         action: 'APPOINTMENT_RESCHEDULED',
         entityType: 'Appointment',
         entityId: id,
@@ -775,15 +901,9 @@ export class AppointmentsService {
       throw new NotFoundException('Dental clinic not found or not configured.');
     }
 
-    if ((clinic as any).isOnLeave) {
-      throw new BadRequestException(
-        `The clinic is currently closed (${(clinic as any).leaveReason || 'Holiday / Leave'}). Online appointment requests are temporarily suspended.`,
-      );
-    }
-
     const clinicId = clinic.id;
 
-    // 2. Validate preferred date is not in the past
+    // 2. Validate preferred date and slot timing
     const apptDate = new Date(dto.preferredDate);
     if (isNaN(apptDate.getTime())) {
       throw new BadRequestException('Invalid preferred appointment date format. Use YYYY-MM-DD.');
@@ -795,6 +915,15 @@ export class AppointmentsService {
     if (checkDate < today) {
       throw new BadRequestException('Preferred appointment date cannot be in the past.');
     }
+
+    const scheduledStart = this.parseSlotTime(dto.preferredDate, dto.preferredSlot);
+
+    // Unified assertOpen check (Requirement 1, 3: Slots offered and allowed only inside working hours)
+    await this.clinicHoursService.assertOpen(
+      clinicId,
+      scheduledStart,
+      'PUBLIC_BOOKING',
+    );
 
     // 3. Normalize phone to E.164
     const normalizedPhone = this.normalizePhoneToE164(dto.phone);
@@ -987,31 +1116,20 @@ export class AppointmentsService {
       const scheduledStart = this.parseSlotTime(dto.preferredDate, dto.preferredSlot);
       const scheduledEnd = new Date(scheduledStart.getTime() + 30 * 60 * 1000);
 
-      const totalChairs = Math.max(clinic?.chairCount || 2, 1);
-      let chairNum = dto.chairNumber && dto.chairNumber >= 1 && dto.chairNumber <= 10 ? dto.chairNumber : null;
-      if (!chairNum) {
-        for (let c = 1; c <= totalChairs; c++) {
-          const conflict = await tx.appointment.findFirst({
-            where: {
-              clinicId,
-              chairNumber: c,
-              status: { in: ['PENDING_CONFIRMATION', 'SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'IN_CHAIR'] },
-              AND: [
-                { scheduledStart: { lt: scheduledEnd } },
-                { scheduledEnd: { gt: scheduledStart } },
-              ],
-            },
-          });
-          if (!conflict) {
-            chairNum = c;
-            break;
-          }
-        }
-      }
-      if (!chairNum) chairNum = 1;
+      // Intelligent Candidate Chair Allocation with Concurrency Retry Loop (Requirement 6)
+      const candidates = await this.getCandidateChairsForSlot(
+        clinicId,
+        scheduledStart,
+        scheduledEnd,
+        undefined,
+        tx,
+      );
 
-      // Conflict check
-      await this.checkConflict(clinicId, dentist.id, chairNum, scheduledStart, scheduledEnd, undefined, tx);
+      if (candidates.length === 0) {
+        throw new ConflictException(
+          'All operatory chairs are fully booked for this time slot. Please choose another slot.',
+        );
+      }
 
       // 8. Generate 128-bit unguessable tracking code & atomic sequential daily queue token
       const trackingCode = crypto.randomBytes(16).toString('hex'); // 32 hex chars = 128 bits
@@ -1043,30 +1161,52 @@ export class AppointmentsService {
       const initialStatus = isWalkin ? 'CHECKED_IN' : 'SCHEDULED';
       const checkInTime = isWalkin ? new Date() : null;
 
-      // 9. Persist Appointment
-      const appt = await tx.appointment.create({
-        data: {
-          clinicId,
-          patientId: patient.id,
-          dentistId: dentist.id,
-          createdById: staff.id,
-          chairNumber: chairNum,
-          expectedChairNumber: chairNum,
-          scheduledStart,
-          scheduledEnd,
-          durationMinutes: 30,
-          reason: isWalkin
-            ? `[Hospital Lobby Walk-In] ${dto.service} (Operatory #${chairNum})`
-            : `[Public Request] ${dto.service} (${dto.preferredSlot})`,
-          status: initialStatus,
-          checkInTime,
-          isConfirmedAtDesk: isWalkin,
-          checkInSource: isWalkin ? 'SELF_QR' : 'ONLINE',
-          tokenNumber,
-          trackingCode,
-          notes: `Preferred Slot: ${dto.preferredSlot}\nOperatory Chair: #${chairNum}\nClient Notes: ${dto.notes || 'None'}${noShowAuditNote}\nClient IP: ${clientIp || 'N/A'}\nSubmission: ${isWalkin ? 'Hospital Lobby Standee QR (Checked-In)' : 'Online /book portal'}`,
-        },
-      });
+      // 9. Persist Appointment with Candidate Retry Loop
+      let appt: any = null;
+      let finalChair = candidates[0];
+
+      for (const candidateChair of candidates) {
+        try {
+          await this.checkConflict(clinicId, dentist.id, candidateChair, scheduledStart, scheduledEnd, undefined, tx);
+
+          appt = await tx.appointment.create({
+            data: {
+              clinicId,
+              patientId: patient.id,
+              dentistId: dentist.id,
+              createdById: staff.id,
+              chairNumber: candidateChair,
+              expectedChairNumber: candidateChair,
+              scheduledStart,
+              scheduledEnd,
+              durationMinutes: 30,
+              reason: isWalkin
+                ? `[Hospital Lobby Walk-In] ${dto.service} (Operatory #${candidateChair})`
+                : `[Public Request] ${dto.service} (${dto.preferredSlot})`,
+              status: initialStatus,
+              checkInTime,
+              isConfirmedAtDesk: isWalkin,
+              checkInSource: isWalkin ? 'SELF_QR' : 'ONLINE',
+              tokenNumber,
+              trackingCode,
+              notes: `Preferred Slot: ${dto.preferredSlot}\nOperatory Chair: #${candidateChair}\nClient Notes: ${dto.notes || 'None'}${noShowAuditNote}\nClient IP: ${clientIp || 'N/A'}\nSubmission: ${isWalkin ? 'Hospital Lobby Standee QR (Checked-In)' : 'Online /book portal'}`,
+            },
+          });
+          finalChair = candidateChair;
+          break;
+        } catch (err: any) {
+          if (err.code === '23P01' || err.message?.includes('no_overlapping_chair_booking') || err instanceof ConflictException) {
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      if (!appt) {
+        throw new ConflictException(
+          'All operatory chairs are fully booked for this time slot. Please choose another slot.',
+        );
+      }
 
       const shortId = appt.id.replace(/-/g, '').substring(0, 5).toUpperCase();
       const reference = `${clinic.code}-${new Date().getFullYear()}-${shortId}`;
@@ -1077,7 +1217,7 @@ export class AppointmentsService {
         tokenNumber,
         trackingCode,
         trackingUrl: `/track/${trackingCode}`,
-        chairNumber: chairNum,
+        chairNumber: finalChair,
         status: initialStatus,
         clinicName: clinic.name,
         clinicPhone: clinic.phone,
@@ -1193,14 +1333,17 @@ export class AppointmentsService {
       resolvedDob = new Date(new Date().getFullYear() - resolvedAge, 0, 1);
     }
 
+    // Unified assertOpen check (Requirement 1, 3: Walk-in allowed only inside working hours)
+    await this.clinicHoursService.assertOpen(
+      clinicId,
+      new Date(),
+      'RECEPTION_WALKIN',
+      dto.overrideReason,
+      staffUser,
+    );
+
     const result = await this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.clinic_id', ${clinicId}, true)`;
-      const tenantClinic = await tx.clinic.findUnique({ where: { id: clinicId } });
-      if ((tenantClinic as any)?.isOnLeave && !dto.overrideLeave) {
-        throw new BadRequestException(
-          `Hospital is currently marked ON LEAVE / CLOSED (${(tenantClinic as any)?.leaveReason || 'Holiday'}). Please turn Hospital Status to OPEN before booking walk-ins.`,
-        );
-      }
       let patient: any = null;
 
       // Step A: If receptionist picked an existing patient
@@ -1337,7 +1480,7 @@ export class AppointmentsService {
           status: 'IN_CHAIR',
           scheduledStart: { gte: todayStart, lte: todayEnd },
         },
-        select: { chairNumber: true },
+        select: { chairNumber: true, scheduledEnd: true },
       });
       const occupiedChairs = new Set(inChairAppts.map(a => a.chairNumber));
 
@@ -1363,9 +1506,17 @@ export class AppointmentsService {
         expectedChair = freeOnDutyChairs[0];
         chairBanner = `Chair #${expectedChair}: Go now`;
       } else {
-        // All chairs occupied or patients waiting ahead
+        // All chairs occupied or patients waiting ahead:
+        // Pick free chair now, else the chair expected to free first (Requirement 6)
         isImmediateSeat = false;
-        expectedChair = freeOnDutyChairs[0] || onDutyChairs[(tokenNumber - 1) % onDutyChairs.length];
+        if (freeOnDutyChairs.length > 0) {
+          expectedChair = freeOnDutyChairs[0];
+        } else {
+          const sortedBusy = inChairAppts
+            .filter((a: any) => onDutyChairs.includes(a.chairNumber))
+            .sort((a: any, b: any) => new Date(a.scheduledEnd).getTime() - new Date(b.scheduledEnd).getTime());
+          expectedChair = sortedBusy.length > 0 ? sortedBusy[0].chairNumber : onDutyChairs[0];
+        }
         chairBanner = `${waitingAhead} patients ahead, Chair #${expectedChair} (expected) - chair assigned when called`;
       }
 
@@ -1978,13 +2129,12 @@ export class AppointmentsService {
     if (!clinic) {
       clinic = await this.prisma.clinic.findFirst({ where: { status: 'ACTIVE' } });
     }
-    if (!clinic) throw new NotFoundException('Dental clinic not configured');
-
-    if ((clinic as any).isOnLeave) {
-      throw new BadRequestException(
-        `The clinic is currently closed (${(clinic as any).leaveReason || 'Holiday / Leave'}). Walk-in check-in is unavailable today.`,
-      );
-    }
+    // Unified assertOpen check (Requirement 1, 3: Self check-in allowed only inside working hours)
+    await this.clinicHoursService.assertOpen(
+      clinic.id,
+      new Date(),
+      'SELF_CHECKIN',
+    );
 
     // 2. Clinic Aggregate Check-in Pause (DDoS protection)
     if (this.isClinicCheckinPaused(clinic.id)) {
@@ -2351,6 +2501,26 @@ export class AppointmentsService {
       bookedSlotsByChair[i] = [];
     }
 
+    // Check clinic hours & closures for target date (Requirement 1, 3, 5)
+    const statusInfo = await this.clinicHoursService.getClinicStatus(clinic.id, dayStart);
+    const isClinicClosed = !statusInfo.isOpen;
+
+    // If date has a closure or is marked closed weekday, block all slots
+    if (isClinicClosed) {
+      return {
+        success: true,
+        clinicCode: clinic.code,
+        date: targetDate,
+        totalChairs,
+        isClinicClosed: true,
+        closedMessage: statusInfo.message,
+        closureReason: statusInfo.closureReason,
+        nextOpenAt: statusInfo.nextOpenAt,
+        operatingHours: statusInfo.todaySchedule,
+        bookedSlotsByChair,
+      };
+    }
+
     for (const appt of appointments) {
       const chairNum = appt.chairNumber || 1;
       if (!bookedSlotsByChair[chairNum]) {
@@ -2391,6 +2561,27 @@ export class AppointmentsService {
       }
     }
 
+    // If clinic has intermission / break on this day, block break slots across all chairs
+    if (statusInfo.todaySchedule?.hasBreak && statusInfo.todaySchedule.breakStart && statusInfo.todaySchedule.breakEnd) {
+      const bStart = statusInfo.todaySchedule.breakStart;
+      const bEnd = statusInfo.todaySchedule.breakEnd;
+      // Convert HH:mm to 12h AM/PM strings
+      const formatToAmPm = (tStr: string) => {
+        const [h, m] = tStr.split(':').map(Number);
+        const meridiem = h >= 12 ? 'PM' : 'AM';
+        const h12 = h % 12 || 12;
+        return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${meridiem}`;
+      };
+      const breakSlots = [formatToAmPm(bStart)];
+      if (bStart === '13:30' && bEnd === '14:30') {
+        breakSlots.push('02:00 PM', '2:00 PM', '01:30 PM', '1:30 PM');
+      }
+
+      for (let i = 1; i <= totalChairs; i++) {
+        bookedSlotsByChair[i].push(...breakSlots);
+      }
+    }
+
     // Deduplicate slots for each chair
     for (const chairKey in bookedSlotsByChair) {
       bookedSlotsByChair[chairKey] = Array.from(new Set(bookedSlotsByChair[chairKey]));
@@ -2401,6 +2592,9 @@ export class AppointmentsService {
       clinicCode: clinic.code,
       date: targetDate,
       totalChairs,
+      isClinicClosed: false,
+      operatingHours: statusInfo.todaySchedule,
+      nextOpenAt: statusInfo.nextOpenAt,
       bookedSlotsByChair,
     };
   }

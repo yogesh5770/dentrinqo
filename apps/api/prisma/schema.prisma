@@ -67,6 +67,8 @@ model Clinic {
   consents              PatientConsent[]
   dailyQueueSequences   DailyQueueSequence[]
   clinicSequences       ClinicSequence[]
+  closures              ClinicClosure[]
+  customWorkingHours    ClinicWorkingHour[]
 }
 
 model User {
@@ -99,6 +101,8 @@ model User {
   completedProcedures CompletedProcedure[]
   prescriptions       Prescription[]
   auditLogs           AuditLog[]
+  createdClosures     ClinicClosure[] @relation("CreatedClosures")
+  endedClosures       ClinicClosure[] @relation("EndedClosures")
 
   @@unique([clinicId, username])
   @@index([clinicId, role])
@@ -244,6 +248,9 @@ model Appointment {
   notes           String?
   isReappearance  Boolean  @default(false)
   legacySlNo      String?
+  cancellationReason String?
+  cancelledAt     DateTime?
+  cancelledById   String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -730,6 +737,39 @@ model ClinicDisplayToken {
   isRevoked  Boolean   @default(false)
   createdAt  DateTime  @default(now())
 
+  @@index([clinicId])
+}
+
+model ClinicClosure {
+  id          String    @id @default(uuid())
+  clinicId    String
+  clinic      Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  startAt     DateTime
+  endAt       DateTime
+  reason      String
+  createdById String
+  createdBy   User      @relation("CreatedClosures", fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now())
+  endedAt     DateTime?
+  endedById   String?
+  endedBy     User?     @relation("EndedClosures", fields: [endedById], references: [id])
+
+  @@index([clinicId, startAt, endAt])
+}
+
+model ClinicWorkingHour {
+  id         String   @id @default(uuid())
+  clinicId   String
+  clinic     Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  dayOfWeek  Int      // 0=Sunday, 1=Monday, ..., 6=Saturday
+  isOpen     Boolean  @default(true)
+  openTime   String   @default("09:30")
+  closeTime  String   @default("20:30")
+  hasBreak   Boolean  @default(false)
+  breakStart String?  @default("13:30")
+  breakEnd   String?  @default("14:30")
+
+  @@unique([clinicId, dayOfWeek])
   @@index([clinicId])
 }
 

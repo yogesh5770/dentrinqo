@@ -71,6 +71,21 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLockedOut, setIsLockedOut] = useState(false);
+  const [publicClinicStatus, setPublicClinicStatus] = useState<{
+    isOpen: boolean;
+    status: string;
+    message: string;
+    nextOpenAt: string | null;
+    phone?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    apiRequest<any>(`/clinic/public-status?clinicCode=${activeClinicCode}`)
+      .then(res => setPublicClinicStatus(res))
+      .catch(() => {});
+  }, [activeClinicCode]);
+
+  const isClinicClosed = Boolean(tenantClinic?.isOnLeave || (publicClinicStatus && !publicClinicStatus.isOpen));
 
   // Success State
   const [checkInSuccess, setCheckInSuccess] = useState<any | null>(null);
@@ -162,8 +177,8 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
       return;
     }
 
-    if (tenantClinic?.isOnLeave) {
-      setError(`Hospital is currently closed for Holiday / Leave (${tenantClinic.leaveReason || 'Holiday'}). Check-in is paused.`);
+    if (isClinicClosed) {
+      setError(`Clinic is currently closed (${publicClinicStatus?.message || tenantClinic?.leaveReason || 'Holiday'}). Check-in is paused.`);
       return;
     }
 
@@ -242,8 +257,8 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
       return;
     }
 
-    if (tenantClinic?.isOnLeave) {
-      setError(`Hospital is currently closed for Holiday / Leave (${tenantClinic.leaveReason || 'Holiday'}). Walk-in registration is paused.`);
+    if (isClinicClosed) {
+      setError(`Clinic is currently closed (${publicClinicStatus?.message || tenantClinic?.leaveReason || 'Holiday'}). Walk-in registration is paused.`);
       return;
     }
 
@@ -374,19 +389,29 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
         </div>
 
         {/* Hospital Closed / On Leave Notice */}
-        {tenantClinic?.isOnLeave && (
+        {isClinicClosed && (
           <div className="bg-gradient-to-r from-rose-50 to-amber-50 border-2 border-rose-400 rounded-3xl p-5 space-y-3 shadow-md animate-in fade-in">
             <div className="flex items-start gap-3">
               <ShieldAlert className="w-6 h-6 text-rose-600 shrink-0 mt-0.5" />
               <div className="space-y-1">
-                <h3 className="font-black text-sm text-rose-950">⛔ Hospital Closed for Holiday / Leave</h3>
+                <h3 className="font-black text-sm text-rose-950">
+                  ⛔ Clinic Closed {publicClinicStatus?.message ? `: ${publicClinicStatus.message}` : 'for Holiday / Leave'}
+                </h3>
                 <p className="text-xs text-rose-900 font-medium leading-relaxed">
-                  {activeClinicName} is currently observing a holiday ({tenantClinic.leaveReason || 'Holiday'}). Public arrivals, appointments, and walk-in registrations are temporarily paused.
+                  {activeClinicName} is currently closed. Public arrivals, self check-ins, and walk-in registrations are temporarily paused.
+                  {publicClinicStatus?.nextOpenAt && (
+                    <span className="block mt-1 font-bold text-rose-950">
+                      Next scheduled opening: {new Date(publicClinicStatus.nextOpenAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })}
+                    </span>
+                  )}
                 </p>
                 <div className="pt-2">
-                  <span className="inline-block px-3 py-1 bg-rose-200/80 rounded-xl text-xs font-black text-rose-950">
-                    📞 For dental emergencies, please call reception directly: {activeClinicPhone}
-                  </span>
+                  <a
+                    href={`tel:${publicClinicStatus?.phone || activeClinicPhone}`}
+                    className="inline-block px-3 py-1 bg-rose-200/80 rounded-xl text-xs font-black text-rose-950"
+                  >
+                    📞 For dental emergencies, please call reception directly: {publicClinicStatus?.phone || activeClinicPhone}
+                  </a>
                 </div>
               </div>
             </div>

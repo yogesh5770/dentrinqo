@@ -417,6 +417,22 @@ export const WalkinConsultModal: React.FC<WalkinConsultModalProps> = ({
                   </span>
                 </div>
 
+                {/* Patients Ahead & Approx Wait */}
+                <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                  <div className="bg-white/80 p-2 rounded-xl border border-teal-200">
+                    <span className="text-slate-500 font-bold block text-[10px] uppercase">Patients Ahead</span>
+                    <span className="font-black text-slate-900 text-sm">{bookingSuccess.patientsAhead ?? 0}</span>
+                  </div>
+                  <div className="bg-white/80 p-2 rounded-xl border border-teal-200">
+                    <span className="text-slate-500 font-bold block text-[10px] uppercase">Approx. Wait Time</span>
+                    <span className="font-black text-teal-800 text-sm">
+                      {bookingSuccess.isImmediateSeat
+                        ? 'Immediate Seating'
+                        : `approx. ${Math.max(5, (bookingSuccess.patientsAhead ?? 1) * 15)} mins`}
+                    </span>
+                  </div>
+                </div>
+
                 <div className="pt-2 border-t border-teal-200/60 flex items-center justify-between text-xs font-bold text-slate-600 px-2">
                   <span>Patient: <strong className="text-slate-900">{bookingSuccess.patientName}</strong></span>
                   <span>UHID: <strong className="font-mono text-teal-900">{bookingSuccess.uhid}</strong></span>

@@ -20,6 +20,10 @@ import {
   FolderOpen,
   Armchair,
   Zap,
+  Printer,
+  Send,
+  QrCode,
+  CheckCircle2,
 } from 'lucide-react';
 import { SpeechToTextDictation } from '../../components/SpeechToTextDictation';
 
@@ -76,6 +80,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
   const [duplicateWarning, setDuplicateWarning] = useState<any | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitMode, setSubmitMode] = useState<'WALK_IN_NOW' | 'SCHEDULE_LATER' | 'SAVE_ONLY'>('WALK_IN_NOW');
+  const [walkinSuccessData, setWalkinSuccessData] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -182,27 +187,25 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
       triggerClinicSync('patient_created');
 
       if (mode === 'WALK_IN_NOW') {
-        // Automatically create walk-in appointment in CHECKED_IN status for immediate re-consultation
         try {
-          await apiRequest('/appointments', {
+          const quickRes = await apiRequest<any>('/appointments/reception-quick-consult', {
             method: 'POST',
             body: JSON.stringify({
               patientId: res.id,
-              scheduledStart: new Date().toISOString(),
-              durationMinutes: 30,
               reason: recordMode === 'LEGACY_ARCHIVE'
                 ? `Re-Consultation (Card #${legacySlNo.trim()})`
                 : 'Walk-In Consultation & Examination',
-              status: 'CHECKED_IN',
-              chairNumber: recordMode === 'LEGACY_ARCHIVE' ? reappearChair : 1,
-              isReappearance: recordMode === 'LEGACY_ARCHIVE',
-              legacySlNo: recordMode === 'LEGACY_ARCHIVE' ? legacySlNo.trim() : undefined,
             }),
           });
           triggerClinicSync('appointment_booked');
           triggerClinicSync('appt_CHECKED_IN');
-        } catch (apptErr) {
+          onPatientCreated(res);
+          setWalkinSuccessData({ ...quickRes, patient: res });
+          return;
+        } catch (apptErr: any) {
           console.error('Auto-checkin appointment error', apptErr);
+          setError(apptErr.message || 'Walk-in consult allocation failed');
+          return;
         }
       }
 
@@ -217,6 +220,54 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handlePrintSlip = () => {
+    if (!walkinSuccessData) return;
+    const printWindow = window.open('', '_blank', 'width=380,height=560');
+    if (!printWindow) {
+      alert('Pop-up blocked. Please allow pop-ups to print the thermal receipt.');
+      return;
+    }
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Queue Slip - Token #${walkinSuccessData.tokenNumber}</title>
+          <style>
+            @page { size: 80mm auto; margin: 4mm; }
+            body { font-family: 'Courier New', monospace, sans-serif; width: 72mm; margin: 0 auto; padding: 4mm; color: #000; font-size: 12px; line-height: 1.3; text-align: center; }
+            .header { border-bottom: 1px dashed #000; padding-bottom: 6px; margin-bottom: 8px; }
+            .clinic-name { font-size: 14px; font-weight: 900; text-transform: uppercase; margin-bottom: 2px; }
+            .token-box { border: 2px solid #000; padding: 6px; margin: 8px 0; border-radius: 4px; }
+            .token-num { font-size: 32px; font-weight: 900; }
+            .info-row { display: flex; justify-content: space-between; font-size: 11px; margin: 3px 0; text-align: left; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div class="clinic-name">AK's Elite Dental Clinic</div>
+            <div>PATIENT QUEUE SLIP</div>
+          </div>
+          <div class="token-box">
+            <div>QUEUE TOKEN</div>
+            <div class="token-num">#${walkinSuccessData.tokenNumber}</div>
+            <div>CHAIR #${walkinSuccessData.chairNumber || walkinSuccessData.expectedChairNumber} (EXPECTED)</div>
+          </div>
+          <div class="info-row"><span>Patient:</span><strong>${fullName}</strong></div>
+          <div class="info-row"><span>Patients Ahead:</span><strong>${walkinSuccessData.patientsAhead ?? 0}</strong></div>
+          <div class="info-row"><span>Est. Wait:</span><strong>approx. ${Math.max(5, (walkinSuccessData.patientsAhead ?? 1) * 15)} mins</strong></div>
+          <p style="font-size: 10px; margin-top: 10px;">Please watch the lobby display TV. We will page your token when ready.</p>
+        </body>
+      </html>
+    `;
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 250);
   };
 
   return (
@@ -249,17 +300,106 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
           </button>
         </div>
 
-        {/* Top Mode Selector Tabs */}
-        <div className="bg-slate-100 p-2 border-b border-slate-200 flex gap-2">
-          <button
-            type="button"
-            onClick={() => setRecordMode('LEGACY_ARCHIVE')}
-            className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 ${
-              recordMode === 'LEGACY_ARCHIVE'
-                ? 'bg-amber-500 text-white shadow-xs'
-                : 'text-amber-900 bg-amber-100/60 hover:bg-amber-100'
-            }`}
-          >
+        {walkinSuccessData ? (
+          <div className="p-6 space-y-5 text-center">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-emerald-100 text-emerald-700 mx-auto shadow-inner">
+              <CheckCircle2 className="w-10 h-10" />
+            </div>
+
+            <div>
+              <h4 className="text-xl font-black text-slate-900">
+                Patient Registered & Walk-in Booked!
+              </h4>
+              <p className="text-xs text-slate-500 font-medium mt-0.5">
+                Patient is added to today's active queue.
+              </p>
+            </div>
+
+            {/* Huge Token & Chair Card */}
+            <div className="bg-gradient-to-br from-teal-50 to-slate-50 p-5 rounded-3xl border-2 border-teal-500/40 shadow-sm space-y-3">
+              <span className="text-xs uppercase font-extrabold tracking-wider text-teal-900 block">
+                Queue Token
+              </span>
+              <div className="text-5xl font-black text-slate-900 font-mono tracking-tight">
+                #{walkinSuccessData.tokenNumber}
+              </div>
+
+              <div className="py-2 px-4 rounded-xl text-xs sm:text-sm font-black flex items-center justify-center gap-2 bg-amber-100 text-amber-950 border border-amber-300">
+                <Armchair className="w-4 h-4" />
+                <span>
+                  {walkinSuccessData.isImmediateSeat
+                    ? `Chair #${walkinSuccessData.chairNumber}: Go now to operatory`
+                    : `Chair #${walkinSuccessData.chairNumber || walkinSuccessData.expectedChairNumber} (expected) — seat when called`}
+                </span>
+              </div>
+
+              {/* Patients Ahead & Approx Wait */}
+              <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                <div className="bg-white/80 p-2 rounded-xl border border-teal-200">
+                  <span className="text-slate-500 font-bold block text-[10px] uppercase">Patients Ahead</span>
+                  <span className="font-black text-slate-900 text-sm">{walkinSuccessData.patientsAhead ?? 0}</span>
+                </div>
+                <div className="bg-white/80 p-2 rounded-xl border border-teal-200">
+                  <span className="text-slate-500 font-bold block text-[10px] uppercase">Approx. Wait Time</span>
+                  <span className="font-black text-teal-800 text-sm">
+                    {walkinSuccessData.isImmediateSeat
+                      ? 'Immediate Seating'
+                      : `approx. ${Math.max(5, (walkinSuccessData.patientsAhead ?? 1) * 15)} mins`}
+                  </span>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-teal-200/60 flex items-center justify-between text-xs font-bold text-slate-600 px-2">
+                <span>Patient: <strong className="text-slate-900">{fullName}</strong></span>
+                <span>UHID: <strong className="font-mono text-teal-900">{walkinSuccessData.patient?.uhid}</strong></span>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={handlePrintSlip}
+                className="px-4 py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs transition cursor-pointer shadow-md flex items-center justify-center gap-2"
+              >
+                <Printer className="w-4 h-4 text-amber-300" />
+                <span>🖨️ Print 80mm Slip</span>
+              </button>
+
+              <a
+                href={`https://wa.me/${phone.replace(/\D/g, '').length === 10 ? '91' + phone.replace(/\D/g, '') : phone.replace(/\D/g, '')}?text=${encodeURIComponent(`Hello ${fullName}, your walk-in token at AK's Elite Dental Clinic is #${walkinSuccessData.tokenNumber}. Expected chair: Chair #${walkinSuccessData.chairNumber || walkinSuccessData.expectedChairNumber}. Estimated wait: approx. ${Math.max(5, (walkinSuccessData.patientsAhead ?? 1) * 15)} mins.`)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-4 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs transition cursor-pointer shadow-md flex items-center justify-center gap-2"
+              >
+                <Send className="w-4 h-4" />
+                <span>💬 Send via WhatsApp</span>
+              </a>
+            </div>
+
+            <div className="pt-3 border-t border-slate-200 flex justify-end">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-6 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-black text-xs cursor-pointer shadow-xs"
+              >
+                Done & Close
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Top Mode Selector Tabs */}
+            <div className="bg-slate-100 p-2 border-b border-slate-200 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setRecordMode('LEGACY_ARCHIVE')}
+                className={`flex-1 py-2 px-3 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                  recordMode === 'LEGACY_ARCHIVE'
+                    ? 'bg-amber-500 text-white shadow-xs'
+                    : 'text-amber-900 bg-amber-100/60 hover:bg-amber-100'
+                }`}
+              >
             <Archive className="w-4 h-4" />
             <span>Physical Card Intake (Serial No & Name)</span>
           </button>
@@ -696,7 +836,9 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
             </div>
           </div>
         </form>
-      </div>
-    </div>
-  );
+      </>
+    )}
+  </div>
+</div>
+);
 };

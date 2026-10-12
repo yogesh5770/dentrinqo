@@ -122,6 +122,13 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
   const [trackingCode, setTrackingCode] = useState<string | null>(null);
   const [copiedRef, setCopiedRef] = useState<boolean>(false);
   const [lobbyCode, setLobbyCode] = useState<string>('');
+  const [publicClinicStatus, setPublicClinicStatus] = useState<{
+    isOpen: boolean;
+    status: string;
+    message: string;
+    nextOpenAt: string | null;
+    phone?: string;
+  } | null>(null);
 
   // Patient Account & Family State
   const { account, familyMembers, token } = usePatientAuth();
@@ -175,6 +182,11 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
     if (codeParam) {
       setLobbyCode(codeParam.trim().toUpperCase());
     }
+
+    // Fetch public operational status & active closures
+    apiRequest<any>(`/clinic/public-status?clinicCode=${clinicCode}`)
+      .then(res => setPublicClinicStatus(res))
+      .catch(() => {});
 
     // Fetch live active chairs
     apiRequest<{ chairs: any[] }>(`/appointments/public-chair-status?clinicCode=${clinicCode}`)
@@ -531,6 +543,35 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
 
       {/* Main Container */}
       <main className="max-w-4xl mx-auto w-full px-4 py-8 sm:py-10 flex-1">
+        {/* Clinic Closed Alert Banner */}
+        {publicClinicStatus && !publicClinicStatus.isOpen && (
+          <div className="mb-6 p-4 rounded-2xl bg-rose-50 border-2 border-rose-300 text-rose-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-600 text-white flex items-center justify-center font-black text-lg shrink-0">
+                !
+              </div>
+              <div>
+                <h4 className="font-black text-sm text-rose-950">
+                  Clinic is currently closed: {publicClinicStatus.message}
+                </h4>
+                <p className="text-xs text-rose-800 font-medium mt-0.5">
+                  {publicClinicStatus.nextOpenAt
+                    ? `Next scheduled opening: ${new Date(publicClinicStatus.nextOpenAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })}`
+                    : 'Online slot booking and walk-ins are currently suspended.'}
+                </p>
+              </div>
+            </div>
+            {publicClinicStatus.phone && (
+              <a
+                href={`tel:${publicClinicStatus.phone}`}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-black rounded-xl whitespace-nowrap self-start sm:self-auto shadow-xs flex items-center gap-1.5"
+              >
+                <span>📞 Emergency: {publicClinicStatus.phone}</span>
+              </a>
+            )}
+          </div>
+        )}
+
         {step === 1 && (
           <div className="space-y-6">
             {/* Brand Hero Banner */}

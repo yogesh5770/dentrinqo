@@ -592,22 +592,27 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          <div className="flex items-center gap-2.5 bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-400 text-amber-950 font-black text-xs py-2 px-3.5 rounded-xl shadow-xs">
-            <KeyRound className="w-5 h-5 text-amber-700 shrink-0" />
-            <div>
-              <span className="text-[10px] uppercase tracking-wider text-amber-800 font-extrabold block -mb-0.5">
-                Live TV Arrival Code
-              </span>
-              <div className="flex items-center gap-2">
-                <strong className="font-mono text-base tracking-widest text-teal-950 bg-white px-2.5 py-0.5 rounded-lg border border-amber-300 shadow-2xs font-black">
-                  {lobbyCode || '••••'}
-                </strong>
-                {lobbyCodeExpiresAt && (
-                  <span className="text-[10px] text-amber-900 font-sans font-bold">
-                    ({Math.max(0, Math.floor((lobbyCodeExpiresAt.getTime() - Date.now()) / 60000))}m)
-                  </span>
-                )}
+          <div className="flex flex-col gap-1 bg-gradient-to-r from-amber-50 to-orange-50 border-2 border-amber-400 text-amber-950 font-black text-xs py-2 px-3.5 rounded-xl shadow-xs">
+            <div className="flex items-center gap-2.5">
+              <KeyRound className="w-5 h-5 text-amber-700 shrink-0" />
+              <div>
+                <span className="text-[10px] uppercase tracking-wider text-amber-800 font-extrabold block -mb-0.5">
+                  Live TV Arrival Code
+                </span>
+                <div className="flex items-center gap-2">
+                  <strong className="font-mono text-base tracking-widest text-teal-950 bg-white px-2.5 py-0.5 rounded-lg border border-amber-300 shadow-2xs font-black">
+                    {lobbyCode || '••••'}
+                  </strong>
+                  {lobbyCodeExpiresAt && (
+                    <span className="text-[10px] text-amber-900 font-sans font-bold">
+                      ({Math.max(0, Math.floor((lobbyCodeExpiresAt.getTime() - Date.now()) / 60000))}m)
+                    </span>
+                  )}
+                </div>
               </div>
+            </div>
+            <div className="text-[10px] text-rose-700 font-semibold border-t border-amber-200/80 pt-1 flex items-center gap-1">
+              <span>⚠️ Staff must never give the lobby code over the phone.</span>
             </div>
           </div>
 

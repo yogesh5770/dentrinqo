@@ -23,6 +23,11 @@ export class CreateAppointmentDto {
   @IsOptional()
   overrideLeave?: boolean;
 
+  @ApiPropertyOptional({ example: 'Urgent emergency surgery authorized by Chief Doctor' })
+  @IsOptional()
+  @IsString()
+  overrideReason?: string;
+
   @ApiProperty({ example: '2026-10-10T10:00:00.000Z' })
   @IsDateString()
   @IsNotEmpty()
@@ -120,6 +125,11 @@ export class RescheduleAppointmentDto {
   @IsOptional()
   @IsString()
   reason?: string;
+
+  @ApiPropertyOptional({ example: 'Emergency procedure override authorized by Dr. Josy' })
+  @IsOptional()
+  @IsString()
+  overrideReason?: string;
 }
 
 export class ReceptionQuickConsultDto {
@@ -127,6 +137,11 @@ export class ReceptionQuickConsultDto {
   @IsOptional()
   @IsString()
   patientId?: string;
+
+  @ApiPropertyOptional({ example: 'Emergency walk-in override approved by Dr. Khan' })
+  @IsOptional()
+  @IsString()
+  overrideReason?: string;
 
   @ApiProperty({ example: '+919876543210' })
   @IsString()

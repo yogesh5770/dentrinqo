@@ -3,6 +3,7 @@ import * as crypto from 'crypto';
 import { AppointmentsService } from './src/appointments/appointments.service';
 import { PatientsService } from './src/patients/patients.service';
 import { AuditService } from './src/audit/audit.service';
+import { ClinicHoursService } from './src/clinic/clinic-hours.service';
 import { PrismaService } from './src/prisma/prisma.service';
 import { assertSafeDatabaseUrl } from './src/common/utils/db-safety.guard';
 import { TenantContextMiddleware } from './src/common/middleware/tenant-context.middleware';
@@ -32,7 +33,8 @@ async function runInstantRegistrationTestSuite() {
 
   const prismaService = prisma as any as PrismaService;
   const auditService = new AuditService(prismaService);
-  const appointmentsService = new AppointmentsService(prismaService, auditService);
+  const clinicHoursService = new ClinicHoursService(prismaService, auditService);
+  const appointmentsService = new AppointmentsService(prismaService, auditService, clinicHoursService);
   const patientsService = new PatientsService(prismaService, auditService);
 
   let clinicA = await prisma.clinic.findFirst({ where: { code: 'AED' } });
