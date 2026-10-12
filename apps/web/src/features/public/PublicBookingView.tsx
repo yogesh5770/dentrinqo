@@ -29,8 +29,11 @@ import {
   RefreshCw,
   Info,
   Building2,
+  QrCode,
 } from 'lucide-react';
 import { apiRequest } from '../../lib/api';
+import { Link } from 'react-router-dom';
+import { usePatientAuth } from '../../hooks/usePatientAuth';
 
 const COMMON_REASONS = [
   { id: 'TOOTH_PAIN', label: 'Severe Toothache / Pain', icon: '⚡' },
@@ -66,8 +69,8 @@ interface PublicBookingViewProps {
 }
 
 export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
-  clinicName = 'AKS Elite Dental Clinic',
-  clinicAddress = 'K.Pudur, Madurai • Tamil Nadu 625007',
+  clinicName = "AK's Elite Dental Clinic and Multi-Speciality Dental Hospital",
+  clinicAddress = 'Plot No. 162/2A, Alagar Complex, 5th Meenakshi Amman Nagar Main Road, K.Pudur, Madurai',
   clinicPhone = '+91 95387 23872',
   mapsUrl = 'https://maps.google.com/?q=AKS+Elite+Dental+Clinic+Madurai',
   clinicCode = 'AKS',
@@ -83,7 +86,11 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
   const [chairs, setChairs] = useState<{ chairNumber: number; name: string; doctorName: string; isActive: boolean }[]>([
     { chairNumber: 1, name: 'Operatory Chair 1 (Chief Room)', doctorName: doctorName, isActive: true },
     { chairNumber: 2, name: 'Operatory Chair 2 (Associate Room)', doctorName: 'Associate Dental Surgeon', isActive: true },
+    { chairNumber: 3, name: 'Operatory Chair 3 (Specialist & Ortho Room)', doctorName: 'Consultant Dental Surgeon', isActive: true },
   ]);
+
+  // Booked / Occupied Slots by Chair Number
+  const [bookedSlotsByChair, setBookedSlotsByChair] = useState<Record<number, string[]>>({});
 
   const todayStr = new Date().toISOString().split('T')[0];
   const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
@@ -106,6 +113,47 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
   const [patientUhid, setPatientUhid] = useState<string | null>(null);
   const [copiedRef, setCopiedRef] = useState<boolean>(false);
   const [lobbyCode, setLobbyCode] = useState<string>('');
+
+  // Patient Account & Family State
+  const { account, familyMembers, token } = usePatientAuth();
+  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
+  const [matchingPatients, setMatchingPatients] = useState<any[]>([]);
+  const [searchingMatching, setSearchingMatching] = useState(false);
+
+  // If patient account is logged in, auto-fill contact & default to primary profile
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const prePatientId = params.get('patientId');
+
+    if (account && familyMembers.length > 0) {
+      const match = prePatientId ? familyMembers.find(m => m.id === prePatientId) : familyMembers[0];
+      const target = match || familyMembers[0];
+      setSelectedPatientId(target.id);
+      setFullName(target.fullName);
+      setPhone(account.phone.replace(/\D/g, '').slice(-10));
+      if (target.gender) setGender(target.gender);
+      if (target.age) setAge(String(target.age));
+    }
+  }, [account, familyMembers]);
+
+  // Lookup returning patients under phone number for guest bookings
+  useEffect(() => {
+    if (!account && phone.length === 10) {
+      setSearchingMatching(true);
+      apiRequest<{ exists: boolean; patients: any[] }>(`/appointments/lookup-phone?phone=${phone}&clinicCode=${clinicCode}`)
+        .then(res => {
+          if (res && res.exists && res.patients.length > 0) {
+            setMatchingPatients(res.patients);
+          } else {
+            setMatchingPatients([]);
+          }
+        })
+        .catch(() => setMatchingPatients([]))
+        .finally(() => setSearchingMatching(false));
+    } else if (phone.length < 10) {
+      setMatchingPatients([]);
+    }
+  }, [phone, account, clinicCode]);
 
   // Auto-detect Walk-in Mode from Lobby Standee QR
   useEffect(() => {
@@ -132,6 +180,35 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
       })
       .catch(() => {});
   }, [clinicCode]);
+
+  // Fetch live occupied/booked time slots for selected clinic & date
+  useEffect(() => {
+    if (visitType === 'ONLINE_BOOKING') {
+      apiRequest<{ bookedSlotsByChair?: Record<number, string[]> }>(
+        `/appointments/public-booked-slots?clinicCode=${clinicCode}&date=${selectedDate}`
+      )
+        .then(res => {
+          if (res && res.bookedSlotsByChair) {
+            setBookedSlotsByChair(res.bookedSlotsByChair);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [clinicCode, selectedDate, visitType]);
+
+  // If currently selected slot is already occupied on the chosen chair, auto-select next available slot
+  useEffect(() => {
+    if (visitType === 'ONLINE_BOOKING') {
+      const chairBooked = bookedSlotsByChair[selectedChair] || [];
+      if (chairBooked.includes(selectedSlot)) {
+        const allSlots = [...MORNING_SLOTS, ...AFTERNOON_SLOTS, ...EVENING_SLOTS];
+        const nextFree = allSlots.find(s => !chairBooked.includes(s));
+        if (nextFree) {
+          setSelectedSlot(nextFree);
+        }
+      }
+    }
+  }, [selectedChair, bookedSlotsByChair, visitType]);
 
   // Fast-Track Health Intake
   const [intakeOpen, setIntakeOpen] = useState<boolean>(false);
@@ -169,6 +246,14 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
       return;
     }
 
+    if (visitType === 'ONLINE_BOOKING') {
+      const chairBooked = bookedSlotsByChair[selectedChair] || [];
+      if (chairBooked.includes(selectedSlot)) {
+        alert(`The time slot "${selectedSlot}" for Operatory Chair #${selectedChair} is already occupied. Please select an available slot or switch to another operatory room.`);
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
       const reasonObj = COMMON_REASONS.find((r) => r.id === selectedReason);
@@ -195,6 +280,8 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
           clinicCode,
           chairNumber: selectedChair,
           lobbyCode: lobbyCode || undefined,
+          patientId: selectedPatientId || undefined,
+          isWalkin: visitType === 'WALK_IN',
         }),
       });
 
@@ -401,9 +488,25 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
               <span>{clinicPhone}</span>
             </a>
 
+            {account ? (
+              <Link
+                to="/my/visits"
+                className="px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-black transition text-xs shadow-xs flex items-center gap-1.5"
+              >
+                <span>👤 Family Passbook</span>
+              </Link>
+            ) : (
+              <Link
+                to="/patient-login"
+                className="px-3 py-2 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 font-bold transition text-xs"
+              >
+                <span>Patient Portal</span>
+              </Link>
+            )}
+
             <a
               href="/login"
-              className="px-3.5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-black transition text-xs shadow-xs"
+              className="px-3 py-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold transition text-xs hidden sm:inline-block"
             >
               Staff Login
             </a>
@@ -613,7 +716,7 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
                     Choose Operatory Room, Date & Time Slot
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    We have two operatory rooms with attending doctors operating in parallel.
+                    We have {chairs.length} operatory rooms with attending doctors operating in parallel.
                   </p>
                 </div>
 
@@ -622,7 +725,7 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
                   <label className="block text-xs font-black text-slate-800 uppercase tracking-wider mb-2">
                     Select Operatory Room & Attending Doctor:
                   </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
                     {chairs.map((c) => {
                       const isOff = !c.isActive;
                       return (
@@ -631,7 +734,7 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
                           type="button"
                           disabled={isOff}
                           onClick={() => setSelectedChair(c.chairNumber)}
-                          className={`p-3.5 rounded-2xl border text-left transition cursor-pointer flex items-start justify-between ${
+                          className={`p-3.5 rounded-2xl border text-left transition cursor-pointer flex flex-col justify-between ${
                             isOff
                               ? 'bg-slate-100 border-slate-200 opacity-60 cursor-not-allowed'
                               : selectedChair === c.chairNumber
@@ -640,29 +743,30 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
                           }`}
                         >
                           <div>
-                            <div className="font-black text-xs sm:text-sm text-slate-900 flex items-center gap-1.5">
-                              <span>💺 {c.name}</span>
+                            <div className="font-black text-xs sm:text-sm text-slate-900 flex items-center justify-between gap-1.5">
+                              <span>💺 Chair #{c.chairNumber}</span>
                               {selectedChair === c.chairNumber && !isOff && (
                                 <span className="text-[10px] bg-teal-600 text-white px-2 py-0.5 rounded-full font-bold">
                                   Selected
                                 </span>
                               )}
                             </div>
-                            <p className="text-[11px] text-teal-800 font-bold mt-0.5">{c.doctorName}</p>
-                            <span className="text-[10px] text-slate-500 mt-1 block">
-                              Parallel operatory: Patients can book simultaneously for the same time.
-                            </span>
+                            <p className="text-[11px] text-teal-800 font-bold mt-1">{c.name}</p>
+                            <p className="text-[10px] text-slate-500 mt-0.5">{c.doctorName}</p>
                           </div>
 
-                          {c.isActive ? (
-                            <span className="text-[10px] bg-emerald-100 text-emerald-800 font-black px-2 py-0.5 rounded-full shrink-0">
-                              🟢 Open
-                            </span>
-                          ) : (
-                            <span className="text-[10px] bg-rose-100 text-rose-800 font-black px-2 py-0.5 rounded-full shrink-0">
-                              🔴 Doctor Away
-                            </span>
-                          )}
+                          <div className="mt-2.5 pt-2 border-t border-slate-200 flex items-center justify-between text-[10px]">
+                            <span className="text-slate-400">Parallel Operatory</span>
+                            {c.isActive ? (
+                              <span className="bg-emerald-100 text-emerald-800 font-black px-2 py-0.5 rounded-full">
+                                🟢 Open
+                              </span>
+                            ) : (
+                              <span className="bg-rose-100 text-rose-800 font-black px-2 py-0.5 rounded-full">
+                                🔴 Off Duty
+                              </span>
+                            )}
+                          </div>
                         </button>
                       );
                     })}
@@ -735,15 +839,102 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
                   </div>
                 </div>
 
-                {/* Slot groups */}
+                {/* Slot groups with live occupancy grey out */}
                 {(() => {
                   const isSelectedChairOff = !chairs.find(c => c.chairNumber === selectedChair)?.isActive;
+                  const chairBookedList = bookedSlotsByChair[selectedChair] || [];
+
+                  const renderSlotButton = (slot: string) => {
+                    const isOccupied = chairBookedList.includes(slot);
+                    const isPastSlot = selectedDate === todayStr && (() => {
+                      const match = slot.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+                      if (!match) return false;
+                      let h = parseInt(match[1], 10);
+                      const m = parseInt(match[2], 10);
+                      const meridiem = match[3].toUpperCase();
+                      if (meridiem === 'PM' && h < 12) h += 12;
+                      if (meridiem === 'AM' && h === 12) h = 0;
+                      const now = new Date();
+                      const istTimeParts = new Intl.DateTimeFormat('en-US', {
+                        timeZone: 'Asia/Kolkata',
+                        hour: 'numeric',
+                        minute: 'numeric',
+                        hour12: false,
+                      }).formatToParts(now);
+                      const curH = parseInt(istTimeParts.find(p => p.type === 'hour')?.value || '0', 10);
+                      const curM = parseInt(istTimeParts.find(p => p.type === 'minute')?.value || '0', 10);
+                      return curH > h || (curH === h && curM > m);
+                    })();
+
+                    const isDisabled = isSelectedChairOff || isOccupied || isPastSlot;
+                    const isSelected = selectedSlot === slot && !isDisabled;
+
+                    return (
+                      <button
+                        key={slot}
+                        type="button"
+                        disabled={isDisabled}
+                        onClick={() => setSelectedSlot(slot)}
+                        title={
+                          isOccupied
+                            ? `Occupied: Chair #${selectedChair} is already reserved at ${slot}. Switch to another operatory room above to see if it's free.`
+                            : isPastSlot
+                            ? `Time passed: ${slot} has already elapsed today.`
+                            : isSelectedChairOff
+                            ? `Operatory Chair #${selectedChair} is off duty.`
+                            : `Select ${slot}`
+                        }
+                        className={`py-2 px-1 rounded-xl text-xs font-bold transition text-center relative flex flex-col items-center justify-center min-h-[46px] ${
+                          isOccupied
+                            ? 'bg-slate-100 text-slate-400 border border-slate-200 line-through opacity-50 cursor-not-allowed select-none'
+                            : isPastSlot
+                            ? 'bg-slate-100 text-slate-400 border border-slate-200 line-through opacity-40 cursor-not-allowed select-none'
+                            : isSelectedChairOff
+                            ? 'bg-slate-100 text-slate-400 border border-slate-200 opacity-40 cursor-not-allowed'
+                            : isSelected
+                            ? 'bg-teal-600 text-white shadow-xs font-black cursor-pointer ring-2 ring-teal-600/30'
+                            : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 cursor-pointer'
+                        }`}
+                      >
+                        <span className={isOccupied || isPastSlot ? 'line-through text-slate-400' : ''}>{slot}</span>
+                        {isOccupied && (
+                          <span className="text-[9px] font-black text-rose-600 uppercase tracking-tight mt-0.5 no-underline">
+                            Booked
+                          </span>
+                        )}
+                        {!isOccupied && isPastSlot && (
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tight mt-0.5 no-underline">
+                            Passed
+                          </span>
+                        )}
+                      </button>
+                    );
+                  };
+
                   return (
                     <div className="space-y-4 pt-1">
+                      {/* Occupancy Legend */}
+                      <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-600 font-semibold px-1 py-1 border-b border-slate-100 gap-2">
+                        <div className="flex items-center gap-3">
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-2.5 h-2.5 rounded-full bg-teal-600"></span> Selected
+                          </span>
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-2.5 h-2.5 rounded-full bg-slate-200 border border-slate-300"></span> Open
+                          </span>
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-2.5 h-2.5 rounded-full bg-rose-400"></span> Booked (Greyed)
+                          </span>
+                        </div>
+                        <span className="text-teal-800 font-extrabold">
+                          Showing Slots for Chair #{selectedChair}
+                        </span>
+                      </div>
+
                       {isSelectedChairOff && (
                         <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-center gap-2">
                           <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-                          <span>All slots for Operatory #{selectedChair} are currently disabled because the doctor is off-duty. Switch to Operatory 2 above to view available slots.</span>
+                          <span>All slots for Operatory #{selectedChair} are currently disabled because the doctor is off-duty. Switch operatory room above to view available slots.</span>
                         </div>
                       )}
 
@@ -753,23 +944,7 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
                           <span>Morning Shift (09:30 AM - 01:00 PM)</span>
                         </label>
                         <div className="grid grid-cols-3 sm:grid-cols-7 gap-2">
-                          {MORNING_SLOTS.map((slot) => (
-                            <button
-                              key={slot}
-                              type="button"
-                              disabled={isSelectedChairOff}
-                              onClick={() => setSelectedSlot(slot)}
-                              className={`py-2.5 px-2 rounded-xl text-xs font-bold transition text-center ${
-                                isSelectedChairOff
-                                  ? 'bg-slate-100 text-slate-400 border border-slate-200 opacity-40 cursor-not-allowed'
-                                  : selectedSlot === slot
-                                  ? 'bg-teal-600 text-white shadow-xs font-black cursor-pointer'
-                                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 cursor-pointer'
-                              }`}
-                            >
-                              {slot}
-                            </button>
-                          ))}
+                          {MORNING_SLOTS.map(renderSlotButton)}
                         </div>
                       </div>
 
@@ -779,23 +954,7 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
                           <span>Afternoon Shift (02:30 PM - 05:00 PM)</span>
                         </label>
                         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                          {AFTERNOON_SLOTS.map((slot) => (
-                            <button
-                              key={slot}
-                              type="button"
-                              disabled={isSelectedChairOff}
-                              onClick={() => setSelectedSlot(slot)}
-                              className={`py-2.5 px-2 rounded-xl text-xs font-bold transition text-center ${
-                                isSelectedChairOff
-                                  ? 'bg-slate-100 text-slate-400 border border-slate-200 opacity-40 cursor-not-allowed'
-                                  : selectedSlot === slot
-                                  ? 'bg-teal-600 text-white shadow-xs font-black cursor-pointer'
-                                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 cursor-pointer'
-                              }`}
-                            >
-                              {slot}
-                            </button>
-                          ))}
+                          {AFTERNOON_SLOTS.map(renderSlotButton)}
                         </div>
                       </div>
 
@@ -805,28 +964,13 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
                           <span>Evening Shift (05:30 PM - 08:00 PM)</span>
                         </label>
                         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-                          {EVENING_SLOTS.map((slot) => (
-                            <button
-                              key={slot}
-                              type="button"
-                              disabled={isSelectedChairOff}
-                              onClick={() => setSelectedSlot(slot)}
-                              className={`py-2.5 px-2 rounded-xl text-xs font-bold transition text-center ${
-                                isSelectedChairOff
-                                  ? 'bg-slate-100 text-slate-400 border border-slate-200 opacity-40 cursor-not-allowed'
-                                  : selectedSlot === slot
-                                  ? 'bg-teal-600 text-white shadow-xs font-black cursor-pointer'
-                                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 cursor-pointer'
-                              }`}
-                            >
-                              {slot}
-                            </button>
-                          ))}
+                          {EVENING_SLOTS.map(renderSlotButton)}
                         </div>
                       </div>
                     </div>
                   );
                 })()}
+
               </div>
             ) : (
               /* Walk-In immediate queue card */
@@ -904,6 +1048,106 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
               </div>
 
               <form onSubmit={handleBookAppointment} className="space-y-4 text-xs">
+                {/* Logged-in Account Family Member Selector */}
+                {account && familyMembers.length > 0 && (
+                  <div className="p-4 bg-teal-50/80 border border-teal-200 rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black uppercase text-teal-900 tracking-wider">
+                        Select Family Member Profile:
+                      </span>
+                      <Link to="/my/family" className="text-[11px] font-bold text-teal-700 hover:underline">
+                        + Add Member
+                      </Link>
+                    </div>
+                    <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                      {familyMembers.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedPatientId(m.id);
+                            setFullName(m.fullName);
+                            if (m.age) setAge(String(m.age));
+                            if (m.gender) setGender(m.gender);
+                          }}
+                          className={`px-3 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${
+                            selectedPatientId === m.id
+                              ? 'bg-teal-600 text-white shadow-xs font-black'
+                              : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span>{m.fullName}</span>
+                          <span className="text-[10px] opacity-75 ml-1">({m.relationToAccount})</span>
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedPatientId(null);
+                          setFullName('');
+                          setAge('');
+                        }}
+                        className={`px-3 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${
+                          selectedPatientId === null
+                            ? 'bg-teal-600 text-white shadow-xs font-black'
+                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        ➕ Other Family Member
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Returning Guest Patient Matcher */}
+                {!account && matchingPatients.length > 0 && (
+                  <div className="p-4 bg-teal-50/80 border border-teal-200 rounded-2xl space-y-2">
+                    <div className="text-[11px] font-black uppercase text-teal-900 tracking-wider">
+                      Previous Records Found on This Phone Number:
+                    </div>
+                    <p className="text-[11px] text-slate-600">
+                      Who is visiting today? Tap a name to book without creating a duplicate record:
+                    </p>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {matchingPatients.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedPatientId(p.id);
+                            setFullName(p.fullName);
+                            if (p.age) setAge(String(p.age));
+                            if (p.gender) setGender(p.gender);
+                          }}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                            selectedPatientId === p.id
+                              ? 'bg-teal-600 text-white shadow-xs font-black'
+                              : 'bg-white text-slate-700 border border-slate-300 hover:bg-teal-50'
+                          }`}
+                        >
+                          <span>✓ {p.fullName}</span>
+                          <span className="font-mono text-[10px] opacity-75 ml-1">({p.uhid})</span>
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedPatientId(null);
+                          setFullName('');
+                          setAge('');
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                          selectedPatientId === null
+                            ? 'bg-teal-600 text-white shadow-xs font-black'
+                            : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        ➕ Different Family Member
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Full Name */}
                 <div>
                   <label className="block font-black text-slate-800 uppercase tracking-wider mb-1.5">
@@ -1161,15 +1405,51 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
 
                 {/* Action Buttons Hub */}
                 <div className="space-y-2.5 pt-2">
-                  <a
-                    href={getWhatsAppConfirmLink()}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="w-full py-4 rounded-2xl bg-[#25D366] hover:bg-[#20ba59] text-white font-black text-sm flex items-center justify-center gap-2 shadow-md transition cursor-pointer active:scale-98"
-                  >
-                    <MessageCircle className="w-5 h-5" />
-                    <span>Confirm Instantly via WhatsApp</span>
-                  </a>
+                  {visitType === 'WALK_IN' ? (
+                    <div className="p-4 rounded-2xl bg-emerald-50 border-2 border-emerald-400 text-emerald-950 flex items-center justify-between shadow-xs">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black">
+                          <CheckCircle2 className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <h4 className="font-black text-sm text-emerald-950">✅ Officially Checked In!</h4>
+                          <p className="text-xs text-emerald-800 font-medium">
+                            Token #{tokenNumber || 1} is registered in the live lobby queue. The doctor has received your arrival notification.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="p-3.5 rounded-2xl bg-teal-50 border border-teal-200 text-teal-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-2xs">
+                        <div className="space-y-0.5">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-teal-800 block">
+                            ⚡ Hospital Arrival Self Check-In
+                          </span>
+                          <p className="text-xs text-teal-900 font-bold">
+                            When you arrive at the clinic, scan the lobby QR or tap below to check in:
+                          </p>
+                        </div>
+                        <a
+                          href={`/checkin?ref=${encodeURIComponent(bookingRef || '')}&phone=${encodeURIComponent(phone.replace(/\D/g, ''))}`}
+                          className="px-4 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-black text-xs flex items-center justify-center gap-1.5 shrink-0 shadow-xs transition"
+                        >
+                          <QrCode className="w-3.5 h-3.5" />
+                          <span>Check In On Arrival</span>
+                        </a>
+                      </div>
+
+                      <a
+                        href={getWhatsAppConfirmLink()}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="w-full py-3.5 rounded-2xl bg-[#25D366] hover:bg-[#20ba59] text-white font-black text-sm flex items-center justify-center gap-2 shadow-md transition cursor-pointer active:scale-98"
+                      >
+                        <MessageCircle className="w-5 h-5" />
+                        <span>Confirm Instantly via WhatsApp</span>
+                      </a>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-bold">
                     <a

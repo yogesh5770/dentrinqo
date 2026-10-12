@@ -40,6 +40,7 @@ import {
   User,
   Shield,
   HelpCircle,
+  GitMerge,
 } from 'lucide-react';
 
 interface AppShellProps {
@@ -54,6 +55,11 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
+
+  const clinicName = user?.clinic?.name || (user?.clinic?.code === 'JDC' ? 'Jacobs Dental Clinic' : "AK's Elite Dental Clinic");
+  const clinicCity = user?.clinic?.city ? `${user?.clinic?.city}` : (user?.clinic?.code === 'JDC' ? 'Vellore' : 'K.Pudur, Madurai');
+  const clinicAddress = user?.clinic?.address || (user?.clinic?.code === 'JDC' ? '14th East Cross Main Road, Gandhi Nagar East, Vellore' : 'Plot No. 162/2A, Alagar Complex, K.Pudur, Madurai');
+  const clinicSubTitle = user?.clinic?.code === 'JDC' ? 'Dental Surgery & Implant Centre' : 'Multi-Speciality Hospital';
 
   // Profile Modal State
   const [showProfileModal, setShowProfileModal] = useState(false);
@@ -134,119 +140,160 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
     }
   };
 
-  // Generate dynamic role-based navigation according to specification
-  const getNavItemsForRole = () => {
+  interface NavItem {
+    label: string;
+    path: string;
+    icon: any;
+    isModal?: string;
+  }
+
+  interface NavSection {
+    title?: string;
+    items: NavItem[];
+  }
+
+  // Generate clean, organized role-based navigation sections
+  const getNavSectionsForRole = (): NavSection[] => {
     const role = user?.role;
     const permissions = user?.permissions || [];
 
     if (role === 'CLINIC_ADMIN') {
       return [
-        { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-        { label: 'Appointments', path: '/appointments', icon: CalendarDays },
-        { label: 'Patients', path: '/patients', icon: Users },
-        { label: 'Consultations', path: '/consultations', icon: Stethoscope },
-        { label: 'Treatment Plans', path: '/treatment-plans', icon: ClipboardList },
-        { label: 'Prescriptions', path: '/prescriptions', icon: FileText },
-        { label: 'X-rays & Documents', path: '/xrays', icon: Camera },
-        { label: 'Dental Lab Orders', path: '/lab-orders', icon: Package },
-        { label: 'Billing & Payments', path: '/billing', icon: Receipt },
-        { label: 'Reports & Analytics', path: '/reports', icon: TrendingUp },
-        { label: 'Staff Management', path: '/admin', icon: ShieldCheck },
-        { label: 'Services & Pricing', path: '/settings?tab=services', icon: Tag },
-        { label: 'Clinic Settings', path: '/settings', icon: Building2 },
-        { label: 'Audit Logs', path: '/audit-logs', icon: History },
+        {
+          title: 'Clinical Workspace',
+          items: [
+            { label: 'Front Desk (Reception)', path: '/', icon: Armchair },
+            { label: 'Doctor Chair (Clinical)', path: '/doctor', icon: Stethoscope },
+            { label: 'Patient Directory & Cards', path: '/patients', icon: Users },
+            { label: 'Appointment Calendar', path: '/appointments', icon: CalendarDays },
+          ],
+        },
+        {
+          title: 'Finance & Labs',
+          items: [
+            { label: 'Billing & Invoices', path: '/billing', icon: Receipt },
+            { label: 'Dental Lab Orders', path: '/lab-orders', icon: Package },
+          ],
+        },
+        {
+          title: 'Clinic Administration',
+          items: [
+            { label: 'Reports & Analytics', path: '/reports', icon: TrendingUp },
+            { label: 'Clinic Settings', path: '/settings', icon: Building2 },
+            { label: 'Staff Accounts', path: '/admin', icon: ShieldCheck },
+            { label: 'Audit Logs', path: '/audit-logs', icon: History },
+          ],
+        },
       ];
     }
 
     if (role === 'RECEPTIONIST') {
       return [
-        { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-        { label: 'Appointments', path: '/appointments', icon: CalendarDays },
-        { label: 'Patient Registration', path: '#register', icon: PlusCircle, isModal: 'newPatient' },
-        { label: 'Patient Search', path: '/patients', icon: Search },
-        { label: 'Waiting Queue', path: '/?view=queue', icon: Armchair },
-        { label: 'Dental Lab Orders', path: '/lab-orders', icon: Package },
-        { label: 'Billing & Payments', path: '/billing', icon: Receipt },
-        { label: 'Receipts', path: '/billing?tab=receipts', icon: Receipt },
-        { label: 'Follow-ups', path: '/follow-ups', icon: PhoneCall },
+        {
+          title: 'Front Desk Operations',
+          items: [
+            { label: 'Reception & Queue', path: '/', icon: Armchair },
+            { label: '+ Register Patient', path: '#register', icon: PlusCircle, isModal: 'newPatient' },
+            { label: 'Patient Records & Search', path: '/patients', icon: Users },
+            { label: 'Appointment Schedule', path: '/appointments', icon: CalendarDays },
+          ],
+        },
+        {
+          title: 'Billing & Desk',
+          items: [
+            { label: 'Billing & Payments', path: '/billing', icon: Receipt },
+            { label: 'Dental Lab Orders', path: '/lab-orders', icon: Package },
+            { label: 'Follow-ups & Recalls', path: '/follow-ups', icon: PhoneCall },
+          ],
+        },
       ];
     }
 
     if (role === 'DENTIST') {
       return [
-        { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-        { label: 'Appointments', path: '/appointments', icon: CalendarDays },
-        { label: 'Patients', path: '/patients', icon: Users },
-        { label: 'Consultations', path: '/consultations', icon: Stethoscope },
-        { label: 'Treatment Plans', path: '/treatment-plans', icon: ClipboardList },
-        { label: 'Prescriptions', path: '/prescriptions', icon: FileText },
-        { label: 'X-rays & Documents', path: '/xrays', icon: Camera },
-        { label: 'Dental Lab Orders', path: '/lab-orders', icon: Package },
-        { label: 'Follow-ups', path: '/follow-ups', icon: PhoneCall },
+        {
+          title: 'Clinical Desk',
+          items: [
+            { label: 'Doctor Chair (Clinical)', path: '/doctor', icon: Stethoscope },
+            { label: "Today's Patient Queue", path: '/', icon: LayoutDashboard },
+            { label: 'Patient History & Cards', path: '/patients', icon: Users },
+            { label: 'Appointment Calendar', path: '/appointments', icon: CalendarDays },
+          ],
+        },
+        {
+          title: 'Clinical Operations',
+          items: [
+            { label: 'Dental Lab Orders', path: '/lab-orders', icon: Package },
+            { label: 'Follow-ups & Recalls', path: '/follow-ups', icon: PhoneCall },
+          ],
+        },
       ];
     }
 
     if (role === 'ACCOUNTANT') {
       return [
-        { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-        { label: 'Invoices', path: '/billing?tab=invoices', icon: Receipt },
-        { label: 'Payments', path: '/billing?tab=payments', icon: CreditCard },
-        { label: 'Receipts', path: '/billing?tab=receipts', icon: Receipt },
-        { label: 'Outstanding Balances', path: '/billing?tab=outstanding', icon: IndianRupee },
-        { label: 'Refunds & Adjustments', path: '/billing?tab=refunds', icon: AlertTriangle },
-        { label: 'Financial Reports', path: '/reports', icon: TrendingUp },
+        {
+          title: 'Finance & Accounts',
+          items: [
+            { label: 'Financial Overview', path: '/', icon: LayoutDashboard },
+            { label: 'Invoices', path: '/billing?tab=invoices', icon: Receipt },
+            { label: 'Payments Collected', path: '/billing?tab=payments', icon: CreditCard },
+            { label: 'Outstanding Balances', path: '/billing?tab=outstanding', icon: IndianRupee },
+            { label: 'Financial Reports', path: '/reports', icon: TrendingUp },
+          ],
+        },
       ];
     }
 
     // OTHER_STAFF: Filter strictly based on permissions
-    const items = [{ label: 'Dashboard', path: '/', icon: LayoutDashboard }];
+    const otherItems: NavItem[] = [{ label: 'Dashboard', path: '/', icon: LayoutDashboard }];
     if (permissions.includes('appointments.view')) {
-      items.push({ label: 'Appointments', path: '/appointments', icon: CalendarDays });
+      otherItems.push({ label: 'Appointments', path: '/appointments', icon: CalendarDays });
     }
     if (permissions.includes('patients.view')) {
-      items.push({ label: 'Patients', path: '/patients', icon: Users });
+      otherItems.push({ label: 'Patients', path: '/patients', icon: Users });
     }
     if (permissions.includes('clinical.consultations.view')) {
-      items.push({ label: 'Consultations', path: '/consultations', icon: Stethoscope });
+      otherItems.push({ label: 'Doctor Desk', path: '/doctor', icon: Stethoscope });
     }
     if (permissions.includes('billing.invoices.view')) {
-      items.push({ label: 'Billing & Payments', path: '/billing', icon: Receipt });
+      otherItems.push({ label: 'Billing & Payments', path: '/billing', icon: Receipt });
     }
     if (permissions.includes('reports.financial.view')) {
-      items.push({ label: 'Reports', path: '/reports', icon: TrendingUp });
+      otherItems.push({ label: 'Reports', path: '/reports', icon: TrendingUp });
     }
     if (permissions.includes('followups.view')) {
-      items.push({ label: 'Follow-ups', path: '/follow-ups', icon: PhoneCall });
+      otherItems.push({ label: 'Follow-ups', path: '/follow-ups', icon: PhoneCall });
     }
-    return items;
+    return [{ items: otherItems }];
   };
 
   const getMobileBottomTabs = () => {
     const role = user?.role;
     if (role === 'CLINIC_ADMIN') {
       return [
-        { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-        { label: 'Visits', path: '/appointments', icon: CalendarDays },
+        { label: 'Front Desk', path: '/', icon: Armchair },
+        { label: 'Doctor Chair', path: '/doctor', icon: Stethoscope },
         { label: 'Patients', path: '/patients', icon: Users },
-        { label: 'Doctor', path: '/doctor', icon: Stethoscope },
+        { label: 'Visits', path: '/appointments', icon: CalendarDays },
         { label: 'Menu', path: '#menu', icon: Menu, isDrawerTrigger: true },
       ];
     }
     if (role === 'RECEPTIONIST') {
       return [
-        { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-        { label: 'Visits', path: '/appointments', icon: CalendarDays },
+        { label: 'Front Desk', path: '/', icon: Armchair },
         { label: 'Patients', path: '/patients', icon: Users },
+        { label: 'Visits', path: '/appointments', icon: CalendarDays },
         { label: 'Billing', path: '/billing', icon: Receipt },
         { label: 'Menu', path: '#menu', icon: Menu, isDrawerTrigger: true },
       ];
     }
     if (role === 'DENTIST') {
       return [
-        { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-        { label: 'Doctor', path: '/doctor', icon: Stethoscope },
-        { label: 'Visits', path: '/appointments', icon: CalendarDays },
+        { label: 'Doctor Chair', path: '/doctor', icon: Stethoscope },
+        { label: 'Queue', path: '/', icon: LayoutDashboard },
         { label: 'Patients', path: '/patients', icon: Users },
+        { label: 'Visits', path: '/appointments', icon: CalendarDays },
         { label: 'Menu', path: '#menu', icon: Menu, isDrawerTrigger: true },
       ];
     }
@@ -265,7 +312,8 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
     ];
   };
 
-  const allowedNav = getNavItemsForRole();
+  const navSections = getNavSectionsForRole();
+  const allowedNav = navSections.flatMap(sec => sec.items);
   const mobileBottomTabs = getMobileBottomTabs();
   const isOwner = user?.role === 'CLINIC_ADMIN';
   const isAccountant = user?.role === 'ACCOUNTANT';
@@ -292,19 +340,19 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
         <div className="p-5 border-b border-slate-800">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 p-1 rounded-xl bg-white border border-slate-700 flex items-center justify-center shrink-0 shadow-sm">
-              <img src="/logo.png" alt="AKS Logo" className="w-full h-full object-contain" />
+              <img src="/logo.png" alt={`${clinicName} Logo`} className="w-full h-full object-contain" />
             </div>
             <div>
               <h2 className="text-sm font-extrabold text-white tracking-tight leading-tight">
-                AKS Elite Dental Clinic
+                {clinicName}
               </h2>
               <p className="text-[11px] text-teal-300 font-bold uppercase tracking-wider">
-                Multi-Speciality Hospital
+                {clinicSubTitle}
               </p>
             </div>
           </div>
           <div className="mt-3 pt-2.5 border-t border-slate-800 flex items-center justify-between text-xs text-slate-300 font-medium">
-            <span>K.Pudur, Madurai</span>
+            <span>{clinicCity}</span>
             <span className="text-teal-300 flex items-center gap-1 font-mono font-bold">
               <Clock className="w-3.5 h-3.5" />
               {currentTime || 'Live'}
@@ -354,38 +402,48 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
         ) : null}
 
 
-        {/* Nav Links */}
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {allowedNav.map(item => {
-            const Icon = item.icon;
-            const isActive = location.pathname === item.path;
-            if ((item as any).isModal === 'newPatient') {
-              return (
-                <button
-                  key={item.label}
-                  onClick={onOpenNewPatient}
-                  className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold text-slate-300 hover:text-white hover:bg-slate-800/80 cursor-pointer text-left transition-all"
-                >
-                  <Icon className="w-4 h-4 text-teal-400" />
-                  <span className="truncate">{item.label}</span>
-                </button>
-              );
-            }
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all group ${
-                  isActive
-                    ? 'bg-teal-600 text-white font-extrabold shadow-sm'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/80 font-medium'
-                }`}
-              >
-                <Icon className={`w-4 h-4 transition-colors ${isActive ? 'text-white' : 'text-slate-400 group-hover:text-white'}`} />
-                <span className="truncate">{item.label}</span>
-              </Link>
-            );
-          })}
+        {/* Nav Links Grouped into Clean Sections */}
+        <nav className="flex-1 px-3 py-3 space-y-4 overflow-y-auto">
+          {navSections.map((sec, sIdx) => (
+            <div key={sIdx} className="space-y-1">
+              {sec.title && (
+                <div className="px-3.5 pt-1 pb-1 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  {sec.title}
+                </div>
+              )}
+              {sec.items.map(item => {
+                const Icon = item.icon;
+                const isActive = location.pathname === item.path ||
+                  (item.path === '/doctor' && location.pathname.startsWith('/doctor'));
+                if (item.isModal === 'newPatient') {
+                  return (
+                    <button
+                      key={item.label}
+                      onClick={onOpenNewPatient}
+                      className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-white hover:bg-slate-800/80 cursor-pointer text-left transition-all"
+                    >
+                      <Icon className="w-4 h-4 text-teal-400" />
+                      <span className="truncate">{item.label}</span>
+                    </button>
+                  );
+                }
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all group ${
+                      isActive
+                        ? 'bg-teal-600 text-white font-extrabold shadow-sm'
+                        : 'text-slate-300 hover:text-white hover:bg-slate-800/80 font-medium'
+                    }`}
+                  >
+                    <Icon className={`w-4 h-4 transition-colors ${isActive ? 'text-white' : 'text-slate-400 group-hover:text-white'}`} />
+                    <span className="truncate">{item.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         {/* Active User Section */}
@@ -459,19 +517,51 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
             </button>
 
             <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
-              <img src="/logo.png" alt="AKS Logo" className="w-7 h-7 sm:w-8 sm:h-8 object-contain shrink-0" />
+              <img src="/logo.png" alt={`${clinicName} Logo`} className="w-7 h-7 sm:w-8 sm:h-8 object-contain shrink-0" />
               <div className="min-w-0">
                 <span className="font-extrabold text-slate-900 text-xs sm:text-base block truncate">
-                  AKS Elite Dental Clinic
+                  {clinicName}
                 </span>
                 <span className="text-[10px] sm:hidden text-teal-700 font-bold block">
-                  Madurai
+                  {clinicCity}
                 </span>
               </div>
               <span className="hidden sm:inline text-slate-400">•</span>
-              <span className="hidden sm:inline text-slate-600 font-medium text-xs">K.Pudur, Madurai</span>
+              <span className="hidden sm:inline text-slate-600 font-medium text-xs">{clinicCity}</span>
             </div>
           </div>
+
+          {/* 1-Click Workspace Switcher: Front Desk <--> Doctor Chair */}
+          {(user?.role === 'CLINIC_ADMIN' || user?.role === 'DENTIST' || user?.role === 'RECEPTIONIST') && (
+            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 gap-1 shadow-inner mx-1 sm:mx-3">
+              <Link
+                to="/"
+                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                  location.pathname === '/' || location.pathname === '/appointments' || location.pathname.startsWith('/patients')
+                    ? 'bg-white text-teal-800 shadow-xs border border-slate-200'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                }`}
+                title="Switch to Front Desk (Reception & Queue)"
+              >
+                <Armchair className="w-3.5 h-3.5 text-teal-600" />
+                <span className="hidden sm:inline">Front Desk</span>
+                <span className="sm:hidden">Desk</span>
+              </Link>
+              <Link
+                to="/doctor"
+                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${
+                  location.pathname.startsWith('/doctor') || location.pathname.startsWith('/consultations') || location.pathname.startsWith('/prescriptions') || location.pathname.startsWith('/treatment-plans') || location.pathname.startsWith('/xrays')
+                    ? 'bg-teal-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                }`}
+                title="Switch to Doctor Chair (Consultation & Dental Desk)"
+              >
+                <Stethoscope className={`w-3.5 h-3.5 ${location.pathname.startsWith('/doctor') ? 'text-white' : 'text-teal-600'}`} />
+                <span className="hidden sm:inline">Doctor Chair</span>
+                <span className="sm:hidden">Doctor</span>
+              </Link>
+            </div>
+          )}
 
           <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
             {/* Quick Add Patient Button in Header on Mobile (Only for roles with patient registration permissions) */}
@@ -534,11 +624,11 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
               <div className="p-4 border-b border-slate-800 flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 p-1 rounded-xl bg-white border border-slate-700 flex items-center justify-center shrink-0 shadow-sm">
-                    <img src="/logo.png" alt="AKS Logo" className="w-full h-full object-contain" />
+                    <img src="/logo.png" alt={`${clinicName} Logo`} className="w-full h-full object-contain" />
                   </div>
                   <div>
-                    <h2 className="text-xs font-extrabold text-white leading-tight">AKS Elite Dental</h2>
-                    <p className="text-[10px] text-teal-300 font-bold uppercase tracking-wider">Multi-Speciality Hospital</p>
+                    <h2 className="text-xs font-extrabold text-white leading-tight">{clinicName}</h2>
+                    <p className="text-[10px] text-teal-300 font-bold uppercase tracking-wider">{clinicSubTitle}</p>
                   </div>
                 </div>
                 <button
@@ -599,42 +689,52 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
               ) : null}
 
 
-              {/* Nav Links */}
-              <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-                {allowedNav.map(item => {
-                  const Icon = item.icon;
-                  const isActive = location.pathname === item.path;
-                  if ((item as any).isModal === 'newPatient') {
-                    return (
-                      <button
-                        key={item.label}
-                        onClick={() => {
-                          setMobileMenuOpen(false);
-                          onOpenNewPatient?.();
-                        }}
-                        className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold text-slate-300 hover:text-white hover:bg-slate-800/80 cursor-pointer text-left transition-all"
-                      >
-                        <Icon className="w-4 h-4 text-teal-400" />
-                        <span>{item.label}</span>
-                      </button>
-                    );
-                  }
-                  return (
-                    <Link
-                      key={item.path}
-                      to={item.path}
-                      onClick={() => setMobileMenuOpen(false)}
-                      className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-                        isActive
-                          ? 'bg-teal-600 text-white font-extrabold shadow-sm'
-                          : 'text-slate-300 hover:text-white hover:bg-slate-800/80 font-medium'
-                      }`}
-                    >
-                      <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                      <span>{item.label}</span>
-                    </Link>
-                  );
-                })}
+              {/* Nav Links Grouped into Clean Sections */}
+              <nav className="flex-1 px-3 py-3 space-y-4 overflow-y-auto">
+                {navSections.map((sec, sIdx) => (
+                  <div key={sIdx} className="space-y-1">
+                    {sec.title && (
+                      <div className="px-3.5 pt-1 pb-1 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                        {sec.title}
+                      </div>
+                    )}
+                    {sec.items.map(item => {
+                      const Icon = item.icon;
+                      const isActive = location.pathname === item.path ||
+                        (item.path === '/doctor' && location.pathname.startsWith('/doctor'));
+                      if (item.isModal === 'newPatient') {
+                        return (
+                          <button
+                            key={item.label}
+                            onClick={() => {
+                              setMobileMenuOpen(false);
+                              onOpenNewPatient?.();
+                            }}
+                            className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold text-slate-300 hover:text-white hover:bg-slate-800/80 cursor-pointer text-left transition-all"
+                          >
+                            <Icon className="w-4 h-4 text-teal-400" />
+                            <span>{item.label}</span>
+                          </button>
+                        );
+                      }
+                      return (
+                        <Link
+                          key={item.path}
+                          to={item.path}
+                          onClick={() => setMobileMenuOpen(false)}
+                          className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                            isActive
+                              ? 'bg-teal-600 text-white font-extrabold shadow-sm'
+                              : 'text-slate-300 hover:text-white hover:bg-slate-800/80 font-medium'
+                          }`}
+                        >
+                          <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                          <span>{item.label}</span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                ))}
               </nav>
 
               {/* User Profile in Mobile Drawer */}
@@ -794,9 +894,9 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
               <div className="p-3 bg-teal-50/60 border border-teal-200 rounded-2xl">
                 <div className="flex items-center gap-2 text-teal-900 font-extrabold text-xs">
                   <Building2 className="w-4 h-4 text-teal-700" />
-                  <span>AKS Elite Dental Clinic — Madurai Branch</span>
+                  <span>{clinicName} — {clinicCity}</span>
                 </div>
-                <p className="text-[11px] text-teal-800 mt-0.5">K.Pudur, Madurai • 3 Operatory Surgical Units</p>
+                <p className="text-[11px] text-teal-800 mt-0.5">{clinicAddress} • {user?.clinic?.chairCount || 3} Operatory Surgical Units</p>
               </div>
 
               {/* Assigned Permissions */}

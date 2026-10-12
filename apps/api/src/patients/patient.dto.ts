@@ -15,16 +15,15 @@ export class CreatePatientDto {
   @IsOptional()
   dateOfBirth?: string;
 
-  @ApiProperty({ example: 'FEMALE', enum: ['MALE', 'FEMALE', 'OTHER'] })
+  @ApiPropertyOptional({ example: 'FEMALE', enum: ['MALE', 'FEMALE', 'OTHER', 'UNKNOWN'] })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  gender: string;
+  gender?: string;
 
-  @ApiProperty({ example: '9876543210' })
+  @ApiPropertyOptional({ example: '9876543210' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  @Matches(/^[6-9]\d{9}$/, { message: 'Please provide a valid 10-digit Indian phone number' })
-  phone: string;
+  phone?: string;
 
   @ApiPropertyOptional({ example: 'kavitha@example.com' })
   @IsOptional()
@@ -61,6 +60,42 @@ export class CreatePatientDto {
   @ApiPropertyOptional({ example: 'Prefers topical anaesthesia' })
   @IsOptional()
   notes?: string;
+
+  @ApiPropertyOptional({ example: '18470' })
+  @IsOptional()
+  legacySlNo?: string;
+
+  @ApiPropertyOptional({ example: 'c/o K. Palani' })
+  @IsOptional()
+  guardianName?: string;
+
+  @ApiPropertyOptional({ example: 'Student (X-std)' })
+  @IsOptional()
+  occupation?: string;
+
+  @ApiPropertyOptional({ example: '2016-09-26' })
+  @IsOptional()
+  legacyRegistrationDate?: string;
+
+  @ApiPropertyOptional({ example: 'Pain in lower right teeth' })
+  @IsOptional()
+  legacyChiefComplaint?: string;
+
+  @ApiPropertyOptional({ example: 'No systemic medical history' })
+  @IsOptional()
+  legacyPastHistory?: string;
+
+  @ApiPropertyOptional({ example: 'RCT #46 followed by ceramic crown' })
+  @IsOptional()
+  legacyTreatmentPlan?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  voiceNoteUrl?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  cardPhotoUrl?: string;
 }
 
 export class UpdatePatientDto extends CreatePatientDto {}

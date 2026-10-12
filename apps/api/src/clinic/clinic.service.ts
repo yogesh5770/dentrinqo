@@ -9,6 +9,59 @@ export class ClinicService {
     private readonly auditService: AuditService,
   ) {}
 
+  async getPublicInfo(identifier?: string) {
+    const clean = (identifier || '').trim();
+    let clinic = null;
+    if (clean) {
+      clinic = await this.prisma.clinic.findFirst({
+        where: {
+          OR: [
+            { id: clean },
+            { code: clean.toUpperCase() },
+            { subdomain: clean.toLowerCase() },
+          ],
+        },
+      });
+    } else {
+      clinic = await this.prisma.clinic.findFirst({
+        where: { status: 'ACTIVE' },
+      });
+    }
+
+    if (!clinic || clinic.status !== 'ACTIVE') {
+      throw new NotFoundException(`Clinic not found or inactive`);
+    }
+
+    return this.formatPublicClinic(clinic);
+  }
+
+  private formatPublicClinic(clinic: any) {
+    return {
+      id: clinic.id,
+      name: clinic.name,
+      code: clinic.code,
+      tagline: clinic.tagline,
+      phone: clinic.phone,
+      email: clinic.email,
+      address: clinic.address,
+      city: clinic.city,
+      state: clinic.state,
+      postalCode: clinic.postalCode,
+      chairCount: clinic.chairCount,
+      subdomain: clinic.subdomain,
+      upiVpa: clinic.upiVpa,
+      workingHours: clinic.workingHours
+        ? (() => {
+            try {
+              return JSON.parse(clinic.workingHours);
+            } catch {
+              return clinic.workingHours;
+            }
+          })()
+        : null,
+    };
+  }
+
   async getSettings(clinicId: string) {
     const clinic = await this.prisma.clinic.findUnique({
       where: { id: clinicId },
@@ -33,6 +86,10 @@ export class ClinicService {
       currency: clinic.currency,
       gstin: clinic.gstin,
       chairCount: clinic.chairCount,
+      subdomain: clinic.subdomain,
+      status: clinic.status,
+      planTier: clinic.planTier,
+      upiVpa: clinic.upiVpa,
       workingHours: clinic.workingHours
         ? (() => {
             try {

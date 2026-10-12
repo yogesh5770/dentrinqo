@@ -129,6 +129,7 @@ export class FollowUpsService {
 
     const item = await this.prisma.followUpReminder.create({
       data: {
+        clinicId,
         patientId: dto.patientId,
         appointmentId: dto.appointmentId || null,
         scheduledDate,

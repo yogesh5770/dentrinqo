@@ -18,6 +18,7 @@ export class ConsultationsService {
 
     const consultation = await this.prisma.consultation.create({
       data: {
+        clinicId,
         patientId: dto.patientId,
         dentistId: actor.userId,
         appointmentId: dto.appointmentId,
@@ -139,6 +140,7 @@ export class ConsultationsService {
     // Create amendment audit record
     await this.prisma.consultationAmendment.create({
       data: {
+        clinicId,
         consultationId: id,
         amendedById: actor.userId,
         reason: dto.reason,

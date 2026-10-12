@@ -22,6 +22,8 @@ import {
   IndianRupee,
   Smile,
   Zap,
+  Send,
+  Archive,
 } from 'lucide-react';
 import { TreatmentPlanManager } from '../treatment-plans/TreatmentPlanManager';
 import { ProcedureLogger } from '../procedures/ProcedureLogger';
@@ -31,17 +33,37 @@ import { InvoiceModal } from '../billing/InvoiceModal';
 import { PaymentModal } from '../billing/PaymentModal';
 import { InvoicePrintModal } from '../billing/InvoicePrintModal';
 import { MedicalFilesGallery } from '../imaging/MedicalFilesGallery';
+import { QuickReconsultModal } from '../../components/QuickReconsultModal';
+import { SpeechToTextDictation } from '../../components/SpeechToTextDictation';
+import { NewPatientModal } from '../patients/NewPatientModal';
 import { useClinicSync, triggerClinicSync } from '../../lib/sync';
+import { useAuth } from '../../hooks/useAuth';
 
 interface DoctorDeskProps {
   defaultTab?: 'examination' | 'chart' | 'treatmentPlans' | 'procedures' | 'prescriptions' | 'imaging';
 }
 
 export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examination' }) => {
+  const { user } = useAuth();
+  const doctorDisplayName = user?.fullName || (user?.clinic?.code === 'JDC' ? 'Dr. Josy Jacob (MDS)' : 'Dr. Khalidh Khan (BDS, MDS)');
   const [todayPatients, setTodayPatients] = useState<any[]>([]);
   const [selectedAppt, setSelectedAppt] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [mobileQueueOpen, setMobileQueueOpen] = useState(false);
+
+  // Quick Serial # Re-Consultation & Old Record Digitize State
+  const [reconsultModalOpen, setReconsultModalOpen] = useState(false);
+  const [reconsultInitialSerial, setReconsultInitialSerial] = useState('');
+  const [digitizeModalOpen, setDigitizeModalOpen] = useState(false);
+  const [digitizeInitialSerial, setDigitizeInitialSerial] = useState('');
+  const [quickSerialInput, setQuickSerialInput] = useState('');
+
+  const handleQuickSerialLookup = (serial: string) => {
+    if (!serial.trim()) return;
+    setReconsultInitialSerial(serial.trim());
+    setReconsultModalOpen(true);
+    setQuickSerialInput('');
+  };
 
   // Operatory Tab
   const [operatoryTab, setOperatoryTab] = useState<
@@ -87,6 +109,9 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
   const [treatmentCatalogue, setTreatmentCatalogue] = useState<any[]>([]);
   const [patientPlans, setPatientPlans] = useState<any[]>([]);
 
+  const [queueTab, setQueueTab] = useState<'WAITING_IN_CLINIC' | 'ALL_TODAY'>('WAITING_IN_CLINIC');
+  const [submittingSendToReception, setSubmittingSendToReception] = useState(false);
+
   const fetchDoctorQueue = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
@@ -94,7 +119,9 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
       const data = await apiRequest<any[]>(`/appointments?date=${todayStr}`);
       setTodayPatients(data || []);
       if (data && data.length > 0 && !selectedAppt) {
-        selectPatient(data[0]);
+        // Priority: Auto-select patient physically checked-in by reception desk first
+        const waiting = data.find((a: any) => a.status === 'CHECKED_IN' || a.status === 'IN_CHAIR');
+        selectPatient(waiting || data[0]);
       }
     } catch (err) {
       console.error(err);
@@ -231,7 +258,28 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
   const handleDoctorCompleteVisit = async () => {
     if (!selectedAppt) return;
     try {
-      // 1. Check if unbilled procedures already exist for this patient
+      // 1. Auto-save consultation examination notes if doctor typed anything
+      if (chiefComplaint || diagnosis || clinicalNotes) {
+        try {
+          await apiRequest('/consultations', {
+            method: 'POST',
+            body: JSON.stringify({
+              patientId: selectedAppt.patientId,
+              appointmentId: selectedAppt.id,
+              chiefComplaint: chiefComplaint || selectedAppt.reason || 'General Dental Consultation',
+              clinicalExamination,
+              diagnosis,
+              clinicalNotes,
+              isFinalized: true,
+            }),
+          });
+          setIsFinalized(true);
+        } catch (e) {
+          // ignore duplicate save
+        }
+      }
+
+      // 2. Check if unbilled procedures already exist for this patient
       const unbilled = await apiRequest<any[]>(`/procedures/patient/${selectedAppt.patientId}?unbilledOnly=true`).catch(() => []);
       
       if (unbilled && unbilled.length > 0) {
@@ -242,23 +290,42 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
         const totalRupees = Math.round(
           unbilled.reduce((sum, p) => sum + (p.treatmentPlanItem?.estimatedCostPaise || p.feePaise || 50000), 0) / 100
         );
-        setMessage(`✅ Patient treatment marked COMPLETED with ${unbilled.length} procedure(s) (₹${totalRupees})! Queued for Reception Billing Desk.`);
-        setSelectedAppt({ ...selectedAppt, status: 'COMPLETED' });
-        fetchDoctorQueue(true);
+        setMessage(`✅ Patient treatment marked COMPLETED with ${unbilled.length} procedure(s) (₹${totalRupees})! Sent to Reception Billing Desk.`);
+        
+        // Dispatch live sync alerts to reception
         triggerClinicSync('doctor_completed_visit', {
           patientName: selectedAppt.patientName,
           patientId: selectedAppt.patientId,
           patientUhid: selectedAppt.patientUhid,
           patientPhone: selectedAppt.patientPhone,
-          doctorName: selectedAppt.dentistName || 'Dr. Khalidh Khan',
+          doctorName: selectedAppt.dentistName || doctorDisplayName,
           procedureName: unbilled[0]?.procedureName || 'Completed Clinical Treatment',
           toothNumber: unbilled[0]?.toothNumber,
           feeRupees: totalRupees,
         });
+        triggerClinicSync('doctor_sent_to_reception', {
+          appointmentId: selectedAppt.id,
+          patientName: selectedAppt.patientName,
+          patientUhid: selectedAppt.patientUhid,
+          patientPhone: selectedAppt.patientPhone,
+          chairNumber: selectedAppt.chairNumber,
+          dentistName: selectedAppt.dentistName || doctorDisplayName,
+        });
+
+        // Auto-advance queue to next waiting patient in lobby
+        const updatedQueue = todayPatients.map(a => a.id === selectedAppt.id ? { ...a, status: 'COMPLETED' } : a);
+        setTodayPatients(updatedQueue);
+        const nextWaiting = updatedQueue.find(a => (a.status === 'CHECKED_IN' || a.status === 'IN_CHAIR') && a.id !== selectedAppt.id);
+        if (nextWaiting) {
+          selectPatient(nextWaiting);
+        } else {
+          setSelectedAppt({ ...selectedAppt, status: 'COMPLETED' });
+        }
+        fetchDoctorQueue(true);
         return;
       }
 
-      // 2. No procedures recorded yet -> open quick completion modal
+      // 3. No procedures recorded yet -> open quick completion modal with preselected procedure
       const defaultProc = treatmentCatalogue.find(
         c => (selectedAppt.reason && c.name.toLowerCase().includes(selectedAppt.reason.toLowerCase())) ||
              (diagnosis && c.name.toLowerCase().includes(diagnosis.toLowerCase()))
@@ -284,6 +351,28 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
     if (!selectedAppt) return;
     setSubmittingCheckout(true);
     try {
+      // 1. Auto-save consultation examination notes if filled
+      if (chiefComplaint || diagnosis || clinicalNotes) {
+        try {
+          await apiRequest('/consultations', {
+            method: 'POST',
+            body: JSON.stringify({
+              patientId: selectedAppt.patientId,
+              appointmentId: selectedAppt.id,
+              chiefComplaint: chiefComplaint || selectedAppt.reason || 'General Dental Consultation',
+              clinicalExamination,
+              diagnosis,
+              clinicalNotes,
+              isFinalized: true,
+            }),
+          });
+          setIsFinalized(true);
+        } catch (e) {
+          // ignore duplicate save
+        }
+      }
+
+      // 2. Record procedure if specified
       if (withProcedure && quickProcedureName) {
         await apiRequest('/procedures', {
           method: 'POST',
@@ -298,32 +387,112 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
         });
       }
 
+      // 3. Mark appointment COMPLETED to instantly free operatory chair
       await apiRequest(`/appointments/${selectedAppt.id}/status`, {
         method: 'PATCH',
         body: JSON.stringify({ status: 'COMPLETED' }),
       });
 
       setQuickCompleteOpen(false);
+      const feeRupees = withProcedure ? quickFeeRupees : 300;
       const summaryMsg = withProcedure 
         ? `✅ Procedure "${quickProcedureName}" (₹${quickFeeRupees}) recorded & sent to Reception Billing Desk!`
-        : `✅ Patient consultation marked COMPLETED and queued for checkout!`;
+        : `✅ Patient consultation marked COMPLETED and sent to Reception Billing Desk!`;
       setMessage(summaryMsg);
-      setSelectedAppt({ ...selectedAppt, status: 'COMPLETED' });
-      fetchDoctorQueue(true);
+
+      // 4. Dispatch live alerts to Reception Desk
       triggerClinicSync('doctor_completed_visit', {
         patientName: selectedAppt.patientName,
         patientId: selectedAppt.patientId,
         patientUhid: selectedAppt.patientUhid,
         patientPhone: selectedAppt.patientPhone,
-        doctorName: selectedAppt.dentistName || 'Dr. Khalidh Khan',
+        doctorName: selectedAppt.dentistName || doctorDisplayName,
         procedureName: withProcedure ? quickProcedureName : 'General Consultation',
         toothNumber: quickToothNumber,
-        feeRupees: withProcedure ? quickFeeRupees : 300,
+        feeRupees,
       });
+      triggerClinicSync('doctor_sent_to_reception', {
+        appointmentId: selectedAppt.id,
+        patientName: selectedAppt.patientName,
+        patientUhid: selectedAppt.patientUhid,
+        patientPhone: selectedAppt.patientPhone,
+        chairNumber: selectedAppt.chairNumber,
+        dentistName: selectedAppt.dentistName || doctorDisplayName,
+      });
+
+      // 5. Auto-advance to next waiting patient in lobby
+      const updatedQueue = todayPatients.map(a => a.id === selectedAppt.id ? { ...a, status: 'COMPLETED' } : a);
+      setTodayPatients(updatedQueue);
+      const nextWaiting = updatedQueue.find(a => (a.status === 'CHECKED_IN' || a.status === 'IN_CHAIR') && a.id !== selectedAppt.id);
+      if (nextWaiting) {
+        selectPatient(nextWaiting);
+      } else {
+        setSelectedAppt({ ...selectedAppt, status: 'COMPLETED' });
+      }
+      fetchDoctorQueue(true);
     } catch (err: any) {
       alert(err?.message || 'Failed to complete visit');
     } finally {
       setSubmittingCheckout(false);
+    }
+  };
+
+  const handleSendPatientToReception = async () => {
+    if (!selectedAppt) return;
+    setSubmittingSendToReception(true);
+    try {
+      // 1. Auto-save consultation examination if filled
+      if (chiefComplaint || diagnosis || clinicalNotes) {
+        try {
+          await apiRequest('/consultations', {
+            method: 'POST',
+            body: JSON.stringify({
+              patientId: selectedAppt.patientId,
+              appointmentId: selectedAppt.id,
+              chiefComplaint: chiefComplaint || selectedAppt.reason || 'General Dental Consultation',
+              clinicalExamination,
+              diagnosis,
+              clinicalNotes,
+              isFinalized: true,
+            }),
+          });
+        } catch (e) {
+          // ignore duplicate save
+        }
+      }
+
+      // 2. Mark appointment completed so chair is instantly freed
+      await apiRequest(`/appointments/${selectedAppt.id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'COMPLETED' }),
+      });
+
+      // 3. Dispatch live clinic sync to notify Reception Desk
+      triggerClinicSync('doctor_sent_to_reception', {
+        appointmentId: selectedAppt.id,
+        patientName: selectedAppt.patientName,
+        patientUhid: selectedAppt.patientUhid,
+        patientPhone: selectedAppt.patientPhone,
+        chairNumber: selectedAppt.chairNumber,
+        dentistName: selectedAppt.dentistName || 'Duty Dentist',
+      });
+
+      setMessage(`📤 Patient "${selectedAppt.patientName}" sent to Reception Desk for checkout & billing! Operatory Chair #${selectedAppt.chairNumber} is now free.`);
+
+      // 4. Update queue state and auto-advance to next checked-in patient
+      const updatedQueue = todayPatients.map(a => a.id === selectedAppt.id ? { ...a, status: 'COMPLETED' } : a);
+      setTodayPatients(updatedQueue);
+
+      const nextWaiting = updatedQueue.find(a => (a.status === 'CHECKED_IN' || a.status === 'IN_CHAIR') && a.id !== selectedAppt.id);
+      if (nextWaiting) {
+        selectPatient(nextWaiting);
+      } else {
+        setSelectedAppt({ ...selectedAppt, status: 'COMPLETED' });
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Failed to send patient to Reception Desk');
+    } finally {
+      setSubmittingSendToReception(false);
     }
   };
 
@@ -349,7 +518,7 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
         patientId: selectedAppt.patientId,
         patientUhid: selectedAppt.patientUhid,
         patientPhone: selectedAppt.patientPhone,
-        doctorName: selectedAppt.dentistName || 'Dr. Khalidh Khan',
+        doctorName: selectedAppt.dentistName || doctorDisplayName,
         procedureName: item.procedureName,
         toothNumber: item.toothNumber,
         feeRupees,
@@ -376,7 +545,7 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
             Doctor Consultation Desk
           </h2>
           <p className="text-xs font-semibold text-slate-500 mt-0.5">
-            Dr. Khalidh Khan (BDS, MDS) • Patient Consultations & Procedures
+            {doctorDisplayName} • Patient Consultations & Procedures
           </p>
         </div>
 
@@ -394,138 +563,279 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
       </div>
 
       {/* Mobile Operatory Patient Switcher Bar (< lg) */}
-      <div className="lg:hidden clinic-card p-4 bg-white border border-slate-200 shadow-xs flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[10px] font-black uppercase tracking-wider text-teal-800 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            Active Consultation • {todayPatients.length} in queue
-          </div>
-          <div className="text-sm font-black text-slate-900 truncate mt-0.5">
-            {selectedAppt ? selectedAppt.patientName : 'No patient selected'}
-          </div>
-          {selectedAppt && (
-            <div className="text-xs text-slate-500 font-mono font-semibold">
-              Chair {selectedAppt.chairNumber} • {selectedAppt.patientUhid}
-            </div>
-          )}
-        </div>
+      {(() => {
+        const waitingPatients = todayPatients.filter(a => a.status === 'CHECKED_IN' || a.status === 'IN_CHAIR');
+        const displayedPatients = queueTab === 'WAITING_IN_CLINIC' ? waitingPatients : todayPatients;
 
-        <button
-          onClick={() => setMobileQueueOpen(!mobileQueueOpen)}
-          className="shrink-0 px-3.5 py-2.5 bg-teal-50 hover:bg-teal-100 text-teal-900 rounded-xl font-black text-xs border border-teal-300 flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-        >
-          <ClipboardList className="w-4 h-4 text-teal-700" />
-          <span>{mobileQueueOpen ? 'Close Queue' : 'Switch Patient'}</span>
-        </button>
-      </div>
-
-      {/* Expandable Mobile Queue (< lg) */}
-      {mobileQueueOpen && (
-        <div className="lg:hidden clinic-card p-4 bg-slate-50 border border-teal-300 rounded-2xl shadow-sm space-y-2.5 animate-fadeIn">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-            <span className="font-black text-xs text-slate-800 uppercase tracking-wider">Select Patient from Queue</span>
-            <span className="text-xs font-bold text-teal-800 bg-teal-100 px-2 py-0.5 rounded font-mono">
-              {todayPatients.length} scheduled
-            </span>
-          </div>
-
-          {todayPatients.length === 0 ? (
-            <p className="text-xs text-slate-500 font-medium py-4 text-center">No patients scheduled today.</p>
-          ) : (
-            <div className="space-y-2 max-h-[380px] overflow-y-auto touch-scroll">
-              {todayPatients.map(appt => {
-                const isSelected = selectedAppt?.id === appt.id;
-                return (
-                  <div
-                    key={appt.id}
-                    onClick={() => {
-                      selectPatient(appt);
-                      setMobileQueueOpen(false);
-                    }}
-                    className={`p-3 rounded-xl border text-xs cursor-pointer transition-all ${
-                      isSelected
-                        ? 'bg-teal-50 border-2 border-teal-600 shadow-xs ring-2 ring-teal-500/20'
-                        : 'bg-white border-slate-200 active:bg-slate-100'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-black text-slate-900 text-sm">{appt.patientName}</span>
-                      <span className="font-mono text-xs text-teal-900 bg-teal-100 px-2 py-0.5 rounded font-black">
-                        Chair {appt.chairNumber}
-                      </span>
-                    </div>
-                    <div className="text-xs text-slate-600 font-mono font-bold mt-1">
-                      {appt.patientUhid}
-                    </div>
-                    <div className="text-xs text-slate-700 font-medium mt-1 line-clamp-1">
-                      {appt.reason}
-                    </div>
-                    <div className="mt-2 pt-2 border-t border-slate-200 flex items-center justify-between text-xs">
-                      <span className="font-extrabold text-teal-700">{appt.status}</span>
-                      <span className="font-mono text-slate-600 font-semibold">
-                        {new Date(appt.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
+        return (
+          <>
+            <div className="lg:hidden clinic-card p-4 bg-white border border-slate-200 shadow-xs flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[10px] font-black uppercase tracking-wider text-teal-800 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Active Consultation • {waitingPatients.length} waiting in clinic
+                </div>
+                <div className="text-sm font-black text-slate-900 truncate mt-0.5">
+                  {selectedAppt ? selectedAppt.patientName : 'No patient selected'}
+                </div>
+                {selectedAppt && (
+                  <div className="text-xs text-slate-500 font-mono font-semibold">
+                    Chair {selectedAppt.chairNumber} • {selectedAppt.patientUhid}
                   </div>
-                );
-              })}
+                )}
+              </div>
+
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={() => setReconsultModalOpen(true)}
+                  className="px-2.5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-black text-xs flex items-center gap-1 shadow-2xs cursor-pointer active:scale-95"
+                  title="Card Serial Number Re-Consultation"
+                >
+                  <Stethoscope className="w-3.5 h-3.5 text-white" />
+                  <span>Card Lookup</span>
+                </button>
+                <button
+                  onClick={() => setMobileQueueOpen(!mobileQueueOpen)}
+                  className="px-3 py-2 bg-teal-50 hover:bg-teal-100 text-teal-900 rounded-xl font-black text-xs border border-teal-300 flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                >
+                  <ClipboardList className="w-4 h-4 text-teal-700" />
+                  <span>{mobileQueueOpen ? 'Close' : 'Queue'}</span>
+                </button>
+              </div>
             </div>
-          )}
-        </div>
-      )}
+
+            {/* Expandable Mobile Queue (< lg) */}
+            {mobileQueueOpen && (
+              <div className="lg:hidden clinic-card p-4 bg-slate-50 border border-teal-300 rounded-2xl shadow-sm space-y-2.5 animate-fadeIn">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                  <span className="font-black text-xs text-slate-800 uppercase tracking-wider">Select Patient from Queue</span>
+                  <div className="flex items-center gap-1 bg-slate-200 p-0.5 rounded-lg text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => setQueueTab('WAITING_IN_CLINIC')}
+                      className={`px-2 py-0.5 rounded font-black cursor-pointer ${queueTab === 'WAITING_IN_CLINIC' ? 'bg-white text-teal-900 shadow-2xs' : 'text-slate-600'}`}
+                    >
+                      In Clinic ({waitingPatients.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQueueTab('ALL_TODAY')}
+                      className={`px-2 py-0.5 rounded font-black cursor-pointer ${queueTab === 'ALL_TODAY' ? 'bg-white text-teal-900 shadow-2xs' : 'text-slate-600'}`}
+                    >
+                      All ({todayPatients.length})
+                    </button>
+                  </div>
+                </div>
+
+                {displayedPatients.length === 0 ? (
+                  <div className="py-6 text-center text-xs text-slate-500 font-medium">
+                    {queueTab === 'WAITING_IN_CLINIC'
+                      ? 'No patients waiting in clinic right now. Patients checked in at Reception will appear here.'
+                      : 'No appointments scheduled today.'}
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-[380px] overflow-y-auto touch-scroll">
+                    {displayedPatients.map(appt => {
+                      const isSelected = selectedAppt?.id === appt.id;
+                      return (
+                        <div
+                          key={appt.id}
+                          onClick={() => {
+                            selectPatient(appt);
+                            setMobileQueueOpen(false);
+                          }}
+                          className={`p-3 rounded-xl border text-xs cursor-pointer transition-all ${
+                            isSelected
+                              ? 'bg-teal-50 border-2 border-teal-600 shadow-xs ring-2 ring-teal-500/20'
+                              : 'bg-white border-slate-200 active:bg-slate-100'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-black text-slate-900 text-sm">{appt.patientName}</span>
+                            <span className="font-mono text-xs text-teal-900 bg-teal-100 px-2 py-0.5 rounded font-black">
+                              Chair {appt.chairNumber}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-600 font-mono font-bold mt-1">
+                            {appt.patientUhid}
+                          </div>
+                          <div className="text-xs text-slate-700 font-medium mt-1 line-clamp-1">
+                            {appt.reason}
+                          </div>
+                          <div className="mt-2 pt-2 border-t border-slate-200 flex items-center justify-between text-xs">
+                            <span className="font-extrabold text-teal-700">{appt.status}</span>
+                            <span className="font-mono text-slate-600 font-semibold">
+                              {new Date(appt.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Side: Today's Patient Queue (Desktop >= lg) */}
-        <div className="hidden lg:block lg:col-span-4 space-y-4">
-          <div className="clinic-card p-4 bg-white border border-slate-200 shadow-xs">
-            <h3 className="font-black text-sm text-slate-900 mb-3 flex items-center justify-between">
-              <span>Today's Patient Queue</span>
-              <span className="text-xs text-teal-800 font-extrabold bg-teal-50 px-2 py-0.5 rounded border border-teal-200">
-                {todayPatients.length} scheduled
-              </span>
-            </h3>
+        {(() => {
+          const waitingPatients = todayPatients.filter(a => a.status === 'CHECKED_IN' || a.status === 'IN_CHAIR');
+          const displayedPatients = queueTab === 'WAITING_IN_CLINIC' ? waitingPatients : todayPatients;
 
-            {todayPatients.length === 0 ? (
-              <p className="text-xs text-slate-500 font-medium py-8 text-center">No patients scheduled today.</p>
-            ) : (
-              <div className="space-y-2.5 max-h-[620px] overflow-y-auto">
-                {todayPatients.map(appt => {
-                  const isSelected = selectedAppt?.id === appt.id;
-                  return (
-                    <div
-                      key={appt.id}
-                      onClick={() => selectPatient(appt)}
-                      className={`p-3.5 rounded-xl border text-xs cursor-pointer transition-all ${
-                        isSelected
-                          ? 'bg-teal-50 border-2 border-teal-600 shadow-xs ring-2 ring-teal-500/20'
-                          : 'bg-white border-slate-200 hover:bg-slate-50'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-black text-slate-900 text-sm">{appt.patientName}</span>
-                        <span className="font-mono text-xs text-teal-900 bg-teal-100 px-2 py-0.5 rounded font-black">
-                          Chair {appt.chairNumber}
-                        </span>
-                      </div>
-                      <div className="text-xs text-slate-600 font-mono font-bold mt-1">
-                        {appt.patientUhid}
-                      </div>
-                      <div className="text-xs text-slate-700 font-medium mt-1 line-clamp-1">
-                        {appt.reason}
-                      </div>
-                      <div className="mt-2.5 pt-2 border-t border-slate-200 flex items-center justify-between text-xs">
-                        <span className="font-extrabold text-teal-700">{appt.status}</span>
-                        <span className="font-mono text-slate-600 font-semibold">
-                          {new Date(appt.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
+          return (
+            <div className="hidden lg:block lg:col-span-4 space-y-4">
+              {/* Quick Serial # Re-Consult Widget */}
+              <div className="p-3 bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 rounded-2xl text-white shadow-xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-black text-xs flex items-center gap-1.5">
+                    <Stethoscope className="w-3.5 h-3.5 text-amber-200" />
+                    Card # Re-Consultation
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDigitizeInitialSerial('');
+                      setDigitizeModalOpen(true);
+                    }}
+                    className="text-[10px] font-black bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded-lg transition cursor-pointer"
+                  >
+                    + New Card
+                  </button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={quickSerialInput}
+                    onChange={e => setQuickSerialInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleQuickSerialLookup(quickSerialInput);
+                      }
+                    }}
+                    placeholder="Card Serial Number..."
+                    className="flex-1 bg-white text-slate-900 font-mono font-black text-xs px-2.5 py-1.5 rounded-xl border-0 focus:outline-none placeholder-slate-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleQuickSerialLookup(quickSerialInput)}
+                    className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs rounded-xl shadow-xs transition cursor-pointer active:scale-95"
+                  >
+                    Search
+                  </button>
+                </div>
               </div>
-            )}
-          </div>
-        </div>
+
+              <div className="clinic-card p-4 bg-white border border-slate-200 shadow-xs">
+                {/* Header & Tabs */}
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-black text-sm text-slate-900">Patient Queue</h3>
+                  <span className="text-[10px] font-black uppercase text-teal-800 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full">
+                    Live Operatory
+                  </span>
+                </div>
+
+                <div className="flex p-1 bg-slate-100 rounded-xl mb-3 gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setQueueTab('WAITING_IN_CLINIC')}
+                    className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                      queueTab === 'WAITING_IN_CLINIC'
+                        ? 'bg-white text-teal-900 shadow-xs font-black'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <span>🏥 In Clinic</span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+                      waitingPatients.length > 0 ? 'bg-amber-100 text-amber-900' : 'bg-slate-200 text-slate-700'
+                    }`}>
+                      {waitingPatients.length}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQueueTab('ALL_TODAY')}
+                    className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                      queueTab === 'ALL_TODAY'
+                        ? 'bg-white text-teal-900 shadow-xs font-black'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <span>📅 All Today</span>
+                    <span className="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded-full font-bold">
+                      {todayPatients.length}
+                    </span>
+                  </button>
+                </div>
+
+                {displayedPatients.length === 0 ? (
+                  <div className="py-8 px-4 text-center">
+                    <div className="w-10 h-10 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center mb-2">
+                      <User className="w-5 h-5" />
+                    </div>
+                    <p className="text-xs font-bold text-slate-800">
+                      {queueTab === 'WAITING_IN_CLINIC' ? 'No Patients in Waiting Lobby' : 'No Appointments Today'}
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-1 leading-snug">
+                      {queueTab === 'WAITING_IN_CLINIC'
+                        ? 'Patients physically checked in at Reception will appear here instantly for chair consultation.'
+                        : 'No appointments have been recorded for today.'}
+                    </p>
+                    {queueTab === 'WAITING_IN_CLINIC' && todayPatients.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setQueueTab('ALL_TODAY')}
+                        className="mt-3 text-xs font-bold text-teal-700 hover:text-teal-800 underline cursor-pointer"
+                      >
+                        View all {todayPatients.length} scheduled visits
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-2.5 max-h-[620px] overflow-y-auto">
+                    {displayedPatients.map(appt => {
+                      const isSelected = selectedAppt?.id === appt.id;
+                      return (
+                        <div
+                          key={appt.id}
+                          onClick={() => selectPatient(appt)}
+                          className={`p-3.5 rounded-xl border text-xs cursor-pointer transition-all ${
+                            isSelected
+                              ? 'bg-teal-50 border-2 border-teal-600 shadow-xs ring-2 ring-teal-500/20'
+                              : 'bg-white border-slate-200 hover:bg-slate-50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-black text-slate-900 text-sm">{appt.patientName}</span>
+                            <span className="font-mono text-xs text-teal-900 bg-teal-100 px-2 py-0.5 rounded font-black">
+                              Chair {appt.chairNumber}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-600 font-mono font-bold mt-1">
+                            {appt.patientUhid}
+                          </div>
+                          <div className="text-xs text-slate-700 font-medium mt-1 line-clamp-1">
+                            {appt.reason}
+                          </div>
+                          <div className="mt-2.5 pt-2 border-t border-slate-200 flex items-center justify-between text-xs">
+                            <span className="font-extrabold text-teal-700">{appt.status}</span>
+                            <span className="font-mono text-slate-600 font-semibold">
+                              {new Date(appt.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
 
         {/* Right Side: Operatory Clinical Workspace */}
         <div className="lg:col-span-8">
@@ -546,33 +856,24 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {selectedAppt.status !== 'COMPLETED' ? (
                       <button
                         type="button"
+                        disabled={submittingCheckout || submittingSendToReception}
                         onClick={handleDoctorCompleteVisit}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs cursor-pointer transition-all"
-                        title="Mark patient procedure completed and notify reception billing desk"
+                        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-xs sm:text-sm rounded-xl shadow-md cursor-pointer transition-all active:scale-95"
+                        title="Complete consultation, record procedure/fee, free operatory chair, and send patient to Reception Billing"
                       >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Mark Completed (Send to Billing)</span>
+                        <Send className="w-4 h-4" />
+                        <span>{submittingCheckout ? 'Processing...' : '📤 Complete & Send to Billing Desk'}</span>
                       </button>
                     ) : (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-900 border border-emerald-300">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
-                        Completed
+                      <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-black bg-emerald-100 text-emerald-900 border border-emerald-300">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                        <span>Consultation Completed & Sent to Billing</span>
                       </span>
                     )}
-
-                    <button
-                      type="button"
-                      onClick={() => setInvoiceModalOpen(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-600 hover:bg-teal-500 text-white font-extrabold text-xs rounded-xl shadow-xs cursor-pointer transition-all"
-                      title="Generate official invoice & record payment for this patient"
-                    >
-                      <Receipt className="w-3.5 h-3.5" />
-                      <span>Bill & Payment</span>
-                    </button>
 
                     {isFinalized ? (
                       <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-900 border border-emerald-300">
@@ -667,78 +968,84 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                 );
               })()}
 
-              {/* Operatory Sub-Tabs */}
-              <div className="flex items-center gap-1 border-b border-slate-200 text-xs font-bold overflow-x-auto no-scrollbar touch-scroll whitespace-nowrap pb-0.5">
+              {/* Operatory Sub-Tabs - Fully Responsive (Never Cut Off) */}
+              <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-slate-100 rounded-2xl border border-slate-200 mb-4">
                 <button
+                  type="button"
                   onClick={() => setOperatoryTab('examination')}
-                  className={`flex items-center gap-1.5 py-2.5 px-4 border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
                     operatoryTab === 'examination'
-                      ? 'border-teal-600 text-teal-800 font-black bg-teal-50/60'
-                      : 'border-transparent text-slate-600 hover:text-slate-900'
+                      ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
                   }`}
                 >
-                  <Activity className="w-4 h-4 text-teal-600" />
-                  Clinical Notes
+                  <Activity className="w-4 h-4 text-teal-600 shrink-0" />
+                  <span>Clinical Notes</span>
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => setOperatoryTab('chart')}
-                  className={`flex items-center gap-1.5 py-2.5 px-4 border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
                     operatoryTab === 'chart'
-                      ? 'border-teal-600 text-teal-800 font-black bg-teal-50/60'
-                      : 'border-transparent text-slate-600 hover:text-slate-900'
+                      ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
                   }`}
                 >
-                  <Smile className="w-4 h-4 text-teal-600" />
-                  Dental Chart (FDI)
+                  <Smile className="w-4 h-4 text-teal-600 shrink-0" />
+                  <span>Dental Chart (FDI)</span>
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => setOperatoryTab('treatmentPlans')}
-                  className={`flex items-center gap-1.5 py-2.5 px-4 border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
                     operatoryTab === 'treatmentPlans'
-                      ? 'border-teal-600 text-teal-800 font-black bg-teal-50/60'
-                      : 'border-transparent text-slate-600 hover:text-slate-900'
+                      ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
                   }`}
                 >
-                  <ClipboardList className="w-4 h-4 text-teal-600" />
-                  Treatment Plans
+                  <ClipboardList className="w-4 h-4 text-teal-600 shrink-0" />
+                  <span>Treatment Plans</span>
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => setOperatoryTab('procedures')}
-                  className={`flex items-center gap-1.5 py-2.5 px-4 border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
                     operatoryTab === 'procedures'
-                      ? 'border-teal-600 text-teal-800 font-black bg-teal-50/60'
-                      : 'border-transparent text-slate-600 hover:text-slate-900'
+                      ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
                   }`}
                 >
-                  <Stethoscope className="w-4 h-4 text-teal-600" />
-                  Procedures
+                  <Stethoscope className="w-4 h-4 text-teal-600 shrink-0" />
+                  <span>Procedures</span>
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => setOperatoryTab('prescriptions')}
-                  className={`flex items-center gap-1.5 py-2.5 px-4 border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
                     operatoryTab === 'prescriptions'
-                      ? 'border-teal-600 text-teal-800 font-black bg-teal-50/60'
-                      : 'border-transparent text-slate-600 hover:text-slate-900'
+                      ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
                   }`}
                 >
-                  <FileText className="w-4 h-4 text-teal-600" />
-                  Prescriptions (℞)
+                  <FileText className="w-4 h-4 text-teal-600 shrink-0" />
+                  <span>Prescriptions (℞)</span>
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => setOperatoryTab('imaging')}
-                  className={`flex items-center gap-1.5 py-2.5 px-4 border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
                     operatoryTab === 'imaging'
-                      ? 'border-teal-600 text-teal-800 font-black bg-teal-50/60'
-                      : 'border-transparent text-slate-600 hover:text-slate-900'
+                      ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
                   }`}
                 >
-                  <Activity className="w-4 h-4 text-teal-600" />
-                  X-rays & Documents
+                  <Activity className="w-4 h-4 text-teal-600 shrink-0" />
+                  <span>X-rays & Documents</span>
                 </button>
               </div>
 
@@ -798,16 +1105,13 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                     </div>
 
                     <div>
-                      <label className="block font-black text-slate-800 uppercase tracking-wider mb-1.5 text-xs">
-                        Treatment Notes & Plan
-                      </label>
-                      <textarea
-                        rows={3}
-                        disabled={isFinalized}
+                      <SpeechToTextDictation
                         value={clinicalNotes}
-                        onChange={e => setClinicalNotes(e.target.value)}
-                        placeholder="e.g. Advised Root Canal Treatment and Crown. Patient agreed to start treatment..."
-                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-900 font-semibold focus:outline-none focus:border-teal-600 focus:bg-white disabled:bg-slate-100"
+                        onChange={setClinicalNotes}
+                        label="Treatment Notes & Plan (Voice Dictation to Text)"
+                        placeholder="e.g. Advised Root Canal Treatment and Crown. Speak or type here..."
+                        helperText="Converts your voice speech directly to text in real time. No audio files are saved."
+                        minRows={3}
                       />
                     </div>
                   </div>
@@ -853,13 +1157,22 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                       )}
                     </div>
 
-                    <button
-                      onClick={() => setInvoiceModalOpen(true)}
-                      className="flex items-center gap-1.5 bg-purple-600 hover:bg-purple-700 text-white font-black text-xs py-2 px-4 rounded-xl shadow-xs transition-all cursor-pointer"
-                    >
-                      <Receipt className="w-3.5 h-3.5" />
-                      Generate Invoice
-                    </button>
+                    {selectedAppt.status !== 'COMPLETED' ? (
+                      <button
+                        type="button"
+                        disabled={submittingCheckout || saving}
+                        onClick={handleDoctorCompleteVisit}
+                        className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-xs py-2 px-4 rounded-xl shadow-sm transition-all cursor-pointer active:scale-95"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>{submittingCheckout ? 'Processing...' : '📤 Complete & Send to Billing Desk'}</span>
+                      </button>
+                    ) : (
+                      <span className="text-xs font-black text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        Sent to Billing Desk
+                      </span>
+                    )}
                   </div>
                 </div>
               )}
@@ -1196,6 +1509,32 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
           />
         </>
       )}
+
+      {/* Quick Serial # Re-Consultation Modal */}
+      <QuickReconsultModal
+        isOpen={reconsultModalOpen}
+        onClose={() => setReconsultModalOpen(false)}
+        initialSerialNo={reconsultInitialSerial}
+        onPatientSelected={(appt, patient) => {
+          fetchDoctorQueue(true);
+          selectPatient(appt);
+        }}
+        onOpenNewPatientWithSerial={(serialNo) => {
+          setDigitizeInitialSerial(serialNo);
+          setDigitizeModalOpen(true);
+        }}
+      />
+
+      {/* Digitize Old Card Modal */}
+      <NewPatientModal
+        isOpen={digitizeModalOpen}
+        onClose={() => setDigitizeModalOpen(false)}
+        initialMode="LEGACY_ARCHIVE"
+        initialSerialNo={digitizeInitialSerial}
+        onPatientCreated={() => {
+          fetchDoctorQueue(true);
+        }}
+      />
     </div>
   );
 };

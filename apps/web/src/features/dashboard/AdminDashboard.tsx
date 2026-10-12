@@ -22,7 +22,12 @@ import {
   RefreshCw,
   PhoneCall,
   History,
+  QrCode,
+  Printer,
+  Power,
+  X,
 } from 'lucide-react';
+import { QuickReconsultModal } from '../../components/QuickReconsultModal';
 
 interface AdminDashboardProps {
   onOpenNewPatient: () => void;
@@ -40,11 +45,57 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [followUps, setFollowUps] = useState<any[]>([]);
   const [filterChair, setFilterChair] = useState<number | ''>('');
+  const [chairStatus, setChairStatus] = useState<Record<number, boolean>>({ 1: true, 2: true, 3: true });
+  const [togglingChair, setTogglingChair] = useState<number | null>(null);
+  const [showQrModal, setShowQrModal] = useState<boolean>(false);
+  const [reconsultModalOpen, setReconsultModalOpen] = useState<boolean>(false);
+  const [lobbyCode, setLobbyCode] = useState<string>('');
   const { user } = useAuth();
   const totalChairs = user?.clinic?.chairCount || 3;
+  const clinicName = user?.clinic?.name || (user?.clinic?.code === 'JDC' ? 'Jacobs Dental Clinic' : "AK's Elite Dental Clinic");
+  const standeeUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/book?mode=walkin${lobbyCode ? `&code=${lobbyCode}` : ''}`
+    : (user?.clinic?.code === 'JDC'
+      ? `https://jacobdental.duckdns.org/book?mode=walkin${lobbyCode ? `&code=${lobbyCode}` : ''}`
+      : `https://aksdental.duckdns.org/book?mode=walkin${lobbyCode ? `&code=${lobbyCode}` : ''}`);
+  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(standeeUrl)}`;
+
+  const fetchChairStatus = async () => {
+    try {
+      const res = await apiRequest<{ chairs: any; lobbyCode?: string }>('/appointments/public-chair-status');
+      if (res) {
+        if (Array.isArray(res.chairs)) {
+          const map: Record<number, boolean> = {};
+          res.chairs.forEach((c: any) => { map[c.chairNumber] = c.isActive; });
+          setChairStatus(map);
+        } else if (res.chairs) {
+          setChairStatus(res.chairs);
+        }
+        if (res.lobbyCode) setLobbyCode(res.lobbyCode);
+      }
+    } catch {}
+  };
+
+  const handleToggleChair = async (chairNum: number, currentActive: boolean) => {
+    setTogglingChair(chairNum);
+    try {
+      const nextState = !currentActive;
+      await apiRequest('/appointments/chair-toggle', {
+        method: 'PATCH',
+        body: JSON.stringify({ chairNumber: chairNum, isActive: nextState }),
+      });
+      setChairStatus(prev => ({ ...prev, [chairNum]: nextState }));
+      triggerClinicSync('chair_status_toggled');
+    } catch (err: any) {
+      alert(err.message || 'Failed to toggle operatory chair status');
+    } finally {
+      setTogglingChair(null);
+    }
+  };
 
   const fetchDashboardData = async (silent = false) => {
     if (!silent) setLoading(true);
+    fetchChairStatus();
     try {
       const todayStr = new Date().toISOString().split('T')[0];
       const [apptsData, summaryData, logsData, followUpsData] = await Promise.all([
@@ -67,9 +118,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   useEffect(() => {
     fetchDashboardData(false);
+    fetchChairStatus();
   }, []);
 
-  useClinicSync(() => fetchDashboardData(true));
+  useClinicSync(() => {
+    fetchDashboardData(true);
+    fetchChairStatus();
+  });
 
   const handleUpdateStatus = async (id: string, newStatus: string) => {
     try {
@@ -111,7 +166,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <span className="text-xs text-slate-400 font-medium">• Live Clinic Feed</span>
           </div>
           <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
-            AKS Elite Dental Clinic — Executive Overview
+            {clinicName} — Executive Overview
           </h1>
           <p className="text-xs sm:text-sm text-slate-300 font-medium mt-0.5">
             Real-time multi-operatory queue, patient treatment telemetry, and financial collections.
@@ -120,11 +175,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         <div className="flex items-center gap-2 shrink-0">
           <button
+            onClick={() => setShowQrModal(true)}
+            className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-teal-300 font-bold text-xs flex items-center gap-1.5 border border-slate-700 cursor-pointer transition-all"
+            title="Hospital Lobby Standee QR Code for Walk-In Self Check-In"
+          >
+            <QrCode className="w-4 h-4 text-teal-400" />
+            <span>Standee QR</span>
+          </button>
+          <button
             onClick={() => fetchDashboardData()}
             title="Refresh Live Data"
             className="p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer transition-all"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-teal-400' : ''}`} />
+          </button>
+          <button
+            onClick={() => setReconsultModalOpen(true)}
+            className="px-3.5 py-2 rounded-xl bg-linear-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition-all active:scale-95"
+            title="Re-Consult Returning Patient by Card Serial Number"
+          >
+            <Stethoscope className="w-4 h-4 text-white" />
+            <span>Re-Consult Card #</span>
           </button>
           <button
             onClick={onOpenNewPatient}
@@ -142,6 +213,58 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Operatory Chairs Real-Time Active / Off-Duty Control Bar */}
+      <div className="clinic-card p-4 bg-white border border-slate-200 shadow-xs">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center font-bold shrink-0">
+              <Armchair className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-black text-slate-900">Operatory Rooms & Doctor Duty Status</h4>
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-teal-100 text-teal-900">
+                  Live Concurrency
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 font-medium">
+                Switch chair off when doctor is away. Online booking slots will grey out immediately.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            {Array.from({ length: totalChairs }, (_, i) => i + 1).map(num => {
+              const isActive = chairStatus[num] ?? true;
+              const isToggling = togglingChair === num;
+              let roomLabel = 'Specialist Room';
+              if (num === 1) roomLabel = 'Chief Room';
+              else if (num === 2) roomLabel = 'Associate Room';
+              else if (num === 3) roomLabel = 'Specialist / Ortho';
+              return (
+                <button
+                  key={num}
+                  type="button"
+                  disabled={isToggling}
+                  onClick={() => handleToggleChair(num, isActive)}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black border transition-all cursor-pointer ${
+                    isActive
+                      ? 'bg-emerald-50 text-emerald-900 border-emerald-300 hover:bg-emerald-100'
+                      : 'bg-rose-50 text-rose-900 border-rose-300 hover:bg-rose-100'
+                  }`}
+                >
+                  <Power className={`w-3.5 h-3.5 ${isActive ? 'text-emerald-600' : 'text-rose-600'}`} />
+                  <span>
+                    Chair {num} ({roomLabel}): {isActive ? '🟢 Active' : '🔴 Off Duty'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
 
       {/* 6 Key Operational & Financial Metrics */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -486,6 +609,72 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Printable Hospital Lobby Standee QR Modal */}
+      {showQrModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full border border-slate-200 p-6 relative text-center">
+            <button
+              onClick={() => setShowQrModal(false)}
+              className="absolute right-4 top-4 text-slate-400 hover:text-slate-600 p-1"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="w-12 h-12 mx-auto mb-2 bg-teal-50 border border-teal-200 rounded-2xl flex items-center justify-center text-teal-600">
+              <QrCode className="w-6 h-6" />
+            </div>
+
+            <h3 className="text-lg font-black text-slate-900">{clinicName}</h3>
+            <p className="text-xs text-slate-500 font-medium">Hospital Lobby Standee QR Code</p>
+
+            <div className="my-5 p-4 bg-slate-50 rounded-2xl border border-slate-200 inline-block shadow-inner">
+              <img
+                src={qrCodeUrl}
+                alt="Standee QR Code"
+                className="w-48 h-48 mx-auto rounded-xl object-contain bg-white p-2 shadow-xs"
+              />
+            </div>
+
+            <div className="bg-teal-50/70 border border-teal-200 rounded-xl p-3 text-xs text-teal-900 mb-4 text-left">
+              <p className="font-bold mb-1">🏥 Standee Placement Guide:</p>
+              <p className="text-slate-600 text-[11px] leading-relaxed">
+                Print this QR code and display it on acrylic standees at the clinic reception desk and lobby waiting area. Walk-in patients can scan to register directly into today's queue.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-center gap-2">
+              <button
+                onClick={() => window.print()}
+                className="px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-2 transition cursor-pointer"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Print Standee Poster</span>
+              </button>
+              <a
+                href={standeeUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition"
+              >
+                Test Link
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Serial # Re-Consultation Modal */}
+      <QuickReconsultModal
+        isOpen={reconsultModalOpen}
+        onClose={() => setReconsultModalOpen(false)}
+        onPatientSelected={() => {
+          fetchDashboardData(true);
+        }}
+        onOpenNewPatientWithSerial={() => {
+          onOpenNewPatient();
+        }}
+      />
     </div>
   );
 };

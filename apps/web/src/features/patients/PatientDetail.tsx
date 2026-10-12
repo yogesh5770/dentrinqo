@@ -19,6 +19,10 @@ import {
   CreditCard,
   Printer,
   Camera,
+  Archive,
+  Mic,
+  Volume2,
+  Zap,
 } from 'lucide-react';
 import { TreatmentPlanManager } from '../treatment-plans/TreatmentPlanManager';
 import { ProcedureLogger } from '../procedures/ProcedureLogger';
@@ -29,6 +33,8 @@ import { PaymentModal } from '../billing/PaymentModal';
 import { InvoicePrintModal } from '../billing/InvoicePrintModal';
 import { MedicalFilesGallery } from '../imaging/MedicalFilesGallery';
 import { PatientConsentDesk } from '../consent/PatientConsentDesk';
+import { CaseSheetPhysicalArchive } from './CaseSheetPhysicalArchive';
+import { QuickReconsultModal } from '../../components/QuickReconsultModal';
 import { useClinicSync, triggerClinicSync } from '../../lib/sync';
 
 export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) => void }> = ({
@@ -39,8 +45,8 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
   const [patient, setPatient] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Active Tab - 5 focused clinical tabs
-  const [activeTab, setActiveTab] = useState<'clinical' | 'imaging' | 'prescriptions' | 'billing' | 'consent'>('clinical');
+  // Active Tab - 6 clinical tabs including Physical Archive
+  const [activeTab, setActiveTab] = useState<'clinical' | 'archive' | 'imaging' | 'prescriptions' | 'billing' | 'consent'>('clinical');
   const [clinicalSubTab, setClinicalSubTab] = useState<'chart' | 'plans' | 'procedures' | 'consultations' | 'appointments'>('chart');
 
   // Billing state
@@ -48,6 +54,7 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
   const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
   const [paymentModalInvoice, setPaymentModalInvoice] = useState<any | null>(null);
   const [printModalInvoice, setPrintModalInvoice] = useState<any | null>(null);
+  const [reconsultModalOpen, setReconsultModalOpen] = useState(false);
 
   const fetchPatient = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -122,11 +129,23 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
               {patient.fullName.charAt(0)}
             </div>
             <div>
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2.5 flex-wrap">
                 <h2 className="text-xl sm:text-2xl font-black text-slate-900">{patient.fullName}</h2>
                 <span className="font-mono text-xs font-black bg-teal-100 text-teal-900 border border-teal-300 px-2.5 py-0.5 rounded-md">
                   {patient.uhid}
                 </span>
+                {patient.legacySlNo && (
+                  <span className="font-mono text-xs font-black bg-amber-400 text-amber-950 border border-amber-500 px-2.5 py-0.5 rounded-md shadow-2xs flex items-center gap-1">
+                    <Archive className="w-3.5 h-3.5 text-amber-900" />
+                    Card #{patient.legacySlNo}
+                  </span>
+                )}
+                {patient.voiceNoteUrl && (
+                  <span className="text-[11px] font-black text-emerald-800 bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+                    <Volume2 className="w-3.5 h-3.5 text-emerald-600" />
+                    Voice Note Dictated
+                  </span>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-3 mt-1.5 text-xs font-bold text-slate-700">
                 <span>{patient.age ? `${patient.age} yrs` : 'Age N/A'} • {patient.gender}</span>
@@ -145,6 +164,14 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
           </div>
 
           <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full sm:w-auto">
+            <button
+              onClick={() => setReconsultModalOpen(true)}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-black text-xs py-2.5 px-4 rounded-xl shadow-xs transition-all cursor-pointer active:scale-95"
+              title="Immediate Re-Consultation Check-In to Chair"
+            >
+              <Stethoscope className="w-3.5 h-3.5 text-white" />
+              <span>Re-Consult Today</span>
+            </button>
             <button
               onClick={() => onOpenBookingForPatient && onOpenBookingForPatient(patient)}
               className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white font-black text-xs py-2.5 px-4 rounded-xl shadow-xs transition-all cursor-pointer"
@@ -186,120 +213,148 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
         )}
       </div>
 
-      {/* Navigation Tabs Bar */}
-      <div className="flex items-center gap-1 border-b border-slate-200 text-xs font-black overflow-x-auto no-scrollbar touch-scroll whitespace-nowrap pb-0.5">
+      {/* Navigation Tabs Bar - Fully Responsive Segmented Tabs */}
+      <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-slate-100 rounded-2xl border border-slate-200 mb-4">
         <button
+          type="button"
           onClick={() => setActiveTab('clinical')}
-          className={`flex items-center gap-1.5 py-3 px-4 border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
             activeTab === 'clinical'
-              ? 'border-teal-600 text-teal-800 font-black bg-teal-50/60'
-              : 'border-transparent text-slate-600 hover:text-slate-900'
+              ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
           }`}
         >
-          <ClipboardList className="w-4 h-4 text-teal-600" />
-          Clinical Care & Procedures
+          <ClipboardList className="w-4 h-4 text-teal-600 shrink-0" />
+          <span>Clinical Care & Procedures</span>
         </button>
 
         <button
+          type="button"
+          onClick={() => setActiveTab('archive')}
+          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+            activeTab === 'archive'
+              ? 'bg-amber-500 text-white shadow-xs font-black'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
+          }`}
+        >
+          <Archive className="w-4 h-4 shrink-0" />
+          <span>Physical Card & Archive</span>
+          {patient.legacySlNo && (
+            <span className="ml-1 px-2 py-0.5 rounded-md bg-white text-amber-950 font-mono text-[10px] font-black">
+              #{patient.legacySlNo}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
           onClick={() => setActiveTab('imaging')}
-          className={`flex items-center gap-1.5 py-3 px-4 border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
             activeTab === 'imaging'
-              ? 'border-teal-600 text-teal-800 font-black bg-teal-50/60'
-              : 'border-transparent text-slate-600 hover:text-slate-900'
+              ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
           }`}
         >
-          <Camera className="w-4 h-4 text-teal-600" />
-          X-Rays & Imaging
+          <Camera className="w-4 h-4 text-teal-600 shrink-0" />
+          <span>X-Rays & Imaging</span>
         </button>
 
         <button
+          type="button"
           onClick={() => setActiveTab('prescriptions')}
-          className={`flex items-center gap-1.5 py-3 px-4 border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
             activeTab === 'prescriptions'
-              ? 'border-teal-600 text-teal-800 font-black bg-teal-50/60'
-              : 'border-transparent text-slate-600 hover:text-slate-900'
+              ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
           }`}
         >
-          <FileText className="w-4 h-4 text-teal-600" />
-          Prescriptions (℞)
+          <FileText className="w-4 h-4 text-teal-600 shrink-0" />
+          <span>Prescriptions (℞)</span>
         </button>
 
         <button
+          type="button"
           onClick={() => setActiveTab('billing')}
-          className={`flex items-center gap-1.5 py-3 px-4 border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
             activeTab === 'billing'
-              ? 'border-teal-600 text-teal-800 font-black bg-teal-50/60'
-              : 'border-transparent text-slate-600 hover:text-slate-900'
+              ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
           }`}
         >
-          <Receipt className="w-4 h-4 text-teal-600" />
-          Ledger & Invoices
+          <Receipt className="w-4 h-4 text-teal-600 shrink-0" />
+          <span>Ledger & Invoices</span>
         </button>
 
         <button
+          type="button"
           onClick={() => setActiveTab('consent')}
-          className={`flex items-center gap-1.5 py-3 px-4 border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
             activeTab === 'consent'
-              ? 'border-teal-600 text-teal-800 font-black bg-teal-50/60'
-              : 'border-transparent text-slate-600 hover:text-slate-900'
+              ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
           }`}
         >
-          <ShieldAlert className="w-4 h-4 text-teal-600" />
-          Digital Consent (DPDP)
+          <ShieldAlert className="w-4 h-4 text-teal-600 shrink-0" />
+          <span>Digital Consent (DPDP)</span>
         </button>
       </div>
 
       {/* TAB 1: Clinical Care & Procedures (Sub-grouped) */}
       {activeTab === 'clinical' && (
         <div className="space-y-4">
-          {/* Sub-tab pills */}
-          <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-xl border border-slate-200 text-xs font-black overflow-x-auto no-scrollbar touch-scroll whitespace-nowrap">
+          {/* Sub-tab pills - Fully Responsive */}
+          <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-200 text-xs font-black mb-4">
             <button
+              type="button"
               onClick={() => setClinicalSubTab('chart')}
               className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                 clinicalSubTab === 'chart'
-                  ? 'bg-white text-teal-800 shadow-xs border border-slate-200 font-black'
-                  : 'text-slate-600 hover:text-slate-900 font-bold'
+                  ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80 font-black'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
               }`}
             >
               Dental Chart (FDI)
             </button>
             <button
+              type="button"
               onClick={() => setClinicalSubTab('plans')}
               className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                 clinicalSubTab === 'plans'
-                  ? 'bg-white text-teal-800 shadow-xs border border-slate-200 font-black'
-                  : 'text-slate-600 hover:text-slate-900 font-bold'
+                  ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80 font-black'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
               }`}
             >
               Treatment Plans
             </button>
             <button
+              type="button"
               onClick={() => setClinicalSubTab('procedures')}
               className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                 clinicalSubTab === 'procedures'
-                  ? 'bg-white text-teal-800 shadow-xs border border-slate-200 font-black'
-                  : 'text-slate-600 hover:text-slate-900 font-bold'
+                  ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80 font-black'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
               }`}
             >
               Completed Procedures
             </button>
             <button
+              type="button"
               onClick={() => setClinicalSubTab('consultations')}
               className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                 clinicalSubTab === 'consultations'
-                  ? 'bg-white text-teal-800 shadow-xs border border-slate-200 font-black'
-                  : 'text-slate-600 hover:text-slate-900 font-bold'
+                  ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80 font-black'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
               }`}
             >
               Consultation Notes ({patient.consultations?.length || 0})
             </button>
             <button
+              type="button"
               onClick={() => setClinicalSubTab('appointments')}
               className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                 clinicalSubTab === 'appointments'
-                  ? 'bg-white text-teal-800 shadow-xs border border-slate-200 font-black'
-                  : 'text-slate-600 hover:text-slate-900 font-bold'
+                  ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80 font-black'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
               }`}
             >
               Appointments ({patient.appointments?.length || 0})
@@ -430,6 +485,17 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
             </div>
           )}
         </div>
+      )}
+
+      {/* TAB 2: Physical Paper Case Sheet Archive & Reappearance */}
+      {activeTab === 'archive' && (
+        <CaseSheetPhysicalArchive
+          patient={patient}
+          onRefreshPatient={() => {
+            fetchPatient();
+            fetchBilling();
+          }}
+        />
       )}
 
       {/* TAB 3: Digital Dental Imaging & X-Rays */}
@@ -618,6 +684,16 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
         isOpen={Boolean(printModalInvoice)}
         onClose={() => setPrintModalInvoice(null)}
         invoice={printModalInvoice}
+      />
+
+      {/* Quick Re-Consultation Modal for this Patient */}
+      <QuickReconsultModal
+        isOpen={reconsultModalOpen}
+        onClose={() => setReconsultModalOpen(false)}
+        preloadedPatient={patient}
+        onPatientSelected={() => {
+          fetchPatient(true);
+        }}
       />
     </div>
   );

@@ -11,6 +11,9 @@ model Clinic {
   id              String   @id @default(uuid())
   name            String
   code            String   @unique @default("AKS")
+  subdomain       String?  @unique
+  status          String   @default("ACTIVE") // ACTIVE, SUSPENDED, TRIAL
+  planTier        String   @default("PROFESSIONAL") // STARTER, PROFESSIONAL, ENTERPRISE
   tagline         String?
   phone           String
   email           String?
@@ -21,30 +24,48 @@ model Clinic {
   timezone        String   @default("Asia/Kolkata")
   currency        String   @default("INR")
   gstin           String?
+  upiVpa          String?  // UPI VPA for digital QR collections (e.g. akselitedental@icici)
   workingHours    String?  // JSON string
   chairCount      Int      @default(3)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  users           User[]
-  patients        Patient[]
-  appointments    Appointment[]
-  invoices        Invoice[]
-  auditLogs       AuditLog[]
+  users                 User[]
+  accounts              Account[]
+  patients              Patient[]
+  appointments          Appointment[]
+  consultations         Consultation[]
+  consultationAmendments ConsultationAmendment[]
+  dentalChartEntries    DentalChartEntry[]
+  treatmentPlans        TreatmentPlan[]
+  treatmentPlanItems    TreatmentPlanItem[]
+  completedProcedures   CompletedProcedure[]
+  prescriptions         Prescription[]
+  prescriptionItems     PrescriptionItem[]
+  medicalFiles          MedicalFile[]
+  fileAnnotations       FileAnnotation[]
+  invoices              Invoice[]
+  invoiceItems          InvoiceItem[]
+  payments              Payment[]
+  refundAdjustments     RefundAdjustment[]
+  followUps             FollowUpReminder[]
+  auditLogs             AuditLog[]
   treatmentCatalogItems TreatmentCatalogItem[]
   labOrders             LabOrder[]
   consents              PatientConsent[]
+  dailyQueueSequences   DailyQueueSequence[]
+  clinicSequences       ClinicSequence[]
 }
 
 model User {
-  id              String    @id @default(uuid())
-  clinicId        String
-  clinic          Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
-  email           String    @unique
-  username        String?   @unique
-  passwordHash    String
-  fullName        String
-  role            String    @default("RECEPTIONIST") // CLINIC_ADMIN, DENTIST, RECEPTIONIST, ACCOUNTANT
+  id                  String    @id @default(uuid())
+  clinicId            String
+  clinic              Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  email               String    @unique
+  username            String?
+  passwordHash        String
+  fullName            String
+  role                String    @default("RECEPTIONIST") // CLINIC_ADMIN, DENTIST, RECEPTIONIST, ACCOUNTANT
   phone               String?
   licenseNumber       String?
   specialization      String?
@@ -67,17 +88,53 @@ model User {
   prescriptions       Prescription[]
   auditLogs           AuditLog[]
 
+  @@unique([clinicId, username])
   @@index([clinicId, role])
   @@index([email])
+}
+
+model Account {
+  id                String    @id @default(uuid())
+  clinicId          String
+  clinic            Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  phone             String    // E.164 normalized: +91XXXXXXXXXX
+  passwordHash      String?   // Nullable for guest accounts
+  
+  // Security & Lockout
+  failedLoginCount  Int       @default(0)
+  lockedUntil       DateTime?
+  lastLoginAt       DateTime?
+  
+  // DPDP & Consent Framework
+  consentDataUse    Boolean   @default(false)
+  consentWhatsapp   Boolean   @default(false)
+  consentVersion    String?   @default("v1.0")
+  consentAt         DateTime?
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  patients          Patient[]
+
+  @@unique([clinicId, phone])
+  @@index([clinicId, phone])
 }
 
 model Patient {
   id                    String    @id @default(uuid())
   clinicId              String
   clinic                Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
-  uhid                  String    @unique
+  uhid                  String
   fullName              String
+  
+  // Account & Family Association (Nullable for backwards compatibility)
+  accountId             String?
+  account               Account?  @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  relationToAccount     String?   // SELF, SPOUSE, CHILD, PARENT, OTHER
+  
+  // Date of Birth & Approximation
   dateOfBirth           DateTime?
+  dobApproximate        Boolean   @default(false)
   age                   Int?
   gender                String
   phone                 String
@@ -90,6 +147,25 @@ model Patient {
   medicalConditions     String    @default("[]") // JSON string array
   currentMedications    String    @default("[]") // JSON string array
   notes                 String?
+  
+  // Legacy Archive & Case Sheet Tracking (18,000+ Physical Patient Records)
+  legacySlNo            String?   // Physical Serial Number (e.g. "18470")
+  guardianName          String?   // Care of / Guardian (e.g. "c/o K. Palani")
+  occupation            String?   // Occupation (e.g. "Student (X-std)")
+  legacyRegistrationDate DateTime? // Original registration date on paper card (e.g. 2016-09-26)
+  legacyChiefComplaint  String?   // Original chief complaint from paper card
+  legacyPastHistory     String?   // Past medical/dental history (PMH)
+  legacyTreatmentPlan   String?   // Handwritten treatment plan
+  voiceNoteUrl          String?   // Audio memo link
+  cardPhotoUrl          String?   // Physical paper card photo link
+  physicalLocation      String?   // Filing location: Cabinet / Shelf / Drawer
+
+  // Duplicate Tracking & Merge Engine
+  possibleDuplicate     Boolean   @default(false)
+  mergeSurvivingId      String?   // Pointer to surviving patient if merged
+  mergedAt              DateTime?
+  mergedById            String?
+
   isArchived            Boolean   @default(false)
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
@@ -107,9 +183,12 @@ model Patient {
   labOrders             LabOrder[]
   consents              PatientConsent[]
 
+  @@unique([clinicId, uhid])
   @@index([clinicId, phone])
   @@index([clinicId, fullName])
+  @@index([clinicId, legacySlNo])
   @@index([uhid])
+  @@index([accountId])
 }
 
 model Appointment {
@@ -127,9 +206,11 @@ model Appointment {
   scheduledEnd    DateTime
   durationMinutes Int      @default(30)
   reason          String
-  status          String   @default("SCHEDULED") // SCHEDULED, CONFIRMED, CHECKED_IN, IN_CHAIR, COMPLETED, CANCELLED, NO_SHOW
+  status          String   @default("SCHEDULED") // SCHEDULED, CONFIRMED, CHECKED_IN, CALLED, IN_CHAIR, COMPLETED, CANCELLED, NO_SHOW
   checkInTime     DateTime?
   notes           String?
+  isReappearance  Boolean  @default(false)
+  legacySlNo      String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -137,12 +218,15 @@ model Appointment {
   followUp        FollowUpReminder?
 
   @@index([clinicId, scheduledStart])
+  @@index([clinicId, status, scheduledStart])
   @@index([dentistId, scheduledStart, scheduledEnd])
   @@index([patientId])
 }
 
 model Consultation {
   id                  String    @id @default(uuid())
+  clinicId            String
+  clinic              Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   patientId           String
   patient             Patient   @relation(fields: [patientId], references: [id], onDelete: Cascade)
   dentistId           String
@@ -150,10 +234,13 @@ model Consultation {
   appointmentId       String?   @unique
   appointment         Appointment? @relation(fields: [appointmentId], references: [id])
   visitDate           DateTime  @default(now())
+  visitType           String    @default("ROUTINE") // ROUTINE, REAPPEARANCE_RETURN, FOLLOW_UP, EMERGENCY
+  reappearanceReason  String?   // Why old archived patient reappeared today
   chiefComplaint      String
   clinicalExamination String
   diagnosis           String
   clinicalNotes       String?
+  voiceNoteUrl        String?   // Consultation voice recording memo
   isFinalized         Boolean   @default(false)
   finalizedAt         DateTime?
   createdAt           DateTime  @default(now())
@@ -166,11 +253,15 @@ model Consultation {
   prescriptions       Prescription[]
   medicalFiles        MedicalFile[]
 
+  @@index([clinicId, visitDate])
+  @@index([clinicId, patientId])
   @@index([patientId, visitDate])
 }
 
 model ConsultationAmendment {
   id              String       @id @default(uuid())
+  clinicId        String
+  clinic          Clinic       @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   consultationId  String
   consultation    Consultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
   amendedById     String
@@ -179,11 +270,14 @@ model ConsultationAmendment {
   newContent      String       // JSON string
   amendedAt       DateTime     @default(now())
 
+  @@index([clinicId])
   @@index([consultationId])
 }
 
 model DentalChartEntry {
   id              String   @id @default(uuid())
+  clinicId        String
+  clinic          Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   patientId       String
   patient         Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
   consultationId  String?
@@ -195,11 +289,14 @@ model DentalChartEntry {
   recordedById    String
   createdAt       DateTime @default(now())
 
+  @@index([clinicId, patientId])
   @@index([patientId, toothNumber])
 }
 
 model TreatmentPlan {
   id                    String   @id @default(uuid())
+  clinicId              String
+  clinic                Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   patientId             String
   patient               Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
   consultationId        String?
@@ -213,11 +310,14 @@ model TreatmentPlan {
 
   items                 TreatmentPlanItem[]
 
+  @@index([clinicId, patientId])
   @@index([patientId])
 }
 
 model TreatmentPlanItem {
   id                  String   @id @default(uuid())
+  clinicId            String
+  clinic              Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   treatmentPlanId     String
   treatmentPlan       TreatmentPlan @relation(fields: [treatmentPlanId], references: [id], onDelete: Cascade)
   toothNumber         Int?
@@ -232,11 +332,14 @@ model TreatmentPlanItem {
 
   completedProcedure  CompletedProcedure?
 
+  @@index([clinicId])
   @@index([treatmentPlanId])
 }
 
 model CompletedProcedure {
   id                  String   @id @default(uuid())
+  clinicId            String
+  clinic              Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   patientId           String
   patient             Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
   consultationId      String?
@@ -255,18 +358,21 @@ model CompletedProcedure {
 
   invoiceItem         InvoiceItem?
 
+  @@index([clinicId, patientId])
   @@index([patientId])
 }
 
 model Prescription {
   id                 String   @id @default(uuid())
+  clinicId           String
+  clinic             Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   patientId          String
   patient            Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
   dentistId          String
   dentist            User     @relation(fields: [dentistId], references: [id])
   consultationId     String?
   consultation       Consultation? @relation(fields: [consultationId], references: [id])
-  prescriptionNumber String   @unique
+  prescriptionNumber String
   status             String   @default("DRAFT")
   instructions       String?
   dietAdvice         String?
@@ -276,11 +382,15 @@ model Prescription {
 
   items              PrescriptionItem[]
 
+  @@unique([clinicId, prescriptionNumber])
+  @@index([clinicId, patientId])
   @@index([patientId])
 }
 
 model PrescriptionItem {
   id              String       @id @default(uuid())
+  clinicId        String
+  clinic          Clinic       @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   prescriptionId  String
   prescription    Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
   medicineName    String
@@ -292,11 +402,14 @@ model PrescriptionItem {
   instructions    String?
   createdAt       DateTime     @default(now())
 
+  @@index([clinicId])
   @@index([prescriptionId])
 }
 
 model MedicalFile {
   id              String   @id @default(uuid())
+  clinicId        String
+  clinic          Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   patientId       String
   patient         Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
   consultationId  String?
@@ -312,7 +425,26 @@ model MedicalFile {
 
   annotations     FileAnnotation[]
 
+  @@index([clinicId, category])
+  @@index([clinicId, patientId])
   @@index([patientId, category])
+}
+
+model FileAnnotation {
+  id            String      @id @default(uuid())
+  clinicId      String
+  clinic        Clinic      @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  medicalFileId String
+  medicalFile   MedicalFile @relation(fields: [medicalFileId], references: [id], onDelete: Cascade)
+  pinNumber     Int
+  xPercent      Float       // 0 to 100% position on image
+  yPercent      Float       // 0 to 100% position on image
+  noteText      String
+  authorName    String?
+  createdAt     DateTime    @default(now())
+
+  @@index([clinicId])
+  @@index([medicalFileId])
 }
 
 model Invoice {
@@ -321,7 +453,7 @@ model Invoice {
   clinic            Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   patientId         String
   patient           Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  invoiceNumber     String   @unique
+  invoiceNumber     String
   status            String   @default("DRAFT")
   subtotalPaise     Int      @default(0)
   discountPaise     Int      @default(0)
@@ -340,6 +472,7 @@ model Invoice {
   payments          Payment[]
   refunds           RefundAdjustment[]
 
+  @@unique([clinicId, invoiceNumber])
   @@index([clinicId, status])
   @@index([patientId])
   @@index([invoiceNumber])
@@ -347,6 +480,8 @@ model Invoice {
 
 model InvoiceItem {
   id                    String   @id @default(uuid())
+  clinicId              String
+  clinic                Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   invoiceId             String
   invoice               Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   completedProcedureId  String?  @unique
@@ -358,17 +493,19 @@ model InvoiceItem {
   totalPaise            Int
   createdAt             DateTime @default(now())
 
+  @@index([clinicId])
   @@index([invoiceId])
 }
 
 model Payment {
   id              String   @id @default(uuid())
   clinicId        String
+  clinic          Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   invoiceId       String
   invoice         Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   patientId       String
   patient         Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  receiptNumber   String   @unique
+  receiptNumber   String
   amountPaise     Int
   paymentMethod   String
   referenceNumber String?
@@ -379,6 +516,8 @@ model Payment {
 
   refunds         RefundAdjustment[]
 
+  @@unique([clinicId, receiptNumber])
+  @@index([clinicId, receivedAt])
   @@index([invoiceId])
   @@index([patientId])
   @@index([receiptNumber])
@@ -386,6 +525,8 @@ model Payment {
 
 model RefundAdjustment {
   id              String   @id @default(uuid())
+  clinicId        String
+  clinic          Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   invoiceId       String
   invoice         Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   paymentId       String?
@@ -395,11 +536,14 @@ model RefundAdjustment {
   approvedById    String
   createdAt       DateTime @default(now())
 
+  @@index([clinicId])
   @@index([invoiceId])
 }
 
 model FollowUpReminder {
   id              String   @id @default(uuid())
+  clinicId        String
+  clinic          Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   patientId       String
   patient         Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
   appointmentId   String?  @unique
@@ -412,6 +556,8 @@ model FollowUpReminder {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  @@index([clinicId, scheduledDate, status])
+  @@index([clinicId, patientId])
   @@index([patientId])
   @@index([scheduledDate, status])
 }
@@ -502,17 +648,28 @@ model PatientConsent {
   @@index([patientId])
 }
 
-model FileAnnotation {
-  id            String      @id @default(uuid())
-  medicalFileId String
-  medicalFile   MedicalFile @relation(fields: [medicalFileId], references: [id], onDelete: Cascade)
-  pinNumber     Int
-  xPercent      Float       // 0 to 100% position on image
-  yPercent      Float       // 0 to 100% position on image
-  noteText      String
-  authorName    String?
-  createdAt     DateTime    @default(now())
+model DailyQueueSequence {
+  id           String   @id @default(uuid())
+  clinicId     String
+  clinic       Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  dateString   String
+  lastSequence Int      @default(0)
+  updatedAt    DateTime @default(now()) @updatedAt
 
-  @@index([medicalFileId])
+  @@unique([clinicId, dateString])
+  @@index([clinicId, dateString])
+}
+
+model ClinicSequence {
+  id           String   @id @default(uuid())
+  clinicId     String
+  clinic       Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  sequenceType String   // UHID, INVOICE, RECEIPT, DAILY_QUEUE
+  fiscalYear   String?  // e.g. "2026-2027" or "2026"
+  currentValue Int      @default(0)
+  updatedAt    DateTime @updatedAt
+
+  @@unique([clinicId, sequenceType, fiscalYear])
+  @@index([clinicId, sequenceType])
 }
 

@@ -181,6 +181,7 @@ export class ProceduresService {
 
     const procedure = await this.prisma.completedProcedure.create({
       data: {
+        clinicId,
         patientId: dto.patientId,
         consultationId: dto.consultationId || null,
         treatmentPlanItemId: dto.treatmentPlanItemId || null,
@@ -239,6 +240,7 @@ export class ProceduresService {
         scheduledDate.setDate(scheduledDate.getDate() + followUpDays);
         await this.prisma.followUpReminder.create({
           data: {
+            clinicId,
             patientId: dto.patientId,
             scheduledDate,
             type: followUpType,
@@ -263,7 +265,7 @@ export class ProceduresService {
         patientUhid: patient.uhid,
         procedureName: procedure.procedureName,
         tooth: procedure.toothNumber,
-        dentist: procedure.dentist.fullName,
+        dentist: (procedure as any).dentist?.fullName || 'Dentist',
       },
     });
 

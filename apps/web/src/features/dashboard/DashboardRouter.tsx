@@ -1,4 +1,5 @@
 import React from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { AdminDashboard } from './AdminDashboard';
 import { ReceptionDashboard } from './ReceptionDashboard';
@@ -16,8 +17,20 @@ export const DashboardRouter: React.FC<DashboardRouterProps> = ({
   onOpenBooking,
 }) => {
   const { user } = useAuth();
+  const location = useLocation();
 
   if (!user) return null;
+
+  const params = new URLSearchParams(location.search);
+  const viewParam = params.get('view');
+  if (viewParam === 'reception' || viewParam === 'queue' || user.role === 'RECEPTIONIST') {
+    return (
+      <ReceptionDashboard
+        onOpenNewPatient={onOpenNewPatient}
+        onOpenBooking={onOpenBooking}
+      />
+    );
+  }
 
   switch (user.role) {
     case 'CLINIC_ADMIN':
@@ -38,7 +51,6 @@ export const DashboardRouter: React.FC<DashboardRouterProps> = ({
           onOpenBooking={onOpenBooking}
         />
       );
-    case 'RECEPTIONIST':
     default:
       return (
         <ReceptionDashboard

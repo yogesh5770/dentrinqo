@@ -115,11 +115,12 @@ export class PrescriptionsService {
 
     // Generate unique prescription number: RX-YYYY-COUNT
     const currentYear = new Date().getFullYear();
-    const count = await this.prisma.prescription.count();
+    const count = await this.prisma.prescription.count({ where: { clinicId } });
     const prescriptionNumber = `RX-${currentYear}-${String(count + 1).padStart(4, '0')}`;
 
     const prescription = await this.prisma.prescription.create({
       data: {
+        clinicId,
         patientId: dto.patientId,
         dentistId: actor.userId,
         consultationId: dto.consultationId || null,
@@ -130,6 +131,7 @@ export class PrescriptionsService {
         dietAdvice: dto.dietAdvice?.trim() || null,
         items: {
           create: dto.items.map(item => ({
+            clinicId,
             medicineName: item.medicineName.trim(),
             dosage: item.dosage.trim(),
             form: item.form.trim(),

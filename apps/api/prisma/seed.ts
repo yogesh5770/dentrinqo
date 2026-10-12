@@ -1,6 +1,8 @@
 import { PrismaClient } from '@prisma/client';
 import { hash } from '@node-rs/argon2';
+import * as dotenv from 'dotenv';
 
+dotenv.config();
 const prisma = new PrismaClient();
 
 async function main() {
@@ -65,6 +67,8 @@ async function main() {
   await prisma.medicalFile.deleteMany({});
   await prisma.appointment.deleteMany({});
   await prisma.patient.deleteMany({});
+  await prisma.account.deleteMany({});
+  await prisma.dailyQueueSequence.deleteMany({});
   await prisma.auditLog.deleteMany({});
 
   // 4. Remove all old/seeded users except if one already matches the new email

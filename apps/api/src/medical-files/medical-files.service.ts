@@ -18,6 +18,8 @@ export const MEDICAL_CATEGORIES = [
   'CLINICAL_PHOTO',
   'LAB_REPORT',
   'SCAN_CBCT',
+  'CASE_SHEET_SCAN',
+  'VOICE_NOTE',
   'OTHER',
 ] as const;
 
@@ -40,17 +42,15 @@ export class MedicalFilesService {
     }
   }
 
-  async uploadFile(
+  async saveFileBuffer(
     clinicId: string,
     patientId: string,
-    file: Express.Multer.File,
+    buffer: Buffer,
+    originalName: string,
+    mimeType: string,
     meta: { category?: string; notes?: string; toothNumber?: number; consultationId?: string },
     actor: any,
   ) {
-    if (!file) {
-      throw new BadRequestException('No file provided for upload');
-    }
-
     // Verify patient belongs to this clinic
     const patient = await this.prisma.patient.findFirst({
       where: { id: patientId, clinicId },
@@ -61,20 +61,20 @@ export class MedicalFilesService {
 
     const category = meta.category && MEDICAL_CATEGORIES.includes(meta.category as any)
       ? meta.category
-      : 'XRAY_IOPA';
+      : 'OTHER';
 
-    const isImage = file.mimetype.startsWith('image/');
-    const fileExt = path.extname(file.originalname).toLowerCase();
-    const originalSize = file.size;
+    const isImage = mimeType.startsWith('image/');
+    const fileExt = path.extname(originalName).toLowerCase() || (mimeType.startsWith('audio/') ? '.webm' : '.bin');
+    const originalSize = buffer.length;
 
-    let processedBuffer = file.buffer;
-    let finalMimeType = file.mimetype;
+    let processedBuffer = buffer;
+    let finalMimeType = mimeType;
     let finalExt = fileExt;
 
-    // Advanced Clinical Compression Pipeline using Sharp
+    // Advanced Clinical Compression Pipeline using Sharp (only for images)
     if (isImage) {
       try {
-        const image = getSharp(file.buffer);
+        const image = getSharp(buffer);
         const metadata = await image.metadata();
 
         // 1. Auto-orient based on EXIF (crucial for mobile camera captures)
@@ -90,7 +90,6 @@ export class MedicalFilesService {
         }
 
         // 3. Compress to high-quality WebP with 4:4:4 chroma subsampling for dental diagnostics
-        // Quality 88 preserves microscopic enamel and apex details while slashing 70-90% file size
         processedBuffer = await pipeline
           .webp({
             quality: 88,
@@ -103,13 +102,13 @@ export class MedicalFilesService {
         finalExt = '.webp';
 
         this.logger.log(
-          `Compressed ${file.originalname}: ${originalSize} bytes -> ${processedBuffer.length} bytes (${Math.round(
+          `Compressed ${originalName}: ${originalSize} bytes -> ${processedBuffer.length} bytes (${Math.round(
             (1 - processedBuffer.length / originalSize) * 100,
           )}% saved)`,
         );
       } catch (err) {
         this.logger.warn(`Sharp image processing failed, storing original buffer: ${err.message}`);
-        processedBuffer = file.buffer;
+        processedBuffer = buffer;
       }
     }
 
@@ -124,43 +123,85 @@ export class MedicalFilesService {
     // Persist record to database
     const fileRecord = await this.prisma.medicalFile.create({
       data: {
+        clinicId,
         patientId,
         consultationId: meta.consultationId || null,
         category,
-        fileName: file.originalname,
+        fileName: originalName,
         storageKey,
         mimeType: finalMimeType,
         sizeBytes: processedBuffer.length,
         sha256Hash: hash,
-        uploadedById: actor.userId,
+        uploadedById: actor?.userId || 'system',
       },
     });
 
-    // Audit log
-    await this.auditService.log({
+    // Audit log if actor provided
+    if (actor && actor.userId) {
+      await this.auditService.log({
+        clinicId,
+        actorId: actor.userId,
+        actorRole: actor.role || 'DENTIST',
+        action: 'MEDICAL_FILE_UPLOADED',
+        entityType: 'MedicalFile',
+        entityId: fileRecord.id,
+        details: { category, fileName: originalName, sizeBytes: processedBuffer.length },
+      });
+    }
+
+    return fileRecord;
+  }
+
+  async saveBase64(
+    clinicId: string,
+    patientId: string,
+    base64Data: string,
+    fallbackFileName: string,
+    meta: { category?: string; notes?: string; consultationId?: string },
+    actor: any,
+  ) {
+    const matches = base64Data.match(/^data:([a-zA-Z0-9\/+-]+);base64,(.+)$/);
+    let mimeType = 'application/octet-stream';
+    let base64Body = base64Data;
+    if (matches) {
+      mimeType = matches[1];
+      base64Body = matches[2];
+    }
+    const buffer = Buffer.from(base64Body, 'base64');
+    let ext = '.bin';
+    if (mimeType.includes('webp')) ext = '.webp';
+    else if (mimeType.includes('jpeg') || mimeType.includes('jpg')) ext = '.jpg';
+    else if (mimeType.includes('png')) ext = '.png';
+    else if (mimeType.includes('webm')) ext = '.webm';
+    else if (mimeType.includes('mp4') || mimeType.includes('m4a')) ext = '.m4a';
+    else if (mimeType.includes('wav')) ext = '.wav';
+    else if (mimeType.includes('ogg')) ext = '.ogg';
+    else if (mimeType.includes('mpeg') || mimeType.includes('mp3')) ext = '.mp3';
+
+    const fileName = fallbackFileName.includes('.') ? fallbackFileName : `${fallbackFileName}${ext}`;
+    return this.saveFileBuffer(clinicId, patientId, buffer, fileName, mimeType, meta, actor);
+  }
+
+  async uploadFile(
+    clinicId: string,
+    patientId: string,
+    file: Express.Multer.File,
+    meta: { category?: string; notes?: string; toothNumber?: number; consultationId?: string },
+    actor: any,
+  ) {
+    if (!file) {
+      throw new BadRequestException('No file provided for upload');
+    }
+
+    return this.saveFileBuffer(
       clinicId,
-      actorId: actor.userId,
-      actorRole: actor.role,
-      action: 'MEDICAL_FILE_UPLOADED',
-      entityType: 'MedicalFile',
-      entityId: fileRecord.id,
-      details: {
-        patientUhid: patient.uhid,
-        category,
-        originalName: file.originalname,
-        storageKey,
-        originalBytes: originalSize,
-        compressedBytes: processedBuffer.length,
-        savingsPercent: Math.round((1 - processedBuffer.length / originalSize) * 100),
-      },
-    });
-
-    return {
-      ...fileRecord,
-      originalSize,
-      compressedSize: processedBuffer.length,
-      savedPercent: Math.max(0, Math.round((1 - processedBuffer.length / originalSize) * 100)),
-    };
+      patientId,
+      file.buffer,
+      file.originalname,
+      file.mimetype,
+      meta,
+      actor,
+    );
   }
 
   async getPatientFiles(clinicId: string, patientId: string) {
@@ -193,6 +234,7 @@ export class MedicalFilesService {
     const { record } = await this.getFileById(clinicId, fileId);
     return this.prisma.fileAnnotation.create({
       data: {
+        clinicId,
         medicalFileId: record.id,
         pinNumber: dto.pinNumber,
         xPercent: dto.xPercent,

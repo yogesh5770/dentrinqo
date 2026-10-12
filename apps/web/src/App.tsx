@@ -16,23 +16,36 @@ import { ClinicSettingsView } from './features/settings/ClinicSettingsView';
 import { AuditLogsView } from './features/admin/AuditLogsView';
 import { LabOrdersManager } from './features/lab-orders/LabOrdersManager';
 import { PublicBookingView } from './features/public/PublicBookingView';
+import { PublicCheckInView } from './features/public/PublicCheckInView';
 import { NewPatientModal } from './features/patients/NewPatientModal';
 import { BookingDrawer } from './features/appointments/BookingDrawer';
 import { triggerClinicSync } from './lib/sync';
+import { PatientAuthProvider } from './hooks/usePatientAuth';
+import { PatientSignupView } from './features/patient-portal/PatientSignupView';
+import { PatientLoginView } from './features/patient-portal/PatientLoginView';
+import { MyVisitsView } from './features/patient-portal/MyVisitsView';
+import { MyFamilyView } from './features/patient-portal/MyFamilyView';
+import { PossibleDuplicatesView } from './features/patients/PossibleDuplicatesView';
 
 const ProtectedRoutes: React.FC = () => {
   const { user, isLoading, hasPermission } = useAuth();
   const [newPatientOpen, setNewPatientOpen] = useState(false);
+  const [newPatientInitialMode, setNewPatientInitialMode] = useState<'STANDARD' | 'LEGACY_ARCHIVE'>('STANDARD');
   const [bookingOpen, setBookingOpen] = useState(false);
   const [bookingPatient, setBookingPatient] = useState<any | null>(null);
+
+  const handleOpenNewPatient = (mode: 'STANDARD' | 'LEGACY_ARCHIVE' = 'STANDARD') => {
+    setNewPatientInitialMode(mode);
+    setNewPatientOpen(true);
+  };
 
   if (isLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center text-teal-600">
         <div className="w-16 h-16 p-2 bg-white rounded-2xl border border-slate-200 shadow-sm flex items-center justify-center mb-4">
-          <img src="/logo.png" alt="AKS Logo" className="w-full h-full object-contain animate-pulse" />
+          <img src="/logo.png" alt="Clinic Logo" className="w-full h-full object-contain animate-pulse" />
         </div>
-        <p className="text-sm font-bold text-slate-700">Loading AKS Elite Dental Clinic...</p>
+        <p className="text-sm font-bold text-slate-700">Loading Clinic Portal...</p>
       </div>
     );
   }
@@ -57,7 +70,7 @@ const ProtectedRoutes: React.FC = () => {
 
   return (
     <AppShell
-      onOpenNewPatient={() => setNewPatientOpen(true)}
+      onOpenNewPatient={() => handleOpenNewPatient('STANDARD')}
       onOpenBooking={() => {
         setBookingPatient(null);
         setBookingOpen(true);
@@ -69,7 +82,7 @@ const ProtectedRoutes: React.FC = () => {
           path="/"
           element={
             <DashboardRouter
-              onOpenNewPatient={() => setNewPatientOpen(true)}
+              onOpenNewPatient={() => handleOpenNewPatient('STANDARD')}
               onOpenBooking={() => {
                 setBookingPatient(null);
                 setBookingOpen(true);
@@ -81,7 +94,7 @@ const ProtectedRoutes: React.FC = () => {
         {/* Patients Management */}
         <Route
           path="/patients"
-          element={canAccessPatients ? <PatientList onOpenNewPatient={() => setNewPatientOpen(true)} /> : <Navigate to="/" replace />}
+          element={canAccessPatients ? <PatientList onOpenNewPatient={handleOpenNewPatient} /> : <Navigate to="/" replace />}
         />
         <Route
           path="/patients/:id"
@@ -185,15 +198,25 @@ const ProtectedRoutes: React.FC = () => {
           element={canAccessAdmin ? <AdminDesk /> : <Navigate to="/" replace />}
         />
 
+        {/* Duplicate Patient Review & Merge Engine */}
+        <Route
+          path="/admin/duplicates"
+          element={canAccessPatients ? <PossibleDuplicatesView /> : <Navigate to="/" replace />}
+        />
+
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
 
       {/* Global Modals accessible from any screen */}
       <NewPatientModal
         isOpen={newPatientOpen}
+        initialMode={newPatientInitialMode}
         onClose={() => setNewPatientOpen(false)}
         onPatientCreated={() => {
           triggerClinicSync('patient_created');
+        }}
+        onOpenBookingForPatient={(patient) => {
+          handleOpenBookingWithPatient(patient);
         }}
       />
 
@@ -213,11 +236,40 @@ export const App: React.FC = () => {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
-          <Route path="/book" element={<PublicBookingView />} />
-          <Route path="/login" element={<LoginScreen />} />
-          <Route path="/*" element={<ProtectedRoutes />} />
-        </Routes>
+        <PatientAuthProvider>
+          <Routes>
+            <Route
+              path="/book"
+              element={
+                <PublicBookingView
+                  clinicName="AK's Elite Dental Clinic and Multi-Speciality Dental Hospital"
+                  clinicAddress="Plot No. 162/2A, Alagar Complex, 5th Meenakshi Amman Nagar Main Road, K.Pudur, Madurai"
+                  clinicPhone="+91 95387 23872"
+                  mapsUrl="https://maps.google.com/?q=AKS+Elite+Dental+Clinic+Madurai"
+                  clinicCode="AKS"
+                  doctorName="Dr. Khalidh Khan (BDS, MDS)"
+                />
+              }
+            />
+            <Route
+              path="/checkin"
+              element={
+                <PublicCheckInView
+                  clinicName="AK's Elite Dental Clinic and Multi-Speciality Dental Hospital"
+                  clinicAddress="Plot No. 162/2A, Alagar Complex, 5th Meenakshi Amman Nagar Main Road, K.Pudur, Madurai"
+                  clinicPhone="+91 95387 23872"
+                  clinicCode="AKS"
+                />
+              }
+            />
+            <Route path="/signup" element={<PatientSignupView />} />
+            <Route path="/patient-login" element={<PatientLoginView />} />
+            <Route path="/my/visits" element={<MyVisitsView />} />
+            <Route path="/my/family" element={<MyFamilyView />} />
+            <Route path="/login" element={<LoginScreen />} />
+            <Route path="/*" element={<ProtectedRoutes />} />
+          </Routes>
+        </PatientAuthProvider>
       </AuthProvider>
     </BrowserRouter>
   );

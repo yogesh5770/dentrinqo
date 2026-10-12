@@ -20,6 +20,7 @@ export class TreatmentPlansService {
 
     const plan = await this.prisma.treatmentPlan.create({
       data: {
+        clinicId,
         patientId: dto.patientId,
         consultationId: dto.consultationId || null,
         title: dto.title.trim(),
@@ -28,6 +29,7 @@ export class TreatmentPlansService {
         dentistNotes: dto.dentistNotes?.trim() || null,
         items: {
           create: dto.items.map((item, index) => ({
+            clinicId,
             toothNumber: item.toothNumber || null,
             procedureCode: item.procedureCode,
             procedureName: item.procedureName,
@@ -127,6 +129,7 @@ export class TreatmentPlansService {
     const nextSeq = dto.sequenceOrder || plan.items.length + 1;
     const item = await this.prisma.treatmentPlanItem.create({
       data: {
+        clinicId,
         treatmentPlanId: planId,
         toothNumber: dto.toothNumber || null,
         procedureCode: dto.procedureCode,

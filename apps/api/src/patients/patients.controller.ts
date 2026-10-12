@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Body, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { PatientsService } from './patients.service';
 import { CreatePatientDto, UpdatePatientDto } from './patient.dto';
@@ -21,6 +21,35 @@ export class PatientsController {
     @Query('email') email?: string,
   ) {
     return this.patientsService.checkDuplicate(user.clinicId, phone, email);
+  }
+
+  @Get('serial/:serialNo')
+  @ApiOperation({ summary: 'Lookup patient by card serial number or UHID' })
+  async getBySerial(@CurrentUser() user: any, @Param('serialNo') serialNo: string) {
+    return this.patientsService.findBySerial(user.clinicId, serialNo);
+  }
+
+  @Get('possible-duplicates')
+  @Roles('CLINIC_ADMIN', 'RECEPTIONIST')
+  @ApiOperation({ summary: 'List possible duplicate patients flagged for front desk merge review' })
+  async getPossibleDuplicates(@CurrentUser() user: any) {
+    return this.patientsService.getPossibleDuplicates(user.clinicId);
+  }
+
+  @Post('merge')
+  @Roles('CLINIC_ADMIN', 'RECEPTIONIST')
+  @ApiOperation({ summary: 'Merge duplicate patient into survivor with full record migration and audit trail' })
+  async mergePatients(
+    @CurrentUser() user: any,
+    @Body() body: { survivorId: string; duplicateId: string; reason: string },
+  ) {
+    return this.patientsService.mergePatients(
+      user.clinicId,
+      body.survivorId,
+      body.duplicateId,
+      body.reason,
+      user,
+    );
   }
 
   @Post()
@@ -61,5 +90,28 @@ export class PatientsController {
     @Body() dto: UpdatePatientDto,
   ) {
     return this.patientsService.update(user.clinicId, id, dto, user);
+  }
+
+  @Put(':id/case-sheet')
+  @Patch(':id/archive-info')
+  @Roles('CLINIC_ADMIN', 'RECEPTIONIST', 'DENTIST')
+  @ApiOperation({ summary: 'Update physical archive case sheet info, voice notes, and photo scans' })
+  async updateCaseSheet(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    return this.patientsService.updateCaseSheet(user.clinicId, id, body, user);
+  }
+
+  @Post(':id/reappear')
+  @Roles('CLINIC_ADMIN', 'RECEPTIONIST', 'DENTIST')
+  @ApiOperation({ summary: 'Instant check-in for returning archived patient with legacy card banner' })
+  async checkInReappearance(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() body: any,
+  ) {
+    return this.patientsService.checkInReappearance(user.clinicId, id, body, user);
   }
 }

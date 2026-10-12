@@ -74,7 +74,7 @@ export class BillingService {
         const count = await this.prisma.invoice.count({ where: { clinicId } });
         let seq = count + 1 + attempt;
         let invoiceNumber = `${clinicPrefix}-${currentYear}-${String(seq).padStart(4, '0')}`;
-        while (await this.prisma.invoice.findUnique({ where: { invoiceNumber } })) {
+        while (await this.prisma.invoice.findFirst({ where: { clinicId, invoiceNumber } })) {
           seq++;
           invoiceNumber = `${clinicPrefix}-${currentYear}-${String(seq).padStart(4, '0')}`;
         }
@@ -97,6 +97,7 @@ export class BillingService {
             issuedAt: new Date(),
             items: {
               create: dto.items.map(item => ({
+                clinicId,
                 completedProcedureId: item.completedProcedureId || null,
                 description: item.description.trim(),
                 toothNumber: item.toothNumber || null,
@@ -203,7 +204,7 @@ export class BillingService {
         const count = await this.prisma.payment.count({ where: { clinicId } });
         let seq = count + 1 + attempt;
         let receiptNumber = `${receiptPrefix}-${currentYear}-${String(seq).padStart(4, '0')}`;
-        while (await this.prisma.payment.findUnique({ where: { receiptNumber } })) {
+        while (await this.prisma.payment.findFirst({ where: { clinicId, receiptNumber } })) {
           seq++;
           receiptNumber = `${receiptPrefix}-${currentYear}-${String(seq).padStart(4, '0')}`;
         }

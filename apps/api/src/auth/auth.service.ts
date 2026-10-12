@@ -66,6 +66,7 @@ export class AuthService {
       if (!payload || !payload.exp || typeof payload.exp !== 'number') return null;
       if (Date.now() > payload.exp) return null;
       if (!payload.userId || !payload.clinicId || !payload.role) return null;
+      if (payload.role === 'PATIENT') return null;
 
       return payload;
     } catch {

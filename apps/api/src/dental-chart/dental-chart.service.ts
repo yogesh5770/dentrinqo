@@ -86,6 +86,7 @@ export class DentalChartService {
     } else {
       entry = await this.prisma.dentalChartEntry.create({
         data: {
+          clinicId,
           patientId: dto.patientId,
           toothNumber: dto.toothNumber,
           surface: dto.surface as any,

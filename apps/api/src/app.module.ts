@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
@@ -18,6 +18,8 @@ import { MedicalFilesModule } from './medical-files/medical-files.module';
 import { FollowUpsModule } from './follow-ups/follow-ups.module';
 import { LabOrdersModule } from './lab-orders/lab-orders.module';
 import { ConsentModule } from './consent/consent.module';
+import { PatientAuthModule } from './patient-auth/patient-auth.module';
+import { TenantContextMiddleware } from './common/middleware/tenant-context.middleware';
 
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
@@ -34,6 +36,7 @@ import { ThrottlerGuard } from '@nestjs/throttler';
     PrismaModule,
     AuditModule,
     AuthModule,
+    PatientAuthModule,
     ClinicModule,
     PatientsModule,
     AppointmentsModule,
@@ -56,4 +59,10 @@ import { ThrottlerGuard } from '@nestjs/throttler';
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(TenantContextMiddleware)
+      .forRoutes('*');
+  }
+}
