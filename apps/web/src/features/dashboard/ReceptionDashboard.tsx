@@ -30,6 +30,7 @@ import {
   CheckCheck,
   MessageSquare,
   FastForward,
+  KeyRound,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
@@ -50,6 +51,7 @@ interface Appointment {
   reason: string;
   status: 'SCHEDULED' | 'CONFIRMED' | 'CHECKED_IN' | 'CALLED' | 'IN_CHAIR' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW';
   checkInTime?: string | null;
+  isConfirmedAtDesk?: boolean;
 }
 
 interface ReceptionDashboardProps {
@@ -70,6 +72,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
   const [activeQueueTab, setActiveQueueTab] = useState<QueueTab>('WAITING_LOBBY');
   const [settledApptIds, setSettledApptIds] = useState<Set<string>>(new Set());
   const [lobbyCode, setLobbyCode] = useState<string>('');
+  const [lobbyCodeExpiresAt, setLobbyCodeExpiresAt] = useState<Date | null>(null);
   const [chairStatus, setChairStatus] = useState<Record<number, boolean>>({ 1: true, 2: true });
   const [togglingChair, setTogglingChair] = useState<number | null>(null);
   const [showQrModal, setShowQrModal] = useState<boolean>(false);
@@ -81,8 +84,9 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
   const clinicCode = user?.clinic?.code || 'AKS';
   const [standeeType, setStandeeType] = useState<'DUAL' | 'CHECKIN' | 'WALKIN'>('DUAL');
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
-  const checkInUrl = `${baseUrl}/checkin${lobbyCode ? `?code=${lobbyCode}` : ''}`;
-  const walkinUrl = `${baseUrl}/book?mode=walkin${lobbyCode ? `&code=${lobbyCode}` : ''}`;
+  // Single permanent laminated reception QR per clinic (no lobby code in URL)
+  const checkInUrl = `${baseUrl}/check-in`;
+  const walkinUrl = `${baseUrl}/check-in?mode=walkin`;
   const checkinQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(checkInUrl)}`;
   const walkinQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(walkinUrl)}`;
   const standeeUrl = standeeType === 'CHECKIN' ? checkInUrl : walkinUrl;
@@ -146,7 +150,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
 
   const fetchChairStatus = async () => {
     try {
-      const res = await apiRequest<{ chairs: any; lobbyCode?: string }>('/appointments/public-chair-status');
+      const res = await apiRequest<{ chairs: any }>('/appointments/public-chair-status');
       if (res) {
         if (Array.isArray(res.chairs)) {
           const map: Record<number, boolean> = {};
@@ -155,18 +159,42 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
         } else if (res.chairs) {
           setChairStatus(res.chairs);
         }
-        if (res.lobbyCode) {
-          setLobbyCode(res.lobbyCode);
-        }
       }
     } catch (err) {
       console.error('Failed to load chair status', err);
     }
   };
 
+  const fetchLobbyCode = async () => {
+    try {
+      const res = await apiRequest<{ code: string; expiresAt: string }>('/appointments/lobby-code');
+      if (res && res.code) {
+        setLobbyCode(res.code);
+        setLobbyCodeExpiresAt(new Date(res.expiresAt));
+      }
+    } catch (err) {
+      // ignore
+    }
+  };
+
+  const handleConfirmPresence = async (apptId: string) => {
+    try {
+      await apiRequest(`/appointments/${apptId}/confirm-presence`, {
+        method: 'PATCH',
+      });
+      fetchTodayAppointments(true);
+      triggerClinicSync('patient_presence_confirmed', { appointmentId: apptId });
+    } catch (err: any) {
+      alert(err.message || 'Failed to confirm desk presence');
+    }
+  };
+
   useEffect(() => {
     fetchTodayAppointments(false);
     fetchChairStatus();
+    fetchLobbyCode();
+    const lobbyTimer = setInterval(fetchLobbyCode, 30000);
+    return () => clearInterval(lobbyTimer);
   }, []);
 
   useClinicSync((syncEv) => {
@@ -386,7 +414,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
     return new Date(a.scheduledStart).getTime() - new Date(b.scheduledStart).getTime();
   });
 
-  const statusBadge = (status: string, apptId: string) => {
+  const statusBadge = (status: string, apptId: string, isConfirmedAtDesk?: boolean) => {
     const isReadyBilling = status === 'COMPLETED' && !settledApptIds.has(apptId);
     if (isReadyBilling) {
       return (
@@ -399,10 +427,18 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
 
     switch (status) {
       case 'CHECKED_IN':
+        if (!isConfirmedAtDesk) {
+          return (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-black bg-amber-50 text-amber-950 border border-amber-300">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>
+              ⚠️ Standby (Desk Check Pending)
+            </span>
+          );
+        }
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-black bg-amber-100 text-amber-900 border border-amber-300">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
-            Waiting in Lobby
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-black bg-teal-100 text-teal-900 border border-teal-300">
+            <Check className="w-3.5 h-3.5 text-teal-700" />
+            Waiting in Lobby (Confirmed)
           </span>
         );
       case 'CALLED':
@@ -535,6 +571,18 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          {lobbyCode && (
+            <div className="flex items-center gap-2 bg-amber-50 border border-amber-300 text-amber-950 font-black text-xs py-2 px-3 rounded-xl shadow-2xs">
+              <KeyRound className="w-4 h-4 text-amber-700" />
+              <span>Arrival Code: <strong className="font-mono text-sm text-teal-900 bg-white px-2 py-0.5 rounded border border-amber-200">{lobbyCode}</strong></span>
+              {lobbyCodeExpiresAt && (
+                <span className="text-[10px] text-slate-500 font-sans font-bold">
+                  ({Math.max(0, Math.floor((lobbyCodeExpiresAt.getTime() - Date.now()) / 60000))}m left)
+                </span>
+              )}
+            </div>
+          )}
+
           <button
             onClick={() => navigate('/admin/duplicates')}
             className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-black text-xs py-2.5 px-3.5 rounded-xl shadow-xs transition-all cursor-pointer"
@@ -1076,7 +1124,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                       </div>
 
                       <div className="text-right">
-                        {statusBadge(appt.status, appt.id)}
+                        {statusBadge(appt.status, appt.id, appt.isConfirmedAtDesk)}
                         <div className="mt-1.5">
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-900 font-bold border border-teal-200 text-[11px]">
                             <Armchair className="w-3 h-3 text-teal-700" />
@@ -1155,18 +1203,29 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                         );
                         return (
                           <div className="flex items-center gap-1.5 flex-1 flex-wrap">
-                            {freeChairs.map(c => (
+                            {!appt.isConfirmedAtDesk ? (
                               <button
-                                key={c}
-                                onClick={() => handleUpdateStatus(appt.id, 'CALLED', c)}
-                                className={`flex-1 min-w-[110px] py-2 px-2.5 rounded-xl text-white font-black text-xs transition-colors cursor-pointer shadow-xs text-center flex items-center justify-center gap-1 active:scale-95 ${
-                                  c === appt.chairNumber ? 'bg-teal-700 hover:bg-teal-800 ring-2 ring-teal-400' : 'bg-teal-600 hover:bg-teal-700'
-                                }`}
+                                onClick={() => handleConfirmPresence(appt.id)}
+                                className="flex-1 min-w-[140px] py-2 px-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-black text-xs transition-colors cursor-pointer shadow-xs text-center flex items-center justify-center gap-1.5 active:scale-95"
+                                title="Patient arrived at reception - confirm physical presence in waiting room"
                               >
-                                <Bell className="w-3.5 h-3.5" />
-                                <span>📢 Call Chair #{c}</span>
+                                <CheckCircle2 className="w-4 h-4" />
+                                <span>✓ Confirm Desk Presence</span>
                               </button>
-                            ))}
+                            ) : (
+                              freeChairs.map(c => (
+                                <button
+                                  key={c}
+                                  onClick={() => handleUpdateStatus(appt.id, 'CALLED', c)}
+                                  className={`flex-1 min-w-[110px] py-2 px-2.5 rounded-xl text-white font-black text-xs transition-colors cursor-pointer shadow-xs text-center flex items-center justify-center gap-1 active:scale-95 ${
+                                    c === appt.chairNumber ? 'bg-teal-700 hover:bg-teal-800 ring-2 ring-teal-400' : 'bg-teal-600 hover:bg-teal-700'
+                                  }`}
+                                >
+                                  <Bell className="w-3.5 h-3.5" />
+                                  <span>📢 Call Chair #{c}</span>
+                                </button>
+                              ))
+                            )}
                             <button
                               onClick={() => {
                                 const reason = window.prompt(`Enter Clinical Reason for Emergency Escalation for ${appt.patientName} (e.g. Acute pulpitis / Severe pain / Bleeding / Facial trauma):`);
@@ -1292,7 +1351,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                           {appt.dentistName}
                         </td>
                         <td className="py-3.5 px-4">
-                          {statusBadge(appt.status, appt.id)}
+                          {statusBadge(appt.status, appt.id, appt.isConfirmedAtDesk)}
                         </td>
                         <td className="py-3.5 px-4 text-right">
                           <div className="flex items-center justify-end gap-1.5">
@@ -1354,19 +1413,30 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                               );
                               return (
                                 <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                                  {freeChairs.map(c => (
+                                  {!appt.isConfirmedAtDesk ? (
                                     <button
-                                      key={c}
-                                      onClick={() => handleUpdateStatus(appt.id, 'CALLED', c)}
-                                      className={`px-2.5 py-1.5 rounded-lg text-white font-black text-xs transition-all cursor-pointer shadow-xs flex items-center gap-1 active:scale-95 ${
-                                        c === appt.chairNumber ? 'bg-teal-700 hover:bg-teal-800 ring-2 ring-teal-400' : 'bg-teal-600 hover:bg-teal-700'
-                                      }`}
-                                      title={`Page and call patient to Operatory Chair #${c}`}
+                                      onClick={() => handleConfirmPresence(appt.id)}
+                                      className="px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-black text-xs transition-colors cursor-pointer shadow-xs flex items-center gap-1.5 active:scale-95"
+                                      title="Patient arrived at reception - confirm physical presence in waiting room"
                                     >
-                                      <Bell className="w-3 h-3" />
-                                      <span>Call #{c}</span>
+                                      <CheckCircle2 className="w-3.5 h-3.5" />
+                                      <span>✓ Confirm Desk Presence</span>
                                     </button>
-                                  ))}
+                                  ) : (
+                                    freeChairs.map(c => (
+                                      <button
+                                        key={c}
+                                        onClick={() => handleUpdateStatus(appt.id, 'CALLED', c)}
+                                        className={`px-2.5 py-1.5 rounded-lg text-white font-black text-xs transition-all cursor-pointer shadow-xs flex items-center gap-1 active:scale-95 ${
+                                          c === appt.chairNumber ? 'bg-teal-700 hover:bg-teal-800 ring-2 ring-teal-400' : 'bg-teal-600 hover:bg-teal-700'
+                                        }`}
+                                        title={`Page and call patient to Operatory Chair #${c}`}
+                                      >
+                                        <Bell className="w-3 h-3" />
+                                        <span>Call #{c}</span>
+                                      </button>
+                                    ))
+                                  )}
                                   <button
                                     onClick={() => {
                                       const reason = window.prompt(`Enter Clinical Reason for Emergency Escalation for ${appt.patientName} (e.g. Acute pulpitis / Severe pain / Bleeding / Facial trauma):`);

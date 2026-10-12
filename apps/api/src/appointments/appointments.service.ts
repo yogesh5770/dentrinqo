@@ -12,11 +12,80 @@ export class AppointmentsService {
     private readonly auditService: AuditService,
   ) {}
 
-  // Generate rotating daily HMAC salt code for Hospital Lobby Walk-in QR
-  getDailyLobbyCode(clinicId: string, date: Date = new Date()): string {
-    const istDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(date);
-    const secret = process.env.JWT_SECRET || 'aks-lobby-salt-key-2026';
-    return crypto.createHmac('sha256', secret).update(`${clinicId}:${istDateStr}`).digest('hex').slice(0, 6).toUpperCase();
+  private static ipFailures: Map<string, { count: number; resetAt: number }> = new Map();
+  private static clinicFailures: Map<string, { count: number; resetAt: number }> = new Map();
+
+  /**
+   * Generates a deterministic time-bucket HMAC lobby code (4 or 6 digits)
+   * using the clinic's 32-byte secret.
+   */
+  getRotatingLobbyCode(clinic: { id: string; lobbySecret?: string | null; lobbyCodeDigits?: number; lobbyCodeWindowSeconds?: number }, timeOffsetBuckets = 0): { code: string; expiresAt: number; secondsRemaining: number } {
+    const windowSec = clinic.lobbyCodeWindowSeconds || 300; // default 5 minutes
+    const digits = clinic.lobbyCodeDigits === 6 ? 6 : 4;
+    const now = Math.floor(Date.now() / 1000);
+    const bucket = Math.floor(now / windowSec) + timeOffsetBuckets;
+    const secret = clinic.lobbySecret || 'aks-secure-lobby-salt-key-2026';
+
+    const hmac = crypto.createHmac('sha256', secret);
+    hmac.update(`${clinic.id}:${bucket}`);
+    const hash = hmac.digest('hex');
+
+    const modulo = digits === 6 ? 900000 : 9000;
+    const base = digits === 6 ? 100000 : 1000;
+    const code = (parseInt(hash.substring(0, 8), 16) % modulo + base).toString();
+
+    const expiresAtSec = (bucket + 1 - timeOffsetBuckets) * windowSec;
+    const secondsRemaining = Math.max(0, expiresAtSec - now);
+
+    return {
+      code,
+      expiresAt: expiresAtSec * 1000,
+      secondsRemaining,
+    };
+  }
+
+  getDailyLobbyCode(clinicOrId: any, _date?: any): string {
+    const clinicObj = typeof clinicOrId === 'string' ? { id: clinicOrId } : clinicOrId;
+    return this.getRotatingLobbyCode(clinicObj, 0).code;
+  }
+
+  verifyRotatingLobbyCode(clinic: { id: string; lobbySecret?: string | null; lobbyCodeDigits?: number; lobbyCodeWindowSeconds?: number; requireLobbyCode?: boolean }, candidateCode: string): boolean {
+    if (!clinic.requireLobbyCode) return true;
+    if (!candidateCode) return false;
+    const clean = candidateCode.trim();
+    // Accept current bucket (0) or previous bucket (-1) for grace window
+    const current = this.getRotatingLobbyCode(clinic, 0);
+    const previous = this.getRotatingLobbyCode(clinic, -1);
+    return clean === current.code || clean === previous.code;
+  }
+
+  recordFailedLobbyAttempt(ip: string, clinicId: string) {
+    const now = Date.now();
+    const windowMs = 15 * 60 * 1000; // 15 minutes
+
+    const ipEntry = AppointmentsService.ipFailures.get(ip);
+    if (!ipEntry || ipEntry.resetAt < now) {
+      AppointmentsService.ipFailures.set(ip, { count: 1, resetAt: now + windowMs });
+    } else {
+      ipEntry.count++;
+    }
+
+    const clinicEntry = AppointmentsService.clinicFailures.get(clinicId);
+    if (!clinicEntry || clinicEntry.resetAt < now) {
+      AppointmentsService.clinicFailures.set(clinicId, { count: 1, resetAt: now + windowMs });
+    } else {
+      clinicEntry.count++;
+    }
+  }
+
+  isIpLockedOut(ip: string): boolean {
+    const entry = AppointmentsService.ipFailures.get(ip);
+    return Boolean(entry && entry.resetAt > Date.now() && entry.count >= 5);
+  }
+
+  isClinicCheckinPaused(clinicId: string): boolean {
+    const entry = AppointmentsService.clinicFailures.get(clinicId);
+    return Boolean(entry && entry.resetAt > Date.now() && entry.count >= 25);
   }
 
   // Check for scheduling conflicts (same dentist OR same chair at overlapping time)
@@ -188,15 +257,30 @@ export class AppointmentsService {
   async updateStatus(clinicId: string, id: string, dto: UpdateAppointmentStatusDto, actor: any) {
     const appt = await this.prisma.appointment.findFirst({
       where: { id, clinicId },
-      include: { patient: { select: { fullName: true } } },
+      include: {
+        patient: { select: { fullName: true } },
+        clinic: { select: { requireDeskConfirmation: true } },
+      },
     });
 
     if (!appt) throw new NotFoundException('Appointment not found');
+
+    // Desk Confirmation Enforcement: Patient cannot be CALLED unless physically confirmed in lobby
+    if (dto.status === 'CALLED') {
+      if (appt.clinic?.requireDeskConfirmation && !appt.isConfirmedAtDesk) {
+        throw new BadRequestException('Patient must be confirmed in person at the reception desk before being called to the operatory chair.');
+      }
+    }
 
     const updateData: any = {
       status: dto.status,
       notes: dto.notes ? `${appt.notes || ''}\n[Status Note]: ${dto.notes}` : appt.notes,
     };
+
+    // Immediate Chair Freeing: When treatment is finished, operatory chair is released immediately
+    if (dto.status === 'TREATED') {
+      updateData.status = 'TREATED';
+    }
 
     if (dto.chairNumber && dto.chairNumber >= 1 && dto.chairNumber <= 10) {
       updateData.chairNumber = dto.chairNumber;
@@ -238,6 +322,46 @@ export class AppointmentsService {
         emergencyReason: dto.emergencyReason,
         patientName: appt.patient.fullName,
       },
+    });
+
+    return this.formatAppointment(updated);
+  }
+
+  async confirmPresence(clinicId: string, id: string, staffUser: any) {
+    const role = staffUser?.role || 'STAFF';
+    // Allow CLINIC_ADMIN, RECEPTIONIST, and DENTIST (solo clinic mode)
+    if (!['CLINIC_ADMIN', 'RECEPTIONIST', 'DENTIST'].includes(role)) {
+      throw new ForbiddenException('Only clinic staff or dentist can confirm patient arrival in person.');
+    }
+
+    const appt = await this.prisma.appointment.findFirst({
+      where: { id, clinicId },
+      include: { patient: { select: { fullName: true } } },
+    });
+
+    if (!appt) throw new NotFoundException('Appointment not found');
+
+    const updated = await this.prisma.appointment.update({
+      where: { id },
+      data: {
+        isConfirmedAtDesk: true,
+        confirmedAtDeskAt: new Date(),
+        confirmedByStaffId: staffUser?.userId || staffUser?.id || null,
+      },
+      include: {
+        patient: { select: { fullName: true, phone: true, uhid: true } },
+        dentist: { select: { fullName: true } },
+      },
+    });
+
+    await this.auditService.log({
+      clinicId,
+      actorId: staffUser?.userId || staffUser?.id || 'staff',
+      actorRole: role,
+      action: 'PATIENT_DESK_PRESENCE_CONFIRMED',
+      entityType: 'Appointment',
+      entityId: id,
+      details: { patientName: appt.patient.fullName },
     });
 
     return this.formatAppointment(updated);
@@ -444,11 +568,10 @@ export class AppointmentsService {
                      (dto.preferredSlot && /walk[- ]?in/i.test(dto.preferredSlot));
 
     if (isWalkin && dto.lobbyCode) {
-      const scheduledStartForCode = this.parseSlotTime(dto.preferredDate, dto.preferredSlot);
-      const expectedCode = this.getDailyLobbyCode(clinicId, scheduledStartForCode);
-      if (dto.lobbyCode.trim().toUpperCase() !== expectedCode) {
+      const isValid = this.verifyRotatingLobbyCode(clinic, dto.lobbyCode);
+      if (!isValid) {
         throw new BadRequestException(
-          'The lobby walk-in QR code has expired or is invalid. Please scan the current code displayed at the reception desk.',
+          'The lobby check-in code has expired or is invalid. Please enter the current 4-digit code displayed on the waiting room TV or reception desk.',
         );
       }
     }
@@ -864,14 +987,18 @@ export class AppointmentsService {
     };
   }
 
-  async publicSelfCheckIn(dtoOrIdentifier: any, maybeClinicCode?: string) {
+  async publicSelfCheckIn(dtoOrIdentifier: any, maybeClinicCode?: string, clientIp?: string) {
     const dto = typeof dtoOrIdentifier === 'string'
-      ? { identifier: dtoOrIdentifier, clinicCode: maybeClinicCode, lobbyCode: undefined, patientName: undefined }
+      ? { identifier: dtoOrIdentifier, clinicCode: maybeClinicCode, lobbyCode: undefined, patientName: undefined, bookingReference: undefined }
       : (dtoOrIdentifier || {});
 
-    const clean = (dto.identifier || '').trim();
-    if (!clean) {
-      throw new BadRequestException('Please provide your phone number, last 4 digits, or booking reference code.');
+    const ip = clientIp || dto.clientIp || '127.0.0.1';
+
+    // 1. IP and Device Lockout Protection (Primary lockout by connection, NOT patient phone)
+    if (this.isIpLockedOut(ip)) {
+      throw new BadRequestException(
+        'Too many failed check-in attempts from this connection. Please proceed to the reception desk for assistance.',
+      );
     }
 
     let clinic: any = null;
@@ -883,13 +1010,24 @@ export class AppointmentsService {
     if (!clinic) {
       clinic = await this.prisma.clinic.findFirst();
     }
-    if (!clinic) throw new NotFoundException('Clinic not found');
+    if (!clinic) throw new NotFoundException('Dental clinic not configured');
 
-    // Verify daily rotating lobby code if submitted (ghost prevention)
-    if (dto.lobbyCode) {
-      const expectedCode = this.getDailyLobbyCode(clinic.id);
-      if (dto.lobbyCode.trim().toUpperCase() !== expectedCode) {
-        throw new ForbiddenException('Invalid or expired lobby check-in code. Please scan the QR code located at the reception counter.');
+    // 2. Clinic Aggregate Check-in Pause (DDoS protection)
+    if (this.isClinicCheckinPaused(clinic.id)) {
+      throw new BadRequestException(
+        'Self check-in is temporarily paused. Please check in directly with the receptionist at the front desk.',
+      );
+    }
+
+    // 3. Rotating HMAC Lobby Code Verification
+    if (clinic.requireLobbyCode) {
+      const codeCandidate = dto.lobbyCode ? String(dto.lobbyCode).trim() : '';
+      const isValid = this.verifyRotatingLobbyCode(clinic, codeCandidate);
+      if (!isValid) {
+        this.recordFailedLobbyAttempt(ip, clinic.id);
+        throw new BadRequestException(
+          `Invalid or expired lobby code. Please enter the ${clinic.lobbyCodeDigits || 4}-digit code currently displayed on the waiting room TV or reception screen.`,
+        );
       }
     }
 
@@ -899,81 +1037,26 @@ export class AppointmentsService {
     todayEnd.setHours(23, 59, 59, 999);
 
     let appt: any = null;
-    const isDigitsOnly = /^\d+$/.test(clean);
+    const clean = (dto.identifier || dto.phone || '').trim();
 
-    if (isDigitsOnly && clean.length === 4) {
-      // 1. Last 4 digits of phone lookup
-      const candidates = await this.prisma.appointment.findMany({
-        where: {
-          clinicId: clinic.id,
-          patient: { phone: { endsWith: clean } },
-          scheduledStart: { gte: todayStart, lte: todayEnd },
-          status: { notIn: ['CANCELLED', 'NO_SHOW'] },
-        },
-        orderBy: { scheduledStart: 'asc' },
-        include: {
-          patient: true,
-          dentist: { select: { fullName: true } },
-          clinic: { select: { name: true, address: true, phone: true, code: true } },
-        },
-      });
+    // 4. Booked Patient Matching Engine: Require Booking Reference OR Booked Name
+    const bookingRef = (dto.bookingReference || '').trim();
+    const patientName = (dto.patientName || dto.fullName || '').trim().toLowerCase();
 
-      if (candidates.length === 1) {
-        appt = candidates[0];
-      } else if (candidates.length > 1) {
-        if (dto.patientName && dto.patientName.trim()) {
-          const matchName = dto.patientName.trim().toLowerCase();
-          appt = candidates.find((c: any) => c.patient.fullName.toLowerCase().includes(matchName)) || candidates[0];
-        } else {
-          appt = candidates[0];
-        }
-      }
-    } else if (/^[0-9+() -]{7,20}$/.test(clean)) {
-      // 2. Full phone lookup
-      const phoneTail = clean.replace(/\D/g, '').slice(-10);
-
-      appt = await this.prisma.appointment.findFirst({
-        where: {
-          clinicId: clinic.id,
-          patient: { phone: { contains: phoneTail } },
-          scheduledStart: { gte: todayStart, lte: todayEnd },
-          status: { notIn: ['CANCELLED', 'NO_SHOW'] },
-        },
-        orderBy: { scheduledStart: 'asc' },
-        include: {
-          patient: true,
-          dentist: { select: { fullName: true } },
-          clinic: { select: { name: true, address: true, phone: true, code: true } },
-        },
-      });
-
-      if (!appt) {
-        appt = await this.prisma.appointment.findFirst({
-          where: {
-            clinicId: clinic.id,
-            patient: { phone: { contains: phoneTail } },
-            status: { notIn: ['CANCELLED', 'NO_SHOW', 'COMPLETED'] },
-          },
-          orderBy: { scheduledStart: 'desc' },
-          include: {
-            patient: true,
-            dentist: { select: { fullName: true } },
-            clinic: { select: { name: true, address: true, phone: true, code: true } },
-          },
-        });
-      }
-    } else {
-      // 3. Booking reference or ID lookup
-      const parts = clean.split('-');
+    if (bookingRef) {
+      // Lookup by booking reference
+      const parts = bookingRef.split('-');
       const shortId = parts[parts.length - 1].toLowerCase();
       const allRecent = await this.prisma.appointment.findMany({
-        where: { clinicId: clinic.id },
-        take: 100,
-        orderBy: { createdAt: 'desc' },
+        where: {
+          clinicId: clinic.id,
+          scheduledStart: { gte: todayStart, lte: todayEnd },
+          status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+        },
         include: {
           patient: true,
           dentist: { select: { fullName: true } },
-          clinic: { select: { name: true, address: true, phone: true, code: true } },
+          clinic: { select: { name: true, address: true, phone: true, code: true, requireDeskConfirmation: true } },
         },
       });
       appt = allRecent.find((a: any) =>
@@ -982,17 +1065,53 @@ export class AppointmentsService {
       );
     }
 
+    if (!appt && clean) {
+      const phoneTail = clean.replace(/\D/g, '').slice(-10);
+      if (phoneTail.length >= 10) {
+        const candidates = await this.prisma.appointment.findMany({
+          where: {
+            clinicId: clinic.id,
+            patient: { phone: { contains: phoneTail } },
+            scheduledStart: { gte: todayStart, lte: todayEnd },
+            status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+          },
+          orderBy: { scheduledStart: 'asc' },
+          include: {
+            patient: true,
+            dentist: { select: { fullName: true } },
+            clinic: { select: { name: true, address: true, phone: true, code: true, requireDeskConfirmation: true } },
+          },
+        });
+
+        if (candidates.length === 1) {
+          // If name was provided, ensure it matches
+          if (patientName && !candidates[0].patient.fullName.toLowerCase().includes(patientName)) {
+            throw new BadRequestException('Patient name does not match the appointment record for this mobile number.');
+          }
+          appt = candidates[0];
+        } else if (candidates.length > 1) {
+          if (!patientName) {
+            throw new BadRequestException('Multiple appointments found on this mobile number. Please enter the Patient Full Name as booked.');
+          }
+          appt = candidates.find((c: any) => c.patient.fullName.toLowerCase().includes(patientName));
+          if (!appt) {
+            throw new BadRequestException(`No appointment matching name "${dto.patientName}" found on this mobile number.`);
+          }
+        }
+      }
+    }
+
     if (!appt) {
       throw new NotFoundException(
-        'No appointment found for this phone number or reference. If you do not have an appointment, you can register as a walk-in at reception or scan the lobby standee QR code.',
+        'No appointment found matching these details. If you do not have a booking, you can register as a walk-in at reception or choose "I don\'t have a booking".',
       );
     }
 
-    if (appt.status === 'COMPLETED') {
+    if (appt.status === 'COMPLETED' || appt.status === 'TREATED') {
       throw new BadRequestException('This appointment was already completed today.');
     }
     if (appt.status === 'CANCELLED') {
-      throw new BadRequestException('This appointment was cancelled. Please register at reception.');
+      throw new BadRequestException('This appointment was cancelled. Please register with the reception desk.');
     }
 
     const isAlreadyCheckedIn = appt.status === 'CHECKED_IN' || appt.status === 'CALLED' || appt.status === 'IN_CHAIR';
@@ -1004,12 +1123,14 @@ export class AppointmentsService {
         data: {
           status: 'CHECKED_IN',
           checkInTime: new Date(),
-          notes: [appt.notes, '[CHECK-IN: SELF_QR | Desk Confirmation Pending]'].filter(Boolean).join('\n'),
+          isConfirmedAtDesk: clinic.requireDeskConfirmation ? false : true,
+          checkInSource: 'SELF_QR',
+          notes: [appt.notes, `[CHECK-IN: SELF_QR | ${clinic.requireDeskConfirmation ? 'Desk Confirmation Pending' : 'Confirmed'}]`].filter(Boolean).join('\n'),
         },
         include: {
           patient: true,
           dentist: { select: { fullName: true } },
-          clinic: { select: { name: true, address: true, phone: true, code: true } },
+          clinic: { select: { name: true, address: true, phone: true, code: true, requireDeskConfirmation: true } },
         },
       });
     }
@@ -1173,7 +1294,6 @@ export class AppointmentsService {
       }
     }
 
-    const lobbyCode = this.getDailyLobbyCode(clinic.id);
     const istDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
 
     // Fetch active dentists for this clinic dynamically
@@ -1205,7 +1325,6 @@ export class AppointmentsService {
       clinicName: clinic.name,
       clinicAddress: clinic.address,
       clinicPhone: clinic.phone,
-      lobbyCode,
       todayDate: istDate,
       totalChairs,
       chairs,
@@ -1340,5 +1459,132 @@ export class AppointmentsService {
       isActive,
       chairStatus: parsed.chairStatus,
     };
+  }
+
+  // Display Token & Lobby Code Retrieval for TV & Reception
+  async getLobbyCodeForDisplayOrStaff(displayToken?: string, staffUser?: any) {
+    if (displayToken) {
+      const cleanToken = displayToken.trim();
+      const tokenHash = crypto.createHash('sha256').update(cleanToken).digest('hex');
+      const tokenRecord = await this.prisma.clinicDisplayToken.findFirst({
+        where: { tokenHash, isRevoked: false },
+        include: { clinic: true },
+      });
+
+      if (!tokenRecord) {
+        throw new ForbiddenException('Invalid or revoked display token. Please re-pair the TV in clinic settings.');
+      }
+
+      // Update lastUsedAt asynchronously
+      this.prisma.clinicDisplayToken.update({
+        where: { id: tokenRecord.id },
+        data: { lastUsedAt: new Date() },
+      }).catch(() => {});
+
+      const result = this.getRotatingLobbyCode(tokenRecord.clinic, 0);
+      return {
+        code: result.code,
+        expiresAt: result.expiresAt,
+        secondsRemaining: result.secondsRemaining,
+        digits: tokenRecord.clinic.lobbyCodeDigits || 4,
+        clinicCode: tokenRecord.clinic.code,
+        clinicName: tokenRecord.clinic.name,
+      };
+    }
+
+    if (staffUser && staffUser.clinicId) {
+      const clinic = await this.prisma.clinic.findUnique({
+        where: { id: staffUser.clinicId },
+      });
+      if (!clinic) throw new NotFoundException('Clinic not found');
+
+      const result = this.getRotatingLobbyCode(clinic, 0);
+      return {
+        code: result.code,
+        expiresAt: result.expiresAt,
+        secondsRemaining: result.secondsRemaining,
+        digits: clinic.lobbyCodeDigits || 4,
+        clinicCode: clinic.code,
+        clinicName: clinic.name,
+      };
+    }
+
+    throw new ForbiddenException('Display token header (x-display-token) or staff session required.');
+  }
+
+  async createDisplayToken(clinicId: string, name: string, staffUser: any) {
+    if (!['CLINIC_ADMIN', 'ADMIN'].includes(staffUser?.role)) {
+      throw new ForbiddenException('Only clinic administrators can generate waiting room display tokens.');
+    }
+
+    const rawToken = crypto.randomBytes(32).toString('hex'); // 64 hex characters (32 bytes)
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+    const created = await this.prisma.clinicDisplayToken.create({
+      data: {
+        clinicId,
+        name: name || 'Waiting Room Display',
+        tokenHash,
+      },
+    });
+
+    await this.auditService.log({
+      clinicId,
+      actorId: staffUser.userId || staffUser.id,
+      actorRole: staffUser.role,
+      action: 'DISPLAY_TOKEN_GENERATED',
+      entityType: 'ClinicDisplayToken',
+      entityId: created.id,
+      details: { name: created.name },
+    });
+
+    return {
+      id: created.id,
+      name: created.name,
+      rawToken, // Shown ONCE at generation!
+      createdAt: created.createdAt,
+      message: 'Secure display token generated. Copy it now to configure the Waiting Room TV. It will not be shown again.',
+    };
+  }
+
+  async listDisplayTokens(clinicId: string) {
+    return this.prisma.clinicDisplayToken.findMany({
+      where: { clinicId },
+      select: {
+        id: true,
+        name: true,
+        createdAt: true,
+        lastUsedAt: true,
+        isRevoked: true,
+        revokedAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async revokeDisplayToken(clinicId: string, tokenId: string, staffUser: any) {
+    if (!['CLINIC_ADMIN', 'ADMIN'].includes(staffUser?.role)) {
+      throw new ForbiddenException('Only clinic administrators can revoke display tokens.');
+    }
+
+    await this.prisma.clinicDisplayToken.updateMany({
+      where: { id: tokenId, clinicId },
+      data: {
+        isRevoked: true,
+        revokedAt: new Date(),
+      },
+    });
+
+    await this.auditService.log({
+      clinicId,
+      actorId: staffUser.userId || staffUser.id,
+      actorRole: staffUser.role,
+      action: 'DISPLAY_TOKEN_REVOKED',
+      entityType: 'ClinicDisplayToken',
+      entityId: tokenId,
+      details: { tokenId },
+    });
+
+    return { success: true, message: 'Display token revoked successfully.' };
   }
 }

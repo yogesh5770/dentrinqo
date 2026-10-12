@@ -14,32 +14,66 @@ export class TenantContextMiddleware implements NestMiddleware {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  public static clearClinicCache(clinicId?: string) {
+    if (clinicId) {
+      for (const [key, val] of TenantContextMiddleware.clinicCache.entries()) {
+        if (val.clinic?.id === clinicId || val.clinic?.code === clinicId) {
+          TenantContextMiddleware.clinicCache.delete(key);
+        }
+      }
+    } else {
+      TenantContextMiddleware.clinicCache.clear();
+    }
+  }
+
   async use(req: TenantRequest, res: Response, next: NextFunction) {
     try {
-      // 1. Resolve tenant identifier from headers, subdomain, or query
-      const explicitHeader = (req.headers['x-clinic-id'] || req.headers['x-tenant-id'] || req.headers['x-clinic-code']) as string;
-      const queryCode = req.query.clinicCode as string;
-      
-      let identifier = explicitHeader || queryCode;
+      const isDev = process.env.NODE_ENV !== 'production';
+      let identifier: string | undefined;
 
-      // Extract from hostname / subdomain if not in header/query
-      if (!identifier && req.hostname) {
-        const host = req.hostname.toLowerCase();
-        // Skip bare IP addresses, localhost without subdomain
-        if (!/^\d+\.\d+\.\d+\.\d+$/.test(host) && host !== 'localhost') {
+      // In development mode only: allow explicit header/query parameter testing overrides
+      if (isDev) {
+        identifier = ((req.headers['x-clinic-id'] || req.headers['x-tenant-id'] || req.headers['x-clinic-code']) as string) || (req.query.clinicCode as string);
+      }
+
+      let clinic: any = null;
+
+      // 1. Resolve via public hostname using ClinicDomain table
+      const host = req.hostname ? req.hostname.toLowerCase() : '';
+      if (!identifier && host) {
+        const cachedDomain = TenantContextMiddleware.clinicCache.get(host);
+        if (cachedDomain && cachedDomain.expiresAt > Date.now()) {
+          clinic = cachedDomain.clinic;
+        } else {
+          // Lookup in ClinicDomain table
+          const domainEntry = await this.prisma.clinicDomain.findUnique({
+            where: { domain: host },
+            include: { clinic: true },
+          });
+
+          if (domainEntry && domainEntry.clinic) {
+            clinic = domainEntry.clinic;
+            TenantContextMiddleware.clinicCache.set(host, {
+              clinic,
+              expiresAt: Date.now() + 60000, // 60s cache
+            });
+          }
+        }
+
+        // Subdomain fallback if not in ClinicDomain table
+        if (!clinic && !/^\d+\.\d+\.\d+\.\d+$/.test(host) && host !== 'localhost') {
           const parts = host.split('.');
-          if (parts.length > 2) {
-            identifier = parts[0]; // e.g. "aks" from "aks.dentalflow.in"
-          } else if (parts.length === 2 && parts[1] === 'localhost') {
-            identifier = parts[0]; // e.g. "aks" from "aks.localhost"
+          if (parts.length > 2 || (parts.length === 2 && parts[1] === 'localhost')) {
+            identifier = parts[0];
           }
         }
       }
 
-      if (identifier) {
+      // 2. Resolve via identifier (code, subdomain, or id)
+      if (!clinic && identifier) {
         const clean = identifier.trim();
         const cached = TenantContextMiddleware.clinicCache.get(clean);
-        let clinic = cached && cached.expiresAt > Date.now() ? cached.clinic : null;
+        clinic = cached && cached.expiresAt > Date.now() ? cached.clinic : null;
 
         if (!clinic) {
           clinic = await this.prisma.clinic.findFirst({
@@ -59,15 +93,15 @@ export class TenantContextMiddleware implements NestMiddleware {
             });
           }
         }
+      }
 
-        if (clinic) {
-          if (clinic.status === 'SUSPENDED') {
-            throw new ForbiddenException(`Clinic "${clinic.name}" is currently suspended. Please contact platform administration.`);
-          }
-          req.clinicId = clinic.id;
-          req.tenantClinic = clinic;
-          res.setHeader('X-Tenant-Clinic', clinic.code);
+      if (clinic) {
+        if (clinic.status === 'SUSPENDED') {
+          throw new ForbiddenException(`Clinic "${clinic.name}" is currently suspended. Please contact platform administration.`);
         }
+        req.clinicId = clinic.id;
+        req.tenantClinic = clinic;
+        res.setHeader('X-Tenant-Clinic', clinic.code);
       }
 
       next();

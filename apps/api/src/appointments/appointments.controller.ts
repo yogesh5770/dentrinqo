@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Req, Headers } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
@@ -35,10 +35,64 @@ export class AppointmentsController {
 
   @Post('public-checkin')
   @Throttle({ default: { limit: 15, ttl: 60000 } })
-  @ApiOperation({ summary: 'Self check-in for arriving patient via QR scan (by phone or booking reference)' })
+  @ApiOperation({ summary: 'Self check-in for arriving patient via permanent standee QR scan' })
   @ApiResponse({ status: 200, description: 'Check-in processed and queue token returned' })
-  async publicCheckIn(@Body() dto: PublicCheckInDto) {
-    return this.appointmentsService.publicSelfCheckIn(dto);
+  async publicCheckIn(@Body() dto: PublicCheckInDto, @Req() req: Request) {
+    const forwarded = req.headers['x-forwarded-for'];
+    const clientIp = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : (req.ip || req.socket.remoteAddress);
+    return this.appointmentsService.publicSelfCheckIn(dto, dto.clinicCode, clientIp);
+  }
+
+  @Get('lobby-code')
+  @Throttle({ default: { limit: 60, ttl: 60000 } })
+  @ApiOperation({ summary: 'Get current rotating lobby code for Waiting Room TV display or Reception Desk' })
+  async getLobbyCode(
+    @Headers('x-display-token') displayToken?: string,
+    @Req() req?: any,
+  ) {
+    // If not display token, authenticate via session cookie / bearer token
+    return this.appointmentsService.getLobbyCodeForDisplayOrStaff(displayToken, req?.user);
+  }
+
+  @Patch(':id/confirm-presence')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('CLINIC_ADMIN', 'RECEPTIONIST', 'DENTIST')
+  @ApiOperation({ summary: 'Confirm patient presence at reception desk (Required before calling to chair)' })
+  async confirmPresence(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+  ) {
+    return this.appointmentsService.confirmPresence(user.clinicId, id, user);
+  }
+
+  @Post('display-tokens')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('CLINIC_ADMIN')
+  @ApiOperation({ summary: 'Generate a new persistent waiting room TV display token (Shown once)' })
+  async createDisplayToken(
+    @CurrentUser() user: any,
+    @Body() body: { name: string },
+  ) {
+    return this.appointmentsService.createDisplayToken(user.clinicId, body.name, user);
+  }
+
+  @Get('display-tokens')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('CLINIC_ADMIN')
+  @ApiOperation({ summary: 'List all configured waiting room TV display tokens' })
+  async listDisplayTokens(@CurrentUser() user: any) {
+    return this.appointmentsService.listDisplayTokens(user.clinicId);
+  }
+
+  @Delete('display-tokens/:id')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('CLINIC_ADMIN')
+  @ApiOperation({ summary: 'Revoke an active waiting room TV display token' })
+  async revokeDisplayToken(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+  ) {
+    return this.appointmentsService.revokeDisplayToken(user.clinicId, id, user);
   }
 
   @Get('lookup-phone')

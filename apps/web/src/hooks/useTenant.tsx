@@ -17,6 +17,8 @@ export interface TenantClinic {
   subdomain?: string | null;
   upiVpa?: string | null;
   workingHours?: any;
+  isDoctorVerified?: boolean;
+  isBillingVerified?: boolean;
 }
 
 interface TenantContextType {
@@ -63,6 +65,8 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           subdomain: user.clinic.subdomain,
           upiVpa: user.clinic.upiVpa,
           workingHours: user.clinic.workingHours,
+          isDoctorVerified: (user.clinic as any).isDoctorVerified,
+          isBillingVerified: (user.clinic as any).isBillingVerified,
         };
         setClinic(fallback);
         return fallback;

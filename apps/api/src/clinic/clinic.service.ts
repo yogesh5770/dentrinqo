@@ -90,6 +90,12 @@ export class ClinicService {
       status: clinic.status,
       planTier: clinic.planTier,
       upiVpa: clinic.upiVpa,
+      requireLobbyCode: clinic.requireLobbyCode ?? true,
+      requireDeskConfirmation: clinic.requireDeskConfirmation ?? true,
+      lobbyCodeDigits: clinic.lobbyCodeDigits ?? 4,
+      lobbyCodeWindowSeconds: clinic.lobbyCodeWindowSeconds ?? 300,
+      isDoctorVerified: clinic.isDoctorVerified ?? false,
+      isBillingVerified: clinic.isBillingVerified ?? false,
       workingHours: clinic.workingHours
         ? (() => {
             try {
@@ -119,6 +125,13 @@ export class ClinicService {
           ? (typeof data.workingHours === 'string' ? data.workingHours : JSON.stringify(data.workingHours))
           : undefined,
         gstin: data.gstin,
+        upiVpa: data.upiVpa,
+        requireLobbyCode: data.requireLobbyCode !== undefined ? Boolean(data.requireLobbyCode) : undefined,
+        requireDeskConfirmation: data.requireDeskConfirmation !== undefined ? Boolean(data.requireDeskConfirmation) : undefined,
+        lobbyCodeDigits: data.lobbyCodeDigits ? parseInt(data.lobbyCodeDigits, 10) : undefined,
+        lobbyCodeWindowSeconds: data.lobbyCodeWindowSeconds ? parseInt(data.lobbyCodeWindowSeconds, 10) : undefined,
+        isDoctorVerified: data.isDoctorVerified !== undefined ? Boolean(data.isDoctorVerified) : undefined,
+        isBillingVerified: data.isBillingVerified !== undefined ? Boolean(data.isBillingVerified) : undefined,
       },
     });
 
@@ -132,6 +145,8 @@ export class ClinicService {
       details: { updatedFields: Object.keys(data) },
     });
 
-    return updated;
+    // Exclude lobbySecret from returned object
+    const { lobbySecret, ...safeClinic } = updated as any;
+    return safeClinic;
   }
 }

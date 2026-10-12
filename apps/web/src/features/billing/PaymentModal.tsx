@@ -16,6 +16,7 @@ import {
   Copy,
   Check,
   Calculator,
+  ShieldAlert,
 } from 'lucide-react';
 
 interface PaymentModalProps {
@@ -48,8 +49,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const { user } = useAuth();
   const { clinic: tenantClinic } = useTenant();
 
+  const isBillingVerified = Boolean(tenantClinic?.isBillingVerified ?? user?.clinic?.isBillingVerified ?? false);
+
   // Clinic UPI details
-  const clinicUpiId = tenantClinic?.upiVpa || user?.clinic?.upiVpa || 'akselitedental@icici';
+  const clinicUpiId = tenantClinic?.upiVpa || user?.clinic?.upiVpa || '';
   const clinicName = tenantClinic?.name || user?.clinic?.name || 'Dental Clinic';
   const upiPayload = `upi://pay?pa=${clinicUpiId}&pn=${encodeURIComponent(clinicName)}&am=${amountRupees}&cu=INR&tn=${encodeURIComponent(`INV_${invoice.invoiceNumber}`)}`;
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(upiPayload)}`;
@@ -260,43 +263,55 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
           {/* DYNAMIC UPI QR CODE DISPLAY */}
           {paymentMethod === 'UPI' && (
-            <div className="p-4 bg-teal-50/70 border border-teal-200 rounded-2xl flex flex-col sm:flex-row items-center gap-4 text-xs">
-              <div className="bg-white p-2 rounded-xl shadow-xs border border-teal-100 shrink-0 text-center">
-                <img
-                  src={qrCodeUrl}
-                  alt="Dynamic UPI QR Code"
-                  className="w-32 h-32 object-contain rounded-lg"
-                  loading="lazy"
-                />
-                <span className="text-[10px] font-black text-teal-800 uppercase tracking-wider block mt-1">
-                  Scan to Pay ₹{amountRupees}
-                </span>
-              </div>
-
-              <div className="space-y-2 text-slate-800">
-                <div className="font-black text-slate-900 text-xs flex items-center gap-1.5">
-                  <QrCode className="w-4 h-4 text-teal-600" />
-                  <span>Instant Mobile Payment</span>
+            !isBillingVerified || !clinicUpiId ? (
+              <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl text-xs space-y-1.5 text-amber-950">
+                <div className="font-black flex items-center gap-1.5">
+                  <ShieldAlert className="w-4 h-4 text-amber-700" />
+                  <span>UPI QR Collection Paused (Verification Pending)</span>
                 </div>
-                <p className="text-[11px] text-slate-600 font-medium">
-                  Patient can scan this QR code using Google Pay, PhonePe, Paytm, or BHIM. Amount ₹{amountRupees} is pre-configured.
+                <p className="text-[11px] text-amber-900 leading-relaxed font-medium">
+                  Official clinic UPI ID and banking details have not been verified by the Clinic Administrator yet. Please collect via Cash or Card until verified in Clinic Settings.
                 </p>
-                <div className="flex items-center gap-2">
-                  <span className="font-mono font-bold bg-white px-2 py-1 rounded border border-slate-200 text-[11px] text-slate-800">
-                    {clinicUpiId}
+              </div>
+            ) : (
+              <div className="p-4 bg-teal-50/70 border border-teal-200 rounded-2xl flex flex-col sm:flex-row items-center gap-4 text-xs">
+                <div className="bg-white p-2 rounded-xl shadow-xs border border-teal-100 shrink-0 text-center">
+                  <img
+                    src={qrCodeUrl}
+                    alt="Dynamic UPI QR Code"
+                    className="w-32 h-32 object-contain rounded-lg"
+                    loading="lazy"
+                  />
+                  <span className="text-[10px] font-black text-teal-800 uppercase tracking-wider block mt-1">
+                    Scan to Pay ₹{amountRupees}
                   </span>
-                  <button
-                    type="button"
-                    onClick={handleCopyUpi}
-                    className="p-1.5 rounded-lg bg-teal-600 text-white hover:bg-teal-700 cursor-pointer text-[10px] font-bold flex items-center gap-1"
-                    title="Copy UPI ID"
-                  >
-                    {copiedUpi ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedUpi ? 'Copied' : 'Copy'}</span>
-                  </button>
+                </div>
+
+                <div className="space-y-2 text-slate-800">
+                  <div className="font-black text-slate-900 text-xs flex items-center gap-1.5">
+                    <QrCode className="w-4 h-4 text-teal-600" />
+                    <span>Instant Mobile Payment</span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 font-medium">
+                    Patient can scan this QR code using Google Pay, PhonePe, Paytm, or BHIM. Amount ₹{amountRupees} is pre-configured.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-bold bg-white px-2 py-1 rounded border border-slate-200 text-[11px] text-slate-800">
+                      {clinicUpiId}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCopyUpi}
+                      className="p-1.5 rounded-lg bg-teal-600 text-white hover:bg-teal-700 cursor-pointer text-[10px] font-bold flex items-center gap-1"
+                      title="Copy UPI ID"
+                    >
+                      {copiedUpi ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedUpi ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
+            )
           )}
 
           {/* CASH CALCULATOR (Tender & Change Due) */}

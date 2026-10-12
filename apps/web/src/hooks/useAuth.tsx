@@ -31,6 +31,8 @@ export interface User {
     upiVpa?: string;
     workingHours?: any;
     gstin?: string;
+    isDoctorVerified?: boolean;
+    isBillingVerified?: boolean;
   };
 }
 

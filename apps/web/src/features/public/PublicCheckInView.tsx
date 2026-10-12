@@ -10,15 +10,16 @@ import {
   ShieldCheck,
   AlertCircle,
   Sparkles,
-  MapPin,
-  Calendar,
-  Activity,
   QrCode,
   Check,
   Volume2,
   Bell,
   Armchair,
   RefreshCw,
+  KeyRound,
+  ShieldAlert,
+  HelpCircle,
+  Calendar,
 } from 'lucide-react';
 import { apiRequest } from '../../lib/api';
 import { triggerClinicSync, playClinicAlertChime, playPatientTurnBeeper } from '../../lib/sync';
@@ -48,21 +49,33 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
-  // Search input state
-  const initialQuery = searchParams.get('ref') || searchParams.get('phone') || searchParams.get('identifier') || '';
-  const initialCode = searchParams.get('code') || searchParams.get('lobbyCode') || '';
-  const [query, setQuery] = useState(initialQuery);
-  const [lobbyCode, setLobbyCode] = useState(initialCode);
-  const [patientNameVerification, setPatientNameVerification] = useState('');
+  // Mode: Tab 1 (I Have a Booking) vs Tab 2 (Walk-In)
+  const initialMode = searchParams.get('mode') === 'walkin' ? 'walkin' : 'booked';
+  const [activeTab, setActiveTab] = useState<'booked' | 'walkin'>(initialMode);
+
+  // Form State for Booked Patients
+  const initialPhone = searchParams.get('phone') || '';
+  const initialRef = searchParams.get('ref') || '';
+  const [phone, setPhone] = useState(initialPhone);
+  const [bookingRefOrName, setBookingRefOrName] = useState(initialRef);
+  const [lobbyCode, setLobbyCode] = useState('');
+
+  // Form State for Walk-In Patients
+  const [walkinName, setWalkinName] = useState('');
+  const [walkinPhone, setWalkinPhone] = useState('');
+  const [walkinAge, setWalkinAge] = useState('');
+  const [walkinGender, setWalkinGender] = useState<'MALE' | 'FEMALE' | 'OTHER'>('MALE');
+  const [walkinComplaint, setWalkinComplaint] = useState('Toothache / Dental Consultation');
+  const [walkinLobbyCode, setWalkinLobbyCode] = useState('');
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isLockedOut, setIsLockedOut] = useState(false);
 
-  // Search result state
-  const [appointmentData, setAppointmentData] = useState<any | null>(null);
-  const [isCheckingIn, setIsCheckingIn] = useState(false);
+  // Success State
   const [checkInSuccess, setCheckInSuccess] = useState<any | null>(null);
 
-  // Fast pre-visit health intake mini-form inside check-in
+  // Pre-visit Health Intake Mini-Form
   const [showIntake, setShowIntake] = useState(false);
   const [allergies, setAllergies] = useState<string[]>([]);
   const [medicalConditions, setMedicalConditions] = useState<{
@@ -86,11 +99,11 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
   const [lastSyncedTime, setLastSyncedTime] = useState<Date>(new Date());
   const [testSoundPlayed, setTestSoundPlayed] = useState(false);
 
-  // Periodic Live Beeper Polling Hook (10 second interval)
+  // Periodic Live Status Polling Hook (8 second interval)
   useEffect(() => {
     if (!checkInSuccess) return;
 
-    const identifier = checkInSuccess.reference || appointmentData?.reference || query.trim();
+    const identifier = checkInSuccess.reference || checkInSuccess.appointmentId;
     if (!identifier) return;
 
     const pollStatus = async () => {
@@ -99,7 +112,7 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
         if (res && res.success) {
           setLastSyncedTime(new Date());
 
-          // Detect transition to CALLED -> ring live beeper & vibrate phone
+          // Transition to CALLED -> ring live beeper & trigger vibration
           if (res.status === 'CALLED' && checkInSuccess.status !== 'CALLED') {
             playPatientTurnBeeper();
             setTurnAlarmFired(true);
@@ -115,6 +128,7 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
             dentistName: res.dentistName || prev?.dentistName,
             patientName: res.patientName || prev?.patientName,
             status: res.status,
+            isConfirmedAtDesk: res.isConfirmedAtDesk ?? prev?.isConfirmedAtDesk,
           }));
         }
       } catch (err) {
@@ -122,80 +136,50 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
       }
     };
 
-    const intervalId = setInterval(pollStatus, 10000);
+    const intervalId = setInterval(pollStatus, 8000);
     return () => clearInterval(intervalId);
-  }, [checkInSuccess?.reference, checkInSuccess?.status, appointmentData?.reference, query]);
+  }, [checkInSuccess?.reference, checkInSuccess?.status, checkInSuccess?.appointmentId]);
 
-  // Auto-search if parameter provided in QR code URL
-  useEffect(() => {
-    if (initialQuery.trim()) {
-      handleSearch(initialQuery.trim());
+  // Submit Booked Patient Self Check-In
+  const handleBookedCheckIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanPhone = phone.trim().replace(/\D/g, '');
+    const cleanRefOrName = bookingRefOrName.trim();
+    const cleanCode = lobbyCode.trim();
+
+    if (!cleanPhone || cleanPhone.length < 10) {
+      setError('Please enter your valid 10-digit mobile number.');
+      return;
     }
-  }, []);
 
-  const handleSearch = async (searchTarget?: string) => {
-    const term = (searchTarget !== undefined ? searchTarget : query).trim();
-    if (!term) {
-      setError('Please enter your 10-digit mobile number or booking reference code.');
+    if (!cleanRefOrName) {
+      setError('Please enter your Booking Reference (e.g. AKS-...) OR your registered Full Name.');
+      return;
+    }
+
+    if (!cleanCode) {
+      setError('Please enter the Check-In Code displayed on the Waiting Room TV or reception counter.');
       return;
     }
 
     setLoading(true);
     setError(null);
-    setAppointmentData(null);
-    setCheckInSuccess(null);
+    setIsLockedOut(false);
 
     try {
-      const res = await apiRequest<any>(`/appointments/public-status/${encodeURIComponent(term)}`);
-      if (res && res.success) {
-        setAppointmentData(res);
-        // If already checked in or called, show success state directly
-        if (res.status === 'CHECKED_IN' || res.status === 'CALLED' || res.status === 'IN_CHAIR') {
-          setCheckInSuccess({
-            reference: res.reference,
-            tokenNumber: res.tokenNumber,
-            currentlyAhead: res.currentlyAhead,
-            activeChairsServing: res.activeChairsServing || [],
-            chairNumber: res.chairNumber,
-            dentistName: res.dentistName,
-            patientName: res.patientName,
-            status: res.status,
-            alreadyCheckedIn: true,
-          });
-          if (res.status === 'CALLED') {
-            playPatientTurnBeeper();
-            setTurnAlarmFired(true);
-          }
-        }
-      } else {
-        throw new Error('Appointment record not found');
-      }
-    } catch (err: any) {
-      setError(
-        err.message ||
-          'No scheduled booking found for this number today. If you just arrived without an appointment, you can register as a walk-in.',
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+      // Determine if identifier is booking reference or phone
+      const isRef = cleanRefOrName.toUpperCase().includes('AKS') || cleanRefOrName.includes('-');
+      const identifier = isRef ? cleanRefOrName : cleanPhone;
+      const patientNameParam = isRef ? undefined : cleanRefOrName;
 
-  const handlePerformCheckIn = async () => {
-    if (!appointmentData && !query.trim()) return;
-
-    setIsCheckingIn(true);
-    setError(null);
-
-    const identifier = appointmentData?.reference || appointmentData?.patientPhone || query.trim();
-
-    try {
       const res = await apiRequest<any>('/appointments/public-checkin', {
         method: 'POST',
         body: JSON.stringify({
           identifier,
+          patientPhone: cleanPhone,
+          patientName: patientNameParam,
           clinicCode: activeClinicCode,
-          lobbyCode: lobbyCode.trim() || undefined,
-          patientName: patientNameVerification.trim() || undefined,
+          lobbyCode: cleanCode,
         }),
       });
 
@@ -209,6 +193,7 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
           dentistName: res.dentistName,
           patientName: res.patientName,
           status: res.status || 'CHECKED_IN',
+          isConfirmedAtDesk: res.isConfirmedAtDesk,
           alreadyCheckedIn: false,
         });
         playClinicAlertChime();
@@ -219,18 +204,94 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
           chairNumber: res.chairNumber,
         });
       } else {
-        throw new Error('Check-in could not be confirmed.');
+        throw new Error('Check-in could not be processed.');
       }
     } catch (err: any) {
-      setError(err.message || 'Check-in failed. Please contact the front desk receptionist.');
+      const msg = err.message || 'Check-in failed.';
+      setError(msg);
+      if (msg.includes('temporarily paused') || msg.includes('Too many failed')) {
+        setIsLockedOut(true);
+      }
     } finally {
-      setIsCheckingIn(false);
+      setLoading(false);
+    }
+  };
+
+  // Submit Walk-In Instant Registration & Check-In
+  const handleWalkInCheckIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanName = walkinName.trim();
+    const cleanPhone = walkinPhone.trim().replace(/\D/g, '');
+    const cleanCode = walkinLobbyCode.trim();
+
+    if (!cleanName) {
+      setError('Please enter your full name.');
+      return;
+    }
+    if (!cleanPhone || cleanPhone.length < 10) {
+      setError('Please enter your 10-digit mobile number.');
+      return;
+    }
+    if (!cleanCode) {
+      setError('Please enter the Check-In Code displayed on the Waiting Room TV or reception counter.');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setIsLockedOut(false);
+
+    try {
+      const res = await apiRequest<any>('/appointments/public-book', {
+        method: 'POST',
+        body: JSON.stringify({
+          patientName: cleanName,
+          patientPhone: cleanPhone,
+          age: walkinAge ? parseInt(walkinAge, 10) : undefined,
+          gender: walkinGender,
+          reason: `[WALK-IN] ${walkinComplaint}`,
+          clinicCode: activeClinicCode,
+          lobbyCode: cleanCode,
+          isWalkIn: true,
+        }),
+      });
+
+      if (res && res.success) {
+        setCheckInSuccess({
+          reference: res.reference,
+          tokenNumber: res.tokenNumber,
+          currentlyAhead: res.currentlyAhead ?? 0,
+          activeChairsServing: res.activeChairsServing || [],
+          chairNumber: res.chairNumber,
+          dentistName: res.dentistName,
+          patientName: res.patientName || cleanName,
+          status: res.status || 'CHECKED_IN',
+          isConfirmedAtDesk: res.isConfirmedAtDesk,
+          alreadyCheckedIn: false,
+        });
+        playClinicAlertChime();
+        triggerClinicSync('patient_self_checked_in', {
+          appointmentId: res.appointmentId,
+          patientName: cleanName,
+          tokenNumber: res.tokenNumber,
+        });
+      } else {
+        throw new Error('Walk-in check-in could not be completed.');
+      }
+    } catch (err: any) {
+      const msg = err.message || 'Walk-in check-in failed.';
+      setError(msg);
+      if (msg.includes('temporarily paused') || msg.includes('Too many failed')) {
+        setIsLockedOut(true);
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleSubmitIntake = async (e: React.FormEvent) => {
     e.preventDefault();
-    const ref = checkInSuccess?.reference || appointmentData?.reference;
+    const ref = checkInSuccess?.reference;
     if (!ref) return;
 
     setIntakeSaving(true);
@@ -273,12 +334,12 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
           </div>
 
           <a
-            href={`tel:${clinicPhone.replace(/\D/g, '')}`}
+            href={`tel:${activeClinicPhone.replace(/\D/g, '')}`}
             className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-bold transition flex items-center gap-1.5 text-xs shrink-0 cursor-pointer"
             title="Reception Desk Phone"
           >
             <Phone className="w-3.5 h-3.5 text-teal-600" />
-            <span className="hidden sm:inline">Help Desk</span>
+            <span className="hidden sm:inline">Reception Desk</span>
           </a>
         </div>
       </header>
@@ -291,211 +352,323 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
           <div className="relative z-10 space-y-2">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-teal-500/20 text-teal-200 border border-teal-400/30 text-[11px] font-black uppercase tracking-wider">
               <Sparkles className="w-3.5 h-3.5 text-teal-300" />
-              <span>Arrived at Clinic? Check In Here</span>
+              <span>Hospital Arrival Portal</span>
             </div>
             <h2 className="text-xl sm:text-2xl font-black tracking-tight leading-snug">
               Welcome to the Hospital! Confirm Your Arrival
             </h2>
             <p className="text-xs text-teal-100/90 leading-relaxed font-medium">
-              If you booked online previously, enter your mobile number to check in, lock your live queue token, and alert the dental team.
+              Check in with the rotating code shown on the waiting room TV or reception counter to receive your live queue token.
             </p>
           </div>
         </div>
 
-        {/* Search Input Box */}
-        {!checkInSuccess && (
-          <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <label className="block text-xs font-black uppercase tracking-wider text-slate-700">
-                Enter Mobile Number or Reference Code
-              </label>
-              {lobbyCode ? (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-300 text-emerald-800 text-[10px] font-black uppercase">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                  <span>Standee QR Verified</span>
-                </span>
-              ) : null}
-            </div>
-
-            {lobbyCode && (
-              <div className="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200 text-emerald-900 text-xs flex items-center gap-2">
-                <QrCode className="w-4 h-4 text-emerald-700 shrink-0" />
-                <span className="text-[11px] font-semibold">
-                  Verified with Reception Desk Code <strong className="font-mono font-black">{lobbyCode.toUpperCase()}</strong>
-                </span>
-              </div>
-            )}
-
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleSearch();
-              }}
-              className="space-y-3"
-            >
-              <div className="relative">
-                <input
-                  type="text"
-                  value={query}
-                  onChange={(e) => {
-                    setQuery(e.target.value);
-                    setError(null);
-                  }}
-                  placeholder="e.g. 9876543210, last 4 digits (e.g. 3210), or AKS-..."
-                  className="w-full pl-11 pr-4 py-3.5 bg-slate-50 border-2 border-slate-200 rounded-2xl text-base font-bold text-slate-900 focus:bg-white focus:border-teal-600 focus:ring-4 focus:ring-teal-100 transition outline-none"
-                  autoFocus
-                />
-                <Search className="w-5 h-5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              </div>
-
-              {!lobbyCode && (
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={lobbyCode}
-                    onChange={(e) => setLobbyCode(e.target.value.toUpperCase())}
-                    placeholder="Desk Code (from Standee QR, e.g. A7E4F2)"
-                    maxLength={10}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-semibold text-slate-800 placeholder:text-slate-400 uppercase outline-none focus:border-teal-500 focus:bg-white transition"
-                  />
+        {/* Lockout / Pause Banner */}
+        {isLockedOut && (
+          <div className="bg-amber-50 border-2 border-amber-400 rounded-3xl p-5 space-y-3 shadow-md animate-in fade-in">
+            <div className="flex items-start gap-3">
+              <ShieldAlert className="w-6 h-6 text-amber-700 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <h3 className="font-black text-sm text-amber-950">Self Check-In Temporarily Paused</h3>
+                <p className="text-xs text-amber-900 font-medium leading-relaxed">
+                  For clinic security, self check-in has been temporarily paused after multiple unsuccessful attempts.
+                </p>
+                <div className="pt-2">
+                  <span className="inline-block px-3 py-1 bg-amber-200/80 rounded-xl text-xs font-black text-amber-950">
+                    👉 Please step forward to the reception counter — our staff will check you in immediately!
+                  </span>
                 </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={loading || !query.trim()}
-                className="w-full py-3.5 px-5 rounded-2xl bg-teal-600 hover:bg-teal-700 active:scale-98 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md transition disabled:opacity-50 cursor-pointer"
-              >
-                {loading ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>Searching Appointments...</span>
-                  </>
-                ) : (
-                  <>
-                    <Search className="w-4 h-4" />
-                    <span>Find My Booking</span>
-                  </>
-                )}
-              </button>
-            </form>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* Error Alert / Walk-In Recommendation */}
-        {error && (
-          <div className="bg-rose-50 border border-rose-200 rounded-3xl p-5 space-y-3 shadow-xs">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-              <div className="space-y-1 text-xs">
-                <p className="font-black text-rose-950">No Scheduled Booking Found for Today</p>
-                <p className="text-rose-800 font-medium leading-relaxed">{error}</p>
-              </div>
+        {/* Standard Error Alert */}
+        {error && !isLockedOut && (
+          <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 flex items-start gap-3 text-xs text-rose-800 shadow-xs">
+            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <span className="font-black text-rose-950 block">Check-In Verification Failed</span>
+              <p className="font-medium leading-relaxed">{error}</p>
             </div>
+          </div>
+        )}
 
-            <div className="pt-2 border-t border-rose-200/60 flex flex-col sm:flex-row items-center gap-2">
-              <span className="text-[11px] font-bold text-rose-900">Visiting as a Walk-In right now?</span>
+        {/* Mode Selector Tabs (Booked vs Walk-in) */}
+        {!checkInSuccess && (
+          <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 shadow-sm space-y-5">
+            <div className="grid grid-cols-2 p-1 bg-slate-100 rounded-2xl text-xs font-black">
               <button
                 type="button"
-                onClick={() => navigate('/book?mode=walkin')}
-                className="w-full sm:w-auto px-4 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-black text-xs flex items-center justify-center gap-1.5 transition cursor-pointer shadow-xs"
+                onClick={() => {
+                  setActiveTab('booked');
+                  setError(null);
+                }}
+                className={`py-3 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  activeTab === 'booked'
+                    ? 'bg-white text-teal-900 shadow-xs border border-slate-200/80'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
               >
-                <span>Register as Walk-In (Instant Queue)</span>
-                <ArrowRight className="w-3.5 h-3.5" />
+                <Calendar className="w-4 h-4 text-teal-600" />
+                <span>I Have a Booking</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('walkin');
+                  setError(null);
+                }}
+                className={`py-3 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  activeTab === 'walkin'
+                    ? 'bg-white text-teal-900 shadow-xs border border-slate-200/80'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <User className="w-4 h-4 text-amber-600" />
+                <span>I Am a Walk-In</span>
               </button>
             </div>
-          </div>
-        )}
 
-        {/* Step 1: Appointment Found - Confirm Check-In Card */}
-        {appointmentData && !checkInSuccess && (
-          <div className="bg-white border-2 border-teal-500/40 rounded-3xl p-6 shadow-lg space-y-5 animate-in fade-in zoom-in duration-200">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-teal-100 text-teal-800 flex items-center justify-center font-black">
-                  <User className="w-5 h-5" />
-                </div>
+            {/* TAB 1: I HAVE A BOOKING */}
+            {activeTab === 'booked' && (
+              <form onSubmit={handleBookedCheckIn} className="space-y-4">
                 <div>
-                  <h3 className="font-black text-base text-slate-900">{appointmentData.patientName}</h3>
-                  <p className="text-[11px] text-slate-500 font-mono">+91 {appointmentData.patientPhone}</p>
+                  <label className="block text-xs font-black uppercase tracking-wider text-slate-700 mb-1.5">
+                    1. Registered Mobile Number
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="tel"
+                      value={phone}
+                      onChange={(e) => {
+                        setPhone(e.target.value);
+                        setError(null);
+                      }}
+                      placeholder="e.g. 9876543210"
+                      maxLength={15}
+                      className="w-full pl-11 pr-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-2xl text-base font-bold text-slate-900 focus:bg-white focus:border-teal-600 focus:ring-4 focus:ring-teal-100 transition outline-none"
+                      required
+                    />
+                    <Phone className="w-5 h-5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
                 </div>
-              </div>
 
-              <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-50 text-amber-900 border border-amber-300">
-                {appointmentData.status === 'SCHEDULED' ? 'Scheduled Today' : appointmentData.status}
-              </span>
-            </div>
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-wider text-slate-700 mb-1.5 flex items-center justify-between">
+                    <span>2. Booking Reference OR Full Name</span>
+                    <span className="text-[10px] text-teal-700 font-bold normal-case">Strict Server Verification</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={bookingRefOrName}
+                      onChange={(e) => {
+                        setBookingRefOrName(e.target.value);
+                        setError(null);
+                      }}
+                      placeholder="e.g. AKS-20261012-001 or Patient's Booked Name"
+                      className="w-full pl-11 pr-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-2xl text-base font-bold text-slate-900 focus:bg-white focus:border-teal-600 focus:ring-4 focus:ring-teal-100 transition outline-none"
+                      required
+                    />
+                    <Search className="w-5 h-5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1 font-medium">
+                    Enter the booking reference from your SMS/WhatsApp confirmation, or your registered patient name.
+                  </p>
+                </div>
 
-            {/* Appointment Details Grid */}
-            <div className="grid grid-cols-2 gap-3 text-xs">
-              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">Scheduled Time</span>
-                <span className="font-black text-slate-900 text-sm mt-0.5 block flex items-center gap-1">
-                  <Clock className="w-3.5 h-3.5 text-teal-600" />
-                  <span>
-                    {appointmentData.scheduledStart
-                      ? new Date(appointmentData.scheduledStart).toLocaleTimeString('en-IN', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })
-                      : 'Today'}
-                  </span>
-                </span>
-              </div>
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-wider text-slate-700 mb-1.5 flex items-center justify-between">
+                    <span>3. On-Screen Lobby Code</span>
+                    <span className="text-[10px] text-amber-700 font-bold normal-case flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      <span>Shown on Waiting Room TV</span>
+                    </span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={lobbyCode}
+                      onChange={(e) => {
+                        setLobbyCode(e.target.value.replace(/[^0-9A-Za-z]/g, '').toUpperCase());
+                        setError(null);
+                      }}
+                      placeholder="e.g. 8429"
+                      maxLength={6}
+                      className="w-full pl-11 pr-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-2xl text-lg font-mono font-black text-slate-900 tracking-widest focus:bg-white focus:border-teal-600 focus:ring-4 focus:ring-teal-100 transition outline-none"
+                      required
+                    />
+                    <KeyRound className="w-5 h-5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1 font-medium">
+                    Look at the waiting room TV or ask reception for today's rotating arrival code.
+                  </p>
+                </div>
 
-              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">Assigned Operatory</span>
-                <span className="font-black text-slate-900 text-sm mt-0.5 block">
-                  Chair #{appointmentData.chairNumber || 1}
-                </span>
-                <span className="text-[10px] text-teal-700 font-bold block">
-                  {appointmentData.dentistName || 'Duty Dentist'}
-                </span>
-              </div>
-            </div>
-
-            {/* Concern / Reason */}
-            {appointmentData.reason && (
-              <div className="p-3 bg-teal-50/50 rounded-2xl border border-teal-200 text-xs">
-                <span className="text-[10px] uppercase font-bold text-teal-800 block">Chief Complaint</span>
-                <p className="font-semibold text-slate-800 mt-0.5">{appointmentData.reason}</p>
-              </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-4 px-5 rounded-2xl bg-teal-600 hover:bg-teal-700 active:scale-98 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md transition disabled:opacity-50 cursor-pointer mt-2"
+                >
+                  {loading ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Verifying & Recording Check-In...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-5 h-5" />
+                      <span>Verify & Check In Now</span>
+                    </>
+                  )}
+                </button>
+              </form>
             )}
 
-            {/* Big Action Check-In Button */}
-            <button
-              type="button"
-              disabled={isCheckingIn}
-              onClick={handlePerformCheckIn}
-              className="w-full py-4 px-6 rounded-2xl bg-linear-to-r from-emerald-600 via-teal-700 to-emerald-800 hover:from-emerald-700 hover:to-teal-800 active:scale-98 text-white font-black text-base flex items-center justify-center gap-2.5 shadow-lg transition disabled:opacity-50 cursor-pointer"
-            >
-              {isCheckingIn ? (
-                <>
-                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Recording Check-In...</span>
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="w-6 h-6" />
-                  <span>💺 Check In Now & Join Lobby Queue</span>
-                </>
-              )}
-            </button>
-            <p className="text-center text-[11px] text-slate-500 font-medium">
-              Clicking check-in notifies the front desk receptionist and adds you to the live doctor queue.
-            </p>
+            {/* TAB 2: I AM A WALK-IN */}
+            {activeTab === 'walkin' && (
+              <form onSubmit={handleWalkInCheckIn} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-wider text-slate-700 mb-1.5">
+                    1. Patient Full Name
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={walkinName}
+                      onChange={(e) => {
+                        setWalkinName(e.target.value);
+                        setError(null);
+                      }}
+                      placeholder="e.g. Karthik Kumar"
+                      className="w-full pl-11 pr-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-2xl text-base font-bold text-slate-900 focus:bg-white focus:border-teal-600 focus:ring-4 focus:ring-teal-100 transition outline-none"
+                      required
+                    />
+                    <User className="w-5 h-5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-wider text-slate-700 mb-1.5">
+                    2. Mobile Number
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="tel"
+                      value={walkinPhone}
+                      onChange={(e) => {
+                        setWalkinPhone(e.target.value);
+                        setError(null);
+                      }}
+                      placeholder="e.g. 9876543210"
+                      maxLength={15}
+                      className="w-full pl-11 pr-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-2xl text-base font-bold text-slate-900 focus:bg-white focus:border-teal-600 focus:ring-4 focus:ring-teal-100 transition outline-none"
+                      required
+                    />
+                    <Phone className="w-5 h-5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-black uppercase tracking-wider text-slate-700 mb-1.5">
+                      Age (Years)
+                    </label>
+                    <input
+                      type="number"
+                      value={walkinAge}
+                      onChange={(e) => setWalkinAge(e.target.value)}
+                      placeholder="e.g. 28"
+                      min={1}
+                      max={120}
+                      className="w-full px-3.5 py-3 bg-slate-50 border-2 border-slate-200 rounded-2xl text-base font-bold text-slate-900 focus:bg-white focus:border-teal-600 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-black uppercase tracking-wider text-slate-700 mb-1.5">
+                      Gender
+                    </label>
+                    <select
+                      value={walkinGender}
+                      onChange={(e) => setWalkinGender(e.target.value as any)}
+                      className="w-full px-3.5 py-3 bg-slate-50 border-2 border-slate-200 rounded-2xl text-sm font-bold text-slate-900 focus:bg-white focus:border-teal-600 outline-none"
+                    >
+                      <option value="MALE">Male</option>
+                      <option value="FEMALE">Female</option>
+                      <option value="OTHER">Other</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-wider text-slate-700 mb-1.5">
+                    Chief Complaint / Dental Reason
+                  </label>
+                  <input
+                    type="text"
+                    value={walkinComplaint}
+                    onChange={(e) => setWalkinComplaint(e.target.value)}
+                    placeholder="e.g. Toothache, cleaning, bleeding gums"
+                    className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-2xl text-sm font-bold text-slate-900 focus:bg-white focus:border-teal-600 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black uppercase tracking-wider text-slate-700 mb-1.5 flex items-center justify-between">
+                    <span>On-Screen Lobby Code</span>
+                    <span className="text-[10px] text-amber-700 font-bold normal-case flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      <span>Shown on Waiting Room TV</span>
+                    </span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={walkinLobbyCode}
+                      onChange={(e) => {
+                        setWalkinLobbyCode(e.target.value.replace(/[^0-9A-Za-z]/g, '').toUpperCase());
+                        setError(null);
+                      }}
+                      placeholder="e.g. 8429"
+                      maxLength={6}
+                      className="w-full pl-11 pr-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-2xl text-lg font-mono font-black text-slate-900 tracking-widest focus:bg-white focus:border-teal-600 focus:ring-4 focus:ring-teal-100 transition outline-none"
+                      required
+                    />
+                    <KeyRound className="w-5 h-5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-4 px-5 rounded-2xl bg-amber-500 hover:bg-amber-600 active:scale-98 text-slate-950 font-black text-sm flex items-center justify-center gap-2 shadow-md transition disabled:opacity-50 cursor-pointer mt-2"
+                >
+                  {loading ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                      <span>Registering Walk-In...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-5 h-5" />
+                      <span>Register & Join Waiting Queue</span>
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
           </div>
         )}
 
-        {/* Step 2: Check-In Live Beeper / Turn Call Card */}
+        {/* Check-In Success State & Live Beeper */}
         {checkInSuccess && (
           <div className="space-y-4">
             {checkInSuccess.status === 'CALLED' ? (
-              /* --- HERO MOMENT: HIGH VISIBILITY TURN CALL SCREEN --- */
+              /* --- HIGH VISIBILITY TURN CALL SCREEN --- */
               <div className="bg-gradient-to-b from-emerald-600 via-teal-700 to-slate-950 text-white border-4 border-emerald-400 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 text-center animate-in zoom-in fade-in duration-300 relative overflow-hidden">
                 <div className="absolute top-0 right-0 -mt-10 -mr-10 w-44 h-44 bg-emerald-400/30 rounded-full blur-3xl pointer-events-none" />
 
-                {/* Animated Pulsing Beacon */}
                 <div className="relative flex items-center justify-center mx-auto w-24 h-24">
                   <div className="absolute inset-0 rounded-full bg-emerald-400 animate-ping opacity-40" />
                   <div className="absolute -inset-2 rounded-full bg-emerald-300 animate-pulse opacity-50" />
@@ -516,7 +689,6 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
                   </p>
                 </div>
 
-                {/* Massive Chair Announcement Box */}
                 <div className="p-6 bg-white/10 backdrop-blur-md rounded-3xl border-2 border-emerald-300/60 shadow-inner space-y-3">
                   <span className="text-[11px] font-black uppercase tracking-widest text-emerald-300 block">
                     PLEASE PROCEED TO
@@ -535,18 +707,6 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
                   </div>
                 </div>
 
-                {/* Instructions */}
-                <div className="bg-emerald-950/60 border border-emerald-400/30 rounded-2xl p-4 text-xs text-emerald-100 text-left space-y-1.5">
-                  <div className="font-black text-white flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-amber-300" />
-                    <span>Doctor & Clinical Team are Waiting:</span>
-                  </div>
-                  <p className="text-[11px] text-emerald-200/90 leading-relaxed">
-                    The surgical chair has been sanitized and prepared for you. If you need any assistance finding Operatory #{checkInSuccess.chairNumber || 1}, please ask the front desk receptionist.
-                  </p>
-                </div>
-
-                {/* Replay Sound Alert Button */}
                 <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
                   <button
                     type="button"
@@ -562,7 +722,7 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
                 </div>
               </div>
             ) : checkInSuccess.status === 'IN_CHAIR' ? (
-              /* --- CALM IN-TREATMENT CONSULTATION SCREEN --- */
+              /* --- IN-TREATMENT SCREEN --- */
               <div className="bg-gradient-to-b from-teal-900 via-slate-900 to-slate-950 text-white border-2 border-teal-500/40 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 text-center animate-in fade-in duration-300 relative overflow-hidden">
                 <div className="w-16 h-16 rounded-2xl bg-teal-800/80 border border-teal-400/40 text-teal-300 flex items-center justify-center mx-auto shadow-inner">
                   <Armchair className="w-8 h-8" />
@@ -578,13 +738,6 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
                   </h3>
                   <p className="text-xs text-slate-300 max-w-sm mx-auto font-medium">
                     Welcome, <strong className="text-white">{checkInSuccess.patientName}</strong>. You are seated in Operatory Chair #{checkInSuccess.chairNumber || 1} with <strong className="text-teal-300">{checkInSuccess.dentistName || 'Duty Dentist'}</strong>.
-                  </p>
-                </div>
-
-                <div className="p-4 bg-white/5 border border-white/10 rounded-2xl text-xs text-slate-300 space-y-1">
-                  <div className="font-bold text-white">Live Session Active</div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    Please relax — our clinical team is taking gentle care of your oral health. When your treatment concludes, the front desk will prepare your summary and bill.
                   </p>
                 </div>
               </div>
@@ -604,6 +757,26 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
                   </span>
                 </div>
 
+                {/* Desk Confirmation Notice */}
+                {!checkInSuccess.isConfirmedAtDesk && (
+                  <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-2xl text-left flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+                    <div className="text-xs">
+                      <strong className="text-amber-950 font-black block">Please Confirm with Reception Desk</strong>
+                      <p className="text-amber-900 mt-0.5 font-medium leading-relaxed">
+                        Your self check-in was recorded. Please show yourself to the front desk counter so the receptionist can confirm your physical presence in the lounge.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {checkInSuccess.isConfirmedAtDesk && (
+                  <div className="p-2.5 bg-emerald-50 border border-emerald-300 rounded-xl text-xs font-bold text-emerald-900 flex items-center justify-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>Reception Desk Confirmed Your Presence</span>
+                  </div>
+                )}
+
                 <div>
                   <h3 className="text-2xl font-black text-slate-900 tracking-tight">
                     Welcome, {checkInSuccess.patientName}!
@@ -613,7 +786,7 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
                   </p>
                 </div>
 
-                {/* Massive Live Queue Token Display */}
+                {/* Live Queue Token Display */}
                 <div className="p-6 bg-gradient-to-b from-teal-50 to-emerald-50/40 rounded-3xl border-2 border-teal-300/80 shadow-inner space-y-2">
                   <span className="text-[11px] font-black uppercase tracking-widest text-teal-800 block">
                     YOUR LIVE CLINIC QUEUE TOKEN
@@ -631,63 +804,7 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
                   </div>
                 </div>
 
-                {/* Live Operatory Chairs Activity Mini-Board (Strictly Sanitized - Zero Peer Names) */}
-                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-left space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black uppercase text-slate-800 flex items-center gap-1.5">
-                      <Armchair className="w-4 h-4 text-teal-600" />
-                      <span>Live Operatory Chairs Activity</span>
-                    </span>
-                    <span className="text-[10px] font-bold text-slate-600">Hospital Status</span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    {[1, 2, 3].map((chairNum) => {
-                      const serving = (checkInSuccess.activeChairsServing || []).find(
-                        (c: any) => c.chairNumber === chairNum
-                      );
-                      const isCalling = serving?.isCalling || serving?.status === 'CALLED';
-                      const isBusy = serving && !isCalling;
-
-                      return (
-                        <div
-                          key={chairNum}
-                          className={`p-2.5 rounded-xl border text-xs transition-all ${
-                            isCalling
-                              ? 'bg-amber-50/90 border-amber-300 text-amber-950'
-                              : isBusy
-                              ? 'bg-sky-50/80 border-sky-300 text-sky-950'
-                              : 'bg-emerald-50/80 border-emerald-300 text-emerald-950'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between font-black text-[11px]">
-                            <span>Chair #{chairNum}</span>
-                            <span
-                              className={`w-2 h-2 rounded-full ${
-                                isCalling
-                                  ? 'bg-amber-500 animate-pulse'
-                                  : isBusy
-                                  ? 'bg-sky-500'
-                                  : 'bg-emerald-500'
-                              }`}
-                            />
-                          </div>
-                          <div className="text-[10px] font-semibold mt-1">
-                            {isCalling ? (
-                              <span className="text-amber-900 font-bold">📢 Calling Token #{serving.tokenNumber}</span>
-                            ) : isBusy ? (
-                              <span className="text-sky-900">💺 In Treatment (Token #{serving.tokenNumber})</span>
-                            ) : (
-                              <span className="text-emerald-900">🟢 Free & Ready</span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Sound Alert Ready Notice & Test Button (Explicit AudioContext Unlock) */}
+                {/* Sound Alert Test Button */}
                 <div className="p-4 bg-teal-50 border border-teal-200 rounded-2xl text-left flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-2.5">
                     <div className="w-8 h-8 rounded-xl bg-teal-600 text-white flex items-center justify-center shrink-0">
@@ -708,21 +825,8 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
                     }}
                     className="px-3.5 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-black text-xs shrink-0 transition cursor-pointer shadow-xs active:scale-95"
                   >
-                    {testSoundPlayed ? '✓ Chime Tested & Audio Active' : '🔊 Tap to Test Chime'}
+                    {testSoundPlayed ? '✓ Audio Active' : '🔊 Test Chime'}
                   </button>
-                </div>
-
-                {/* Waiting Room Instructions */}
-                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-left text-xs space-y-2 text-slate-700">
-                  <h4 className="font-black text-slate-900 flex items-center gap-1.5">
-                    <ShieldCheck className="w-4 h-4 text-teal-600" />
-                    <span>What to do next:</span>
-                  </h4>
-                  <ul className="space-y-1.5 text-[11px] leading-relaxed text-slate-600 pl-4 list-disc font-medium">
-                    <li>Please relax in the waiting lounge.</li>
-                    <li>Your doctor and reception desk have your arrival record.</li>
-                    <li>When your operatory chair opens, this screen will instantly turn green and beep!</li>
-                  </ul>
                 </div>
               </div>
             )}
@@ -731,10 +835,7 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
             {!intakeSaved && (
               <div className="border border-teal-200 rounded-2xl p-4 bg-white text-left space-y-3 shadow-xs">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Activity className="w-4 h-4 text-teal-700" />
-                    <span className="font-black text-xs text-teal-950">While Waiting: 30s Health Safety Check</span>
-                  </div>
+                  <span className="font-black text-xs text-teal-950">While Waiting: 30s Health Safety Check</span>
                   <button
                     type="button"
                     onClick={() => setShowIntake(!showIntake)}
@@ -820,8 +921,12 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
                 type="button"
                 onClick={() => {
                   setCheckInSuccess(null);
-                  setAppointmentData(null);
-                  setQuery('');
+                  setPhone('');
+                  setBookingRefOrName('');
+                  setLobbyCode('');
+                  setWalkinName('');
+                  setWalkinPhone('');
+                  setWalkinLobbyCode('');
                 }}
                 className="text-xs font-bold text-slate-500 hover:text-slate-800 underline cursor-pointer"
               >

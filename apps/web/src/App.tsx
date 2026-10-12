@@ -18,6 +18,7 @@ import { AuditLogsView } from './features/admin/AuditLogsView';
 import { LabOrdersManager } from './features/lab-orders/LabOrdersManager';
 import { PublicBookingView } from './features/public/PublicBookingView';
 import { PublicCheckInView } from './features/public/PublicCheckInView';
+import { WaitingRoomTvView } from './features/public/WaitingRoomTvView';
 import { NewPatientModal } from './features/patients/NewPatientModal';
 import { BookingDrawer } from './features/appointments/BookingDrawer';
 import { triggerClinicSync } from './lib/sync';
@@ -242,6 +243,9 @@ export const App: React.FC = () => {
             <Routes>
               <Route path="/book" element={<PublicBookingView />} />
               <Route path="/checkin" element={<PublicCheckInView />} />
+              <Route path="/check-in" element={<PublicCheckInView />} />
+              <Route path="/tv" element={<WaitingRoomTvView />} />
+              <Route path="/queue-tv" element={<WaitingRoomTvView />} />
               <Route path="/signup" element={<PatientSignupView />} />
               <Route path="/patient-login" element={<PatientLoginView />} />
               <Route path="/my/visits" element={<MyVisitsView />} />

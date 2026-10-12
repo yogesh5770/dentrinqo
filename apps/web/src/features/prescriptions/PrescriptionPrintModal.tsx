@@ -69,6 +69,8 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
     openWhatsApp(patient.phone, text);
   };
 
+  const isDoctorVerified = Boolean(clinic.isDoctorVerified ?? tenantClinic?.isDoctorVerified ?? user?.clinic?.isDoctorVerified ?? false);
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl overflow-hidden my-8 print:m-0 print:p-0 print:shadow-none print:w-full print:max-w-none">
@@ -81,15 +83,18 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
           <div className="flex items-center gap-2">
             <button
               onClick={handleShareWhatsApp}
-              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-1.5 px-3 rounded-lg cursor-pointer transition-all shadow-sm"
-              title="Send digital prescription text to patient via WhatsApp"
+              disabled={!isDoctorVerified}
+              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs py-1.5 px-3 rounded-lg cursor-pointer transition-all shadow-sm"
+              title={isDoctorVerified ? "Send digital prescription text to patient via WhatsApp" : "Prescription sharing locked until doctor details are verified by admin"}
             >
               <MessageCircle className="w-4 h-4" />
               Share on WhatsApp
             </button>
             <button
               onClick={handlePrint}
-              className="flex items-center gap-1.5 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs py-1.5 px-3 rounded-lg cursor-pointer transition-all"
+              disabled={!isDoctorVerified}
+              className="flex items-center gap-1.5 bg-teal-500 hover:bg-teal-400 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 font-bold text-xs py-1.5 px-3 rounded-lg cursor-pointer transition-all"
+              title={isDoctorVerified ? "Print official prescription" : "Prescription printing locked until doctor details are verified by admin"}
             >
               <Printer className="w-4 h-4" />
               Print / Save PDF
@@ -102,6 +107,19 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Lock Banner if Unverified */}
+        {!isDoctorVerified && (
+          <div className="p-3.5 bg-rose-50 border-b border-rose-200 text-rose-950 text-xs flex items-center gap-3 print:hidden">
+            <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0" />
+            <div>
+              <strong className="font-black block">🔒 Official Prescription Printing & Sharing Locked</strong>
+              <span className="font-medium text-rose-900">
+                Doctor credentials (name, state dental council registration number) and clinic details have not been verified by CLINIC_ADMIN yet. Complete verification in Clinic Settings before issuing prescriptions.
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* PRINTABLE LETTERHEAD CONTENT */}
         <div className="p-8 sm:p-10 font-sans text-slate-800 print:p-6" id="printable-rx">

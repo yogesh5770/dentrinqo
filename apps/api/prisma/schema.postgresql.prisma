@@ -27,9 +27,18 @@ model Clinic {
   upiVpa          String?  // UPI VPA for digital QR collections (e.g. akselitedental@icici)
   workingHours    String?  // JSON string
   chairCount      Int      @default(3)
+  lobbySecret             String?   // 32-byte hex secret for rotating HMAC lobby code (never exposed in API)
+  lobbyCodeDigits         Int       @default(4) // 4 or 6 digits
+  lobbyCodeWindowSeconds  Int       @default(300) // 5 minutes (300s)
+  requireLobbyCode        Boolean   @default(true)
+  requireDeskConfirmation Boolean   @default(true)
+  isDoctorVerified        Boolean   @default(false)
+  isBillingVerified       Boolean   @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  domains               ClinicDomain[]
+  displayTokens         ClinicDisplayToken[]
   users                 User[]
   accounts              Account[]
   patients              Patient[]
@@ -206,8 +215,12 @@ model Appointment {
   scheduledEnd    DateTime
   durationMinutes Int      @default(30)
   reason          String
-  status          String   @default("SCHEDULED") // SCHEDULED, CONFIRMED, CHECKED_IN, CALLED, IN_CHAIR, COMPLETED, CANCELLED, NO_SHOW
+  status          String   @default("SCHEDULED") // SCHEDULED, CONFIRMED, CHECKED_IN, CALLED, IN_CHAIR, TREATED, BILLED, PAID, COMPLETED, CANCELLED, NO_SHOW, LATE, SKIPPED, STEPPED_OUT, RESCHEDULED
   checkInTime     DateTime?
+  isConfirmedAtDesk Boolean  @default(false)
+  confirmedAtDeskAt DateTime?
+  confirmedByStaffId String?
+  checkInSource   String?  @default("DESK") // "SELF_QR", "DESK", "PHONE"
   notes           String?
   isReappearance  Boolean  @default(false)
   legacySlNo      String?
@@ -671,5 +684,30 @@ model ClinicSequence {
 
   @@unique([clinicId, sequenceType, fiscalYear])
   @@index([clinicId, sequenceType])
+}
+
+model ClinicDomain {
+  id        String   @id @default(uuid())
+  clinicId  String
+  clinic    Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  domain    String   @unique // e.g. "aks.elitedental.in", "localhost:5173", "13.201.121.18"
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([clinicId])
+}
+
+model ClinicDisplayToken {
+  id         String    @id @default(uuid())
+  clinicId   String
+  clinic     Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  name       String    // e.g. "Waiting Room TV Display 1"
+  tokenHash  String    @unique // SHA-256 hash of the 32+ byte token
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  isRevoked  Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+
+  @@index([clinicId])
 }
 

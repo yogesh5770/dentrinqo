@@ -28,11 +28,10 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       throw new Error('Tenant context (clinicId) is required for tenant-scoped operations');
     }
 
-    const isPostgres = process.env.DATABASE_URL?.includes('postgres');
+    const isPostgres = Boolean(process.env.DATABASE_URL?.includes('postgres'));
     return this.$transaction(async (tx) => {
       if (isPostgres) {
-        const safeClinicId = clinicId.replace(/'/g, "''");
-        await tx.$executeRawUnsafe(`SET LOCAL app.clinic_id = '${safeClinicId}'`);
+        await tx.$executeRaw`SELECT set_config('app.clinic_id', ${clinicId}, true)`;
       }
       return operation(tx as unknown as PrismaClient);
     });
