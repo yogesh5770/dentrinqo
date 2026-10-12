@@ -56,10 +56,10 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
 
-  const clinicName = user?.clinic?.name || (user?.clinic?.code === 'JDC' ? 'Jacobs Dental Clinic' : "AK's Elite Dental Clinic");
-  const clinicCity = user?.clinic?.city ? `${user?.clinic?.city}` : (user?.clinic?.code === 'JDC' ? 'Vellore' : 'K.Pudur, Madurai');
-  const clinicAddress = user?.clinic?.address || (user?.clinic?.code === 'JDC' ? '14th East Cross Main Road, Gandhi Nagar East, Vellore' : 'Plot No. 162/2A, Alagar Complex, K.Pudur, Madurai');
-  const clinicSubTitle = user?.clinic?.code === 'JDC' ? 'Dental Surgery & Implant Centre' : 'Multi-Speciality Hospital';
+  const clinicName = user?.clinic?.name || "Dental Clinic";
+  const clinicCity = user?.clinic?.city || '';
+  const clinicAddress = user?.clinic?.address || (user?.clinic?.city ? `${user.clinic.city}` : 'Main Road');
+  const clinicSubTitle = user?.clinic?.tagline || 'Multi-Speciality Hospital & Implant Centre';
 
   // Profile Modal State
   const [showProfileModal, setShowProfileModal] = useState(false);

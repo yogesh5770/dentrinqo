@@ -34,6 +34,7 @@ import {
 import { apiRequest } from '../../lib/api';
 import { Link } from 'react-router-dom';
 import { usePatientAuth } from '../../hooks/usePatientAuth';
+import { useTenant } from '../../hooks/useTenant';
 
 const COMMON_REASONS = [
   { id: 'TOOTH_PAIN', label: 'Severe Toothache / Pain', icon: '⚡' },
@@ -69,13 +70,20 @@ interface PublicBookingViewProps {
 }
 
 export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
-  clinicName = "AK's Elite Dental Clinic and Multi-Speciality Dental Hospital",
-  clinicAddress = 'Plot No. 162/2A, Alagar Complex, 5th Meenakshi Amman Nagar Main Road, K.Pudur, Madurai',
-  clinicPhone = '+91 95387 23872',
-  mapsUrl = 'https://maps.google.com/?q=AKS+Elite+Dental+Clinic+Madurai',
-  clinicCode = 'AKS',
-  doctorName = 'Dr. Khalidh Khan (BDS, MDS)',
+  clinicName: propClinicName,
+  clinicAddress: propClinicAddress,
+  clinicPhone: propClinicPhone,
+  mapsUrl = 'https://maps.google.com/?q=Dental+Clinic',
+  clinicCode: propClinicCode,
+  doctorName = 'Chief Dental Surgeon',
 }) => {
+  const { clinic: tenantClinic } = useTenant();
+  const clinicName = tenantClinic?.name || propClinicName || "AK's Elite Dental Clinic and Multi-Speciality Dental Hospital";
+  const clinicAddress = tenantClinic?.address 
+    ? `${tenantClinic.address}, ${tenantClinic.city || ''} ${tenantClinic.postalCode || ''}` 
+    : (propClinicAddress || 'Plot No. 162/2A, Alagar Complex, 5th Meenakshi Amman Nagar Main Road, K.Pudur, Madurai');
+  const clinicPhone = tenantClinic?.phone || propClinicPhone || '+91 95387 23872';
+  const clinicCode = tenantClinic?.code || propClinicCode || 'AKS';
   const [step, setStep] = useState<number>(1);
   const [visitType, setVisitType] = useState<'ONLINE_BOOKING' | 'WALK_IN'>('ONLINE_BOOKING');
   const [selectedReason, setSelectedReason] = useState<string>('TOOTH_PAIN');

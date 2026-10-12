@@ -16,13 +16,21 @@ export interface User {
   licenseNumber?: string | null;
   specialization?: string | null;
   clinic?: {
+    id?: string;
     name: string;
     code: string;
+    tagline?: string;
     city: string;
+    state?: string;
+    postalCode?: string;
     chairCount?: number;
     phone?: string;
     address?: string;
     email?: string;
+    subdomain?: string;
+    upiVpa?: string;
+    workingHours?: any;
+    gstin?: string;
   };
 }
 

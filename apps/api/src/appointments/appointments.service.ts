@@ -1156,7 +1156,7 @@ export class AppointmentsService {
     }
     if (!clinic) throw new NotFoundException('Clinic not found');
 
-    const totalChairs = Math.max(clinic.chairCount || 3, 3);
+    const totalChairs = Math.max(clinic.chairCount || 1, 1);
     let chairConfig: Record<string, boolean> = {};
     for (let i = 1; i <= totalChairs; i++) {
       chairConfig[String(i)] = true;
@@ -1176,20 +1176,21 @@ export class AppointmentsService {
     const lobbyCode = this.getDailyLobbyCode(clinic.id);
     const istDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
 
+    // Fetch active dentists for this clinic dynamically
+    const dentists = await this.prisma.user.findMany({
+      where: { clinicId: clinic.id, role: 'DENTIST', isActive: true },
+      select: { fullName: true, specialization: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
     const chairs = [];
     for (let i = 1; i <= totalChairs; i++) {
-      let name = `Operatory Chair ${i}`;
-      let doctorName = 'Attending Dental Specialist';
-      if (i === 1) {
-        name = 'Operatory Chair 1 (Chief Dentist)';
-        doctorName = clinic.code === 'JDC' ? 'Dr. Josy Jacob (MDS)' : 'Dr. Khalidh Khan (BDS, MDS)';
-      } else if (i === 2) {
-        name = 'Operatory Chair 2 (Associate Room)';
-        doctorName = 'Associate Dental Surgeon';
-      } else if (i === 3) {
-        name = 'Operatory Chair 3 (Specialist & Ortho Room)';
-        doctorName = 'Consultant Dental Surgeon';
-      }
+      const assignedDentist = dentists[i - 1];
+      let doctorName = assignedDentist
+        ? `${assignedDentist.fullName}${assignedDentist.specialization ? ` (${assignedDentist.specialization})` : ''}`
+        : (i === 1 ? 'Chief Dental Surgeon' : 'Associate Dental Surgeon');
+
+      let name = `Operatory Chair ${i}${i === 1 ? ' (Primary Unit)' : ''}`;
 
       chairs.push({
         chairNumber: i,
@@ -1246,7 +1247,7 @@ export class AppointmentsService {
       },
     });
 
-    const totalChairs = Math.max(clinic.chairCount || 3, 3);
+    const totalChairs = Math.max(clinic.chairCount || 1, 1);
     const bookedSlotsByChair: Record<number, string[]> = {};
     for (let i = 1; i <= totalChairs; i++) {
       bookedSlotsByChair[i] = [];

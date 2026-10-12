@@ -1,6 +1,8 @@
 import React from 'react';
 import { Printer, X, ShieldAlert, MessageCircle } from 'lucide-react';
 import { openWhatsApp, generatePrescriptionWhatsAppText } from '../../lib/whatsapp';
+import { useAuth } from '../../hooks/useAuth';
+import { useTenant } from '../../hooks/useTenant';
 
 interface PrescriptionPrintModalProps {
   isOpen: boolean;
@@ -13,28 +15,31 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
   onClose,
   prescription,
 }) => {
+  const { user } = useAuth();
+  const { clinic: tenantClinic } = useTenant();
+
   if (!isOpen || !prescription) return null;
 
   const handlePrint = () => {
     window.print();
   };
 
-  const clinic = prescription.clinic || {
-    name: "AKS Elite Dental Clinic",
+  const clinic = prescription.clinic || tenantClinic || user?.clinic || {
+    name: "Dental Clinic",
     tagline: "Multispeciality Dental Clinic & Implant Centre",
-    phone: "+91 94431 55660",
-    email: "akselitedental.madurai@gmail.com",
-    address: "12/4 Bye Pass Road, Ponmeni",
-    city: "Madurai",
-    state: "Tamil Nadu",
-    postalCode: "625016",
-    gstin: "33AABCA1234F1Z8",
+    phone: "",
+    email: "",
+    address: "",
+    city: "",
+    state: "",
+    postalCode: "",
+    gstin: "",
   };
 
   const doctor = prescription.dentist || {
-    fullName: "Dr. A. K. Saravanan (MDS)",
-    specialization: "Chief Dental Surgeon & Implantologist",
-    licenseNumber: "TN-DENT-72314",
+    fullName: user?.role === 'DENTIST' ? user.fullName : "Dental Surgeon",
+    specialization: user?.specialization || "Dental Specialist",
+    licenseNumber: user?.licenseNumber || "",
   };
 
   const patient = prescription.patient || {};

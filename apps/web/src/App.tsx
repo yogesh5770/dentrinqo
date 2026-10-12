@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './hooks/useAuth';
+import { TenantProvider } from './hooks/useTenant';
 import { AppShell } from './layouts/AppShell';
 import { LoginScreen } from './features/auth/LoginScreen';
 import { DashboardRouter } from './features/dashboard/DashboardRouter';
@@ -236,40 +237,20 @@ export const App: React.FC = () => {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <PatientAuthProvider>
-          <Routes>
-            <Route
-              path="/book"
-              element={
-                <PublicBookingView
-                  clinicName="AK's Elite Dental Clinic and Multi-Speciality Dental Hospital"
-                  clinicAddress="Plot No. 162/2A, Alagar Complex, 5th Meenakshi Amman Nagar Main Road, K.Pudur, Madurai"
-                  clinicPhone="+91 95387 23872"
-                  mapsUrl="https://maps.google.com/?q=AKS+Elite+Dental+Clinic+Madurai"
-                  clinicCode="AKS"
-                  doctorName="Dr. Khalidh Khan (BDS, MDS)"
-                />
-              }
-            />
-            <Route
-              path="/checkin"
-              element={
-                <PublicCheckInView
-                  clinicName="AK's Elite Dental Clinic and Multi-Speciality Dental Hospital"
-                  clinicAddress="Plot No. 162/2A, Alagar Complex, 5th Meenakshi Amman Nagar Main Road, K.Pudur, Madurai"
-                  clinicPhone="+91 95387 23872"
-                  clinicCode="AKS"
-                />
-              }
-            />
-            <Route path="/signup" element={<PatientSignupView />} />
-            <Route path="/patient-login" element={<PatientLoginView />} />
-            <Route path="/my/visits" element={<MyVisitsView />} />
-            <Route path="/my/family" element={<MyFamilyView />} />
-            <Route path="/login" element={<LoginScreen />} />
-            <Route path="/*" element={<ProtectedRoutes />} />
-          </Routes>
-        </PatientAuthProvider>
+        <TenantProvider>
+          <PatientAuthProvider>
+            <Routes>
+              <Route path="/book" element={<PublicBookingView />} />
+              <Route path="/checkin" element={<PublicCheckInView />} />
+              <Route path="/signup" element={<PatientSignupView />} />
+              <Route path="/patient-login" element={<PatientLoginView />} />
+              <Route path="/my/visits" element={<MyVisitsView />} />
+              <Route path="/my/family" element={<MyFamilyView />} />
+              <Route path="/login" element={<LoginScreen />} />
+              <Route path="/*" element={<ProtectedRoutes />} />
+            </Routes>
+          </PatientAuthProvider>
+        </TenantProvider>
       </AuthProvider>
     </BrowserRouter>
   );

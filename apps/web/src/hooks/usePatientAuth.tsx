@@ -29,17 +29,32 @@ interface PatientAuthContextType {
   refresh: () => Promise<void>;
 }
 
+const PATIENT_TOKEN_KEY = 'dental_patient_token';
+function getStoredPatientToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem(PATIENT_TOKEN_KEY) || localStorage.getItem('aks_patient_token');
+}
+function setStoredPatientToken(tok: string | null) {
+  if (typeof window === 'undefined') return;
+  if (tok) {
+    localStorage.setItem(PATIENT_TOKEN_KEY, tok);
+  } else {
+    localStorage.removeItem(PATIENT_TOKEN_KEY);
+    localStorage.removeItem('aks_patient_token');
+  }
+}
+
 const PatientAuthContext = createContext<PatientAuthContextType | undefined>(undefined);
 
 export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [account, setAccount] = useState<PatientAccount | null>(null);
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('aks_patient_token'));
+  const [token, setToken] = useState<string | null>(() => getStoredPatientToken());
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const refresh = async () => {
     try {
-      const storedToken = localStorage.getItem('aks_patient_token');
+      const storedToken = getStoredPatientToken();
       if (!storedToken) {
         setAccount(null);
         setFamilyMembers([]);
@@ -62,7 +77,7 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
         });
         setFamilyMembers(data.familyMembers || []);
       } else {
-        localStorage.removeItem('aks_patient_token');
+        setStoredPatientToken(null);
         setToken(null);
         setAccount(null);
         setFamilyMembers([]);
@@ -90,7 +105,7 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
       throw new Error(data.message || 'Login failed');
     }
 
-    localStorage.setItem('aks_patient_token', data.token);
+    setStoredPatientToken(data.token);
     setToken(data.token);
     setAccount(data.account);
     setFamilyMembers(data.familyMembers || []);
@@ -109,7 +124,7 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
       throw new Error(data.message || 'Registration failed');
     }
 
-    localStorage.setItem('aks_patient_token', data.token);
+    setStoredPatientToken(data.token);
     setToken(data.token);
     setAccount(data.account);
     await refresh();
@@ -120,14 +135,14 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
     try {
       await fetch('/api/patient-auth/logout', { method: 'POST' });
     } catch {}
-    localStorage.removeItem('aks_patient_token');
+    setStoredPatientToken(null);
     setToken(null);
     setAccount(null);
     setFamilyMembers([]);
   };
 
   const addFamilyMember = async (member: any) => {
-    const storedToken = localStorage.getItem('aks_patient_token') || token;
+    const storedToken = getStoredPatientToken() || token;
     const res = await fetch('/api/patient-auth/family', {
       method: 'POST',
       headers: {

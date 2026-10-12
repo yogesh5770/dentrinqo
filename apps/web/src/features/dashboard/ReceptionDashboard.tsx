@@ -76,13 +76,11 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
   const [quickReconsultOpen, setQuickReconsultOpen] = useState<boolean>(false);
   const navigate = useNavigate();
   const { user } = useAuth();
-  const totalChairs = user?.clinic?.chairCount || 3;
-  const clinicName = user?.clinic?.name || (user?.clinic?.code === 'JDC' ? 'Jacobs Dental Clinic' : "AK's Elite Dental Clinic");
+  const totalChairs = user?.clinic?.chairCount || 2;
+  const clinicName = user?.clinic?.name || "Dental Clinic";
   const clinicCode = user?.clinic?.code || 'AKS';
   const [standeeType, setStandeeType] = useState<'DUAL' | 'CHECKIN' | 'WALKIN'>('DUAL');
-  const baseUrl = typeof window !== 'undefined'
-    ? window.location.origin
-    : (user?.clinic?.code === 'JDC' ? 'https://jacobdental.duckdns.org' : 'https://aksdental.duckdns.org');
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
   const checkInUrl = `${baseUrl}/checkin${lobbyCode ? `?code=${lobbyCode}` : ''}`;
   const walkinUrl = `${baseUrl}/book?mode=walkin${lobbyCode ? `&code=${lobbyCode}` : ''}`;
   const checkinQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(checkInUrl)}`;
@@ -1659,7 +1657,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                       <div className="bg-white p-2.5 rounded-xl border border-slate-200 inline-block shadow-xs">
                         <img
                           src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(
-                            `upi://pay?pa=${clinicCode === 'JDC' ? 'jacobsdental@okhdfcbank' : 'akselitedental@okhdfcbank'}&pn=${encodeURIComponent(clinicName)}&am=${checkoutAmountRs}&cu=INR`
+                            `upi://pay?pa=${user?.clinic?.upiVpa || 'akselitedental@icici'}&pn=${encodeURIComponent(clinicName)}&am=${checkoutAmountRs}&cu=INR`
                           )}`}
                           alt="UPI Payment QR"
                           className="w-40 h-40 mx-auto"

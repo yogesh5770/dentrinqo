@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { apiRequest } from '../../lib/api';
 import { triggerClinicSync } from '../../lib/sync';
+import { useAuth } from '../../hooks/useAuth';
+import { useTenant } from '../../hooks/useTenant';
 import {
   CreditCard,
   IndianRupee,
@@ -43,9 +45,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [cashTendered, setCashTendered] = useState<number>(balanceRupees);
   const [copiedUpi, setCopiedUpi] = useState(false);
 
+  const { user } = useAuth();
+  const { clinic: tenantClinic } = useTenant();
+
   // Clinic UPI details
-  const clinicUpiId = 'akselitedental@icici';
-  const clinicName = 'AKS Elite Dental Clinic';
+  const clinicUpiId = tenantClinic?.upiVpa || user?.clinic?.upiVpa || 'akselitedental@icici';
+  const clinicName = tenantClinic?.name || user?.clinic?.name || 'Dental Clinic';
   const upiPayload = `upi://pay?pa=${clinicUpiId}&pn=${encodeURIComponent(clinicName)}&am=${amountRupees}&cu=INR&tn=${encodeURIComponent(`INV_${invoice.invoiceNumber}`)}`;
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(upiPayload)}`;
 

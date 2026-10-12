@@ -22,7 +22,7 @@ function generateSecureTemporaryPassword(): string {
   const p6 = randomPick(lettersUpper);
   const p7 = randomPick(lettersLower);
 
-  return `Aks${p1}${p2}${p3}${p4}${p5}${p6}${p7}`;
+  return `Dental${p1}${p2}${p3}${p4}${p5}${p6}${p7}`;
 }
 
 function formatPhoneForWhatsApp(phone: string): string {
@@ -159,15 +159,17 @@ export class UsersService {
     // Format phone
     const cleanPhone = formatPhoneForWhatsApp(data.phone);
 
-    // Auto-generate sequential Employee ID (e.g. AKS-EMP-001, AKS-EMP-002...)
+    // Auto-generate sequential Employee ID (e.g. AKS-EMP-001, JDC-EMP-001...)
     let finalEmployeeId = data.employeeId?.trim();
     if (!finalEmployeeId) {
+      const clinic = await this.prisma.clinic.findUnique({ where: { id: clinicId } });
+      const clinicPrefix = clinic?.code ? clinic.code.toUpperCase() : 'EMP';
       const userCount = await this.prisma.user.count({ where: { clinicId } });
       let seq = userCount + 1;
-      let candidate = `AKS-EMP-${seq.toString().padStart(3, '0')}`;
+      let candidate = `${clinicPrefix}-EMP-${seq.toString().padStart(3, '0')}`;
       while (await this.prisma.user.findFirst({ where: { clinicId, employeeId: candidate } })) {
         seq++;
-        candidate = `AKS-EMP-${seq.toString().padStart(3, '0')}`;
+        candidate = `${clinicPrefix}-EMP-${seq.toString().padStart(3, '0')}`;
       }
       finalEmployeeId = candidate;
     }

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
+import { useTenant } from '../../hooks/useTenant';
 import { useNavigate } from 'react-router-dom';
 import {
   Stethoscope,
@@ -20,6 +21,7 @@ import {
 
 export const LoginScreen: React.FC = () => {
   const { login } = useAuth();
+  const { clinic } = useTenant();
   const navigate = useNavigate();
 
   const [identifier, setIdentifier] = useState('');
@@ -62,13 +64,13 @@ export const LoginScreen: React.FC = () => {
         </div>
 
         <h1 className="text-center text-2xl sm:text-3xl font-black tracking-tight text-slate-900">
-          AKS Elite Dental Clinic
+          {clinic?.name || 'Dental Clinic Management'}
         </h1>
         <p className="mt-1 text-center text-xs text-teal-800 font-extrabold tracking-wide uppercase">
           Clinic Management System
         </p>
         <p className="text-center text-xs text-slate-500 mt-1 font-semibold">
-          K.Pudur, Madurai • Dr. Khalidh Khan (BDS, MDS)
+          {clinic ? `${clinic.city || ''}${clinic.state ? `, ${clinic.state}` : ''}${clinic.tagline ? ` • ${clinic.tagline}` : ''}` : 'Specialist Dental Hospital & Implant Centre'}
         </p>
       </div>
 
@@ -235,7 +237,7 @@ export const LoginScreen: React.FC = () => {
         <div className="mt-6 text-center text-xs text-slate-500 space-y-1">
           <p className="flex items-center justify-center gap-1.5 font-medium">
             <Building2 className="w-3.5 h-3.5 text-slate-400" />
-            <span>AKS Elite Dental Clinic • K.Pudur, Madurai 625007</span>
+            <span>{clinic ? `${clinic.name} • ${clinic.city || ''} ${clinic.postalCode || ''}` : 'Dental Clinic Management System'}</span>
           </p>
         </div>
       </div>

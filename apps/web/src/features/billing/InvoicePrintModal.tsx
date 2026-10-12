@@ -1,6 +1,8 @@
 import React from 'react';
 import { Printer, X, Receipt, CheckCircle, ShieldCheck, MessageCircle } from 'lucide-react';
 import { openWhatsApp, generateInvoiceWhatsAppText } from '../../lib/whatsapp';
+import { useAuth } from '../../hooks/useAuth';
+import { useTenant } from '../../hooks/useTenant';
 
 interface InvoicePrintModalProps {
   isOpen: boolean;
@@ -13,22 +15,25 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
   onClose,
   invoice,
 }) => {
+  const { user } = useAuth();
+  const { clinic: tenantClinic } = useTenant();
+
   if (!isOpen || !invoice) return null;
 
   const handlePrint = () => {
     window.print();
   };
 
-  const clinic = invoice.clinic || {
-    name: 'AKS Elite Dental Clinic',
+  const clinic = invoice.clinic || tenantClinic || user?.clinic || {
+    name: 'Dental Clinic',
     tagline: 'Advanced Laser, Implant & Micro-Endodontic Center',
-    phone: '+91 94431 55660',
-    email: 'akselitedental.madurai@gmail.com',
-    address: '12/4 Bye Pass Road, Ponmeni',
-    city: 'Madurai',
-    state: 'Tamil Nadu',
-    postalCode: '625016',
-    gstin: '33AABCA1234F1Z8',
+    phone: '',
+    email: '',
+    address: '',
+    city: '',
+    state: '',
+    postalCode: '',
+    gstin: '',
   };
 
   const patient = invoice.patient || {};

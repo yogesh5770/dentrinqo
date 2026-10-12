@@ -13,17 +13,21 @@ export class ApiError extends Error {
 
 let sessionToken: string | null = null;
 
+const AUTH_TOKEN_KEY = 'auth_access_token';
+
 // Initialize token from storage if present
 if (typeof window !== 'undefined') {
-  sessionToken = localStorage.getItem('aks_auth_token');
+  sessionToken = localStorage.getItem(AUTH_TOKEN_KEY) || localStorage.getItem('aks_auth_token');
 }
 
 export function setSessionToken(token: string | null) {
   sessionToken = token;
   if (typeof window !== 'undefined') {
     if (token) {
+      localStorage.setItem(AUTH_TOKEN_KEY, token);
       localStorage.setItem('aks_auth_token', token);
     } else {
+      localStorage.removeItem(AUTH_TOKEN_KEY);
       localStorage.removeItem('aks_auth_token');
     }
   }

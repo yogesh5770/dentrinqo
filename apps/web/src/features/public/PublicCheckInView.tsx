@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { apiRequest } from '../../lib/api';
 import { triggerClinicSync, playClinicAlertChime, playPatientTurnBeeper } from '../../lib/sync';
+import { useTenant } from '../../hooks/useTenant';
 
 interface PublicCheckInViewProps {
   clinicCode?: string;
@@ -36,6 +37,14 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
   clinicPhone = '+91 95387 23872',
   clinicAddress = 'Plot No. 162/2A, Alagar Complex, 5th Meenakshi Amman Nagar Main Road, K.Pudur, Madurai',
 }) => {
+  const { clinic: tenantClinic } = useTenant();
+  const activeClinicCode = tenantClinic?.code || clinicCode;
+  const activeClinicName = tenantClinic?.name || clinicName;
+  const activeClinicPhone = tenantClinic?.phone || clinicPhone;
+  const activeClinicAddress = tenantClinic?.address 
+    ? `${tenantClinic.address}, ${tenantClinic.city || ''}` 
+    : clinicAddress;
+
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -184,7 +193,7 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
         method: 'POST',
         body: JSON.stringify({
           identifier,
-          clinicCode,
+          clinicCode: activeClinicCode,
           lobbyCode: lobbyCode.trim() || undefined,
           patientName: patientNameVerification.trim() || undefined,
         }),
@@ -253,10 +262,10 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
         <div className="max-w-xl mx-auto px-4 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 p-1 bg-white rounded-xl border border-slate-200 shadow-sm flex items-center justify-center shrink-0">
-              <img src="/logo.png" alt={`${clinicName} Logo`} className="w-full h-full object-contain" />
+              <img src="/logo.png" alt={`${activeClinicName} Logo`} className="w-full h-full object-contain" />
             </div>
             <div>
-              <h1 className="text-sm font-black text-slate-900 tracking-tight leading-tight line-clamp-1">{clinicName}</h1>
+              <h1 className="text-sm font-black text-slate-900 tracking-tight leading-tight line-clamp-1">{activeClinicName}</h1>
               <span className="text-[10px] font-black uppercase tracking-wider text-teal-800 bg-teal-50 px-2 py-0.5 rounded-full border border-teal-200 inline-block mt-0.5">
                 Hospital Lobby Self Check-In
               </span>
@@ -825,8 +834,8 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
 
       {/* Footer */}
       <footer className="border-t border-slate-200 bg-white py-4 px-4 text-center text-xs text-slate-500 space-y-1">
-        <p className="font-bold text-slate-700">{clinicName}</p>
-        <p className="text-[11px]">{clinicAddress} • Tel: {clinicPhone}</p>
+        <p className="font-bold text-slate-700">{activeClinicName}</p>
+        <p className="text-[11px]">{activeClinicAddress} • Tel: {activeClinicPhone}</p>
       </footer>
     </div>
   );
