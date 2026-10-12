@@ -130,7 +130,9 @@ DECLARE
   ];
 BEGIN
   FOREACH t IN ARRAY tbls LOOP
+    EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %I("clinicId");', t || '_clinicId_idx', t);
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY;', t);
+    EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY;', t);
     EXECUTE format('DROP POLICY IF EXISTS %I ON %I;', 'tenant_isolation_policy', t);
     EXECUTE format('
       CREATE POLICY %I ON %I
