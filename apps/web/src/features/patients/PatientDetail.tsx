@@ -36,12 +36,14 @@ import { PatientConsentDesk } from '../consent/PatientConsentDesk';
 import { CaseSheetPhysicalArchive } from './CaseSheetPhysicalArchive';
 import { QuickReconsultModal } from '../../components/QuickReconsultModal';
 import { useClinicSync, triggerClinicSync } from '../../lib/sync';
+import { useAuth } from '../../hooks/useAuth';
 
 export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) => void }> = ({
   onOpenBookingForPatient,
 }) => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [patient, setPatient] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -646,7 +648,7 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
           patientName={patient.fullName}
           patientUhid={patient.uhid}
           patientPhone={patient.phone}
-          clinicName={patient.clinic?.name || 'AKS Elite Dental'}
+          clinicName={patient.clinic?.name || user?.clinic?.name || 'Dental Clinic'}
         />
       )}
 

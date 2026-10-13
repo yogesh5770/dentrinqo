@@ -31,10 +31,26 @@ interface TenantContextType {
 
 const TenantContext = createContext<TenantContextType | undefined>(undefined);
 
+const getInitialClinic = (): TenantClinic | null => {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const cached = sessionStorage.getItem(`clinic_cache_${window.location.host}`);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed && parsed.name) return parsed;
+    }
+  } catch {}
+
+  // No hardcoded fallback — let the API resolve the clinic from hostname.
+  // The TenantProvider will call /clinic/public-info immediately on mount.
+  return null;
+};
+
 export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
-  const [clinic, setClinic] = useState<TenantClinic | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [clinic, setClinic] = useState<TenantClinic | null>(() => getInitialClinic());
+  const [isLoading, setIsLoading] = useState(() => !getInitialClinic());
 
   const refreshClinic = async (codeOverride?: string): Promise<TenantClinic | null> => {
     try {
@@ -48,6 +64,11 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       const data = await apiRequest<TenantClinic>(endpoint);
       setClinic(data);
+      if (typeof window !== 'undefined' && data) {
+        try {
+          sessionStorage.setItem(`clinic_cache_${window.location.host}`, JSON.stringify(data));
+        } catch {}
+      }
       return data;
     } catch {
       // Fallback: If user is authenticated, use user's clinic data
@@ -84,6 +105,12 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     refreshClinic();
   }, [user?.clinicId]);
+
+  useEffect(() => {
+    if (typeof document !== 'undefined' && clinic?.name) {
+      document.title = `${clinic.name} | Clinic Management System`;
+    }
+  }, [clinic?.name]);
 
   return (
     <TenantContext.Provider value={{ clinic, isLoading, refreshClinic }}>

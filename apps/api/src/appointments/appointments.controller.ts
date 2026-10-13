@@ -34,7 +34,8 @@ export class AppointmentsController {
       patientToken = req.headers.authorization.split(' ')[1];
     }
 
-    return this.appointmentsService.createPublicRequest(dto, clientIp, patientToken);
+    const hostClinicId = (req as any).clinicId || ((req as any).tenantClinic && (req as any).tenantClinic.id);
+    return this.appointmentsService.createPublicRequest(dto, clientIp, patientToken, hostClinicId);
   }
 
   @Post('public-checkin')
@@ -179,8 +180,12 @@ export class AppointmentsController {
   @Get('public-chair-status')
   @Throttle({ default: { limit: 30, ttl: 60000 } })
   @ApiOperation({ summary: 'Query active operatory chair status and availability' })
-  async publicChairStatus(@Query('clinicCode') clinicCode?: string) {
-    return this.appointmentsService.getPublicChairStatus(clinicCode);
+  async publicChairStatus(
+    @Query('clinicCode') clinicCode?: string,
+    @Headers('x-display-token') displayToken?: string,
+    @Req() req?: any,
+  ) {
+    return this.appointmentsService.getPublicChairStatus(clinicCode, displayToken, (req as any)?.clinicId);
   }
 
   @Get('public-booked-slots')

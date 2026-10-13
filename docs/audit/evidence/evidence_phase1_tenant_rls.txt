@@ -1,0 +1,25 @@
+[EVIDENCE: PHASE 1 - TENANT ISOLATION & ROW LEVEL SECURITY]
+
+1. Arbitrary Clinic Fallback via findFirst()
+File: apps/api/src/appointments/appointments.service.ts
+Lines: 954, 999, 2343, 2633, 2716
+Code snippet:
+const clinic = await this.prisma.clinic.findFirst({
+  where: { status: 'ACTIVE' },
+});
+Impact: If req.clinicId is not resolved (direct IP access or missing header), appointment operations silently fallback to the first active clinic in the database.
+
+2. Missing RLS on Tenant-Scoped Tables
+File: apps/api/prisma/migrations/multi_tenant_rls.sql (lines 189-194) vs apps/api/prisma/schema.prisma (lines 745-776)
+Observation: 'ClinicClosure' and 'ClinicWorkingHour' tables have clinicId columns in schema.prisma, but were omitted from the array of tables configured with 'ENABLE ROW LEVEL SECURITY' and 'FORCE ROW LEVEL SECURITY' in PostgreSQL migration.
+
+3. Database Role Ownership Bypass
+File: deploy_vps_ubuntu.sh (line 66) & deploy_lightsail_jacobs.sh (line 61)
+Code: ALTER DATABASE ${DB_NAME} OWNER TO ${DB_USER};
+PostgreSQL Specification: Table owners bypass Row Level Security by default unless 'ALTER TABLE ... FORCE ROW LEVEL SECURITY' is explicitly set on every table. If tables are created without FORCE, runtime user bypasses RLS policies entirely.
+
+4. Host Spoofing in TenantContextMiddleware
+File: apps/api/src/common/middleware/tenant-context.middleware.ts (lines 42-43)
+Code: const host = (req.hostname || (req.headers['host'] as string) || '').split(':')[0].toLowerCase();
+Coupled with main.ts: expressApp.set('trust proxy', 1);
+Nginx: jacobs-nginx.conf and deploy_vps_ubuntu.sh proxy_set_header lacks X-Forwarded-Host sanitization.

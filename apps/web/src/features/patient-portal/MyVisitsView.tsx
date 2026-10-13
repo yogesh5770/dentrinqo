@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { usePatientAuth } from '../../hooks/usePatientAuth';
+import { useTenant } from '../../hooks/useTenant';
 import {
   Calendar,
   Clock,
@@ -32,6 +33,7 @@ interface VisitItem {
 export const MyVisitsView: React.FC = () => {
   const navigate = useNavigate();
   const { account, familyMembers, token, isLoading, logout } = usePatientAuth();
+  const { clinic } = useTenant();
 
   const [visits, setVisits] = useState<VisitItem[]>([]);
   const [selectedMember, setSelectedMember] = useState<string>('ALL');
@@ -102,7 +104,7 @@ export const MyVisitsView: React.FC = () => {
             </div>
             <div>
               <h1 className="text-sm font-black text-slate-900 leading-tight">
-                {typeof window !== 'undefined' && window.location.hostname.includes('jacob') ? 'Jacobs Dental Clinic' : "AK's Elite Dental Clinic"}
+                {clinic?.name || 'Dental Clinic'}
               </h1>
               <p className="text-[11px] font-medium text-teal-700">
                 Patient & Family Passbook • {account?.phone}

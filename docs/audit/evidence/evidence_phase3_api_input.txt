@@ -1,0 +1,30 @@
+[EVIDENCE: PHASE 3 - API & INPUT SECURITY]
+
+1. Missing Security Headers (No Helmet Middleware)
+File: apps/api/src/main.ts (lines 1-70)
+Observation: Helmet middleware (helmet()) is not registered in NestJS. CSP, HSTS, X-Content-Type-Options, and X-Frame-Options are completely absent at the API layer.
+
+2. Loose Validation Pipe: forbidNonWhitelisted is False
+File: apps/api/src/main.ts
+Line: 65
+Code:
+app.useGlobalPipes(new ValidationPipe({
+  whitelist: true,
+  forbidNonWhitelisted: false,
+  transform: true,
+}));
+
+3. Medical Files Unrestricted File Type Upload & Inline Execution
+File: apps/api/src/medical-files/medical-files.service.ts (lines 60-120, 190-205) & apps/api/src/medical-files/medical-files.controller.ts (lines 75-84)
+Observation: No file extension or MIME type whitelist check. If an HTML or SVG file is uploaded, getFileById sets:
+res.setHeader('Content-Type', record.mimeType);
+res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(record.fileName)}"`);
+Executing inline SVG scripts or HTML documents in the staff application origin (Stored XSS).
+
+4. Third-Party Data Leakage via api.qrserver.com
+Files:
+- apps/web/src/features/dashboard/ReceptionDashboard.tsx:2247
+- apps/web/src/features/billing/PaymentModal.tsx:58
+- apps/web/src/features/public/PublicBookingView.tsx:1371
+- apps/web/src/features/dashboard/AdminDashboard.tsx:63
+Observation: Every QR code (UPI billing with exact amount, patient tracking URLs, lobby check-in codes) is generated via GET requests to external third-party service 'https://api.qrserver.com'.

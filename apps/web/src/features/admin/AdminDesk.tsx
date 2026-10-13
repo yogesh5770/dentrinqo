@@ -263,17 +263,11 @@ export const AdminDesk: React.FC = () => {
     }
   };
 
-  const toggleStaffStatus = async (id: string, currentStatus: boolean, email: string) => {
-    if (email === 'akselitedental.madurai@gmail.com' || email === 'aksdental@gmail.com') {
-      alert('The primary Hospital Administrator account cannot be deactivated.');
+  const toggleStaffStatus = async (id: string, currentStatus: boolean, memberRole: string) => {
+    if (memberRole === 'CLINIC_ADMIN') {
+      alert('The primary Clinic Administrator account cannot be deactivated.');
       return;
     }
-
-    const actionName = currentStatus ? 'deactivate' : 'activate';
-    if (!window.confirm(`Are you sure you want to ${actionName} this staff account?`)) {
-      return;
-    }
-
     try {
       await apiRequest(`/users/${id}/status`, {
         method: 'PATCH',
@@ -282,7 +276,7 @@ export const AdminDesk: React.FC = () => {
       triggerClinicSync('staff_updated');
       fetchStaff(true);
     } catch (err: any) {
-      alert(err.message || `Failed to ${actionName} staff member`);
+      alert(err.message || `Failed to ${!currentStatus ? 'activate' : 'deactivate'} staff member`);
     }
   };
 
@@ -342,10 +336,10 @@ export const AdminDesk: React.FC = () => {
             </h1>
             <p className="text-xs font-medium text-slate-600 mt-0.5">
               {activeTab === 'treatments'
-                ? 'AKS Elite Dental Clinic • Manage dental procedures, tariffs, and standard INR fees'
+                ? 'Manage dental procedures, tariffs, and standard INR fees'
                 : activeTab === 'audit'
-                ? 'AKS Elite Dental Clinic • Compliance trail of clinical and billing events'
-                : 'AKS Elite Dental Clinic • Manage staff accounts, doctors, and user access'}
+                ? 'Compliance trail of clinical and billing events'
+                : 'Manage staff accounts, doctors, and user access'}
             </p>
           </div>
         </div>
@@ -582,9 +576,9 @@ export const AdminDesk: React.FC = () => {
                           <span>Reset Password</span>
                         </button>
 
-                        {member.email !== 'akselitedental.madurai@gmail.com' && member.role !== 'CLINIC_ADMIN' && (
+                        {member.role !== 'CLINIC_ADMIN' && (
                           <button
-                            onClick={() => toggleStaffStatus(member.id, member.isActive, member.email)}
+                            onClick={() => toggleStaffStatus(member.id, member.isActive, member.role)}
                             className={`text-xs font-bold px-3 py-2 rounded-xl border transition-colors cursor-pointer ${
                               member.isActive
                                 ? 'border-rose-300 bg-rose-50 text-rose-800 hover:bg-rose-100'
@@ -718,9 +712,9 @@ export const AdminDesk: React.FC = () => {
                               </button>
 
                               {/* Toggle Status Button (Protected for Super Admin) */}
-                              {member.email !== 'akselitedental.madurai@gmail.com' && member.role !== 'CLINIC_ADMIN' && (
+                              {member.role !== 'CLINIC_ADMIN' && (
                                 <button
-                                  onClick={() => toggleStaffStatus(member.id, member.isActive, member.email)}
+                                  onClick={() => toggleStaffStatus(member.id, member.isActive, member.role)}
                                   className={`text-xs font-bold px-3 py-1.5 rounded-lg border transition-colors cursor-pointer ${
                                     member.isActive
                                       ? 'border-rose-300 bg-rose-50 text-rose-800 hover:bg-rose-100'
@@ -885,7 +879,7 @@ export const AdminDesk: React.FC = () => {
                     required
                     value={email}
                     onChange={e => setEmail(e.target.value)}
-                    placeholder="staff@akselitedental.com"
+                    placeholder="staff@clinic.com"
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 font-bold placeholder-slate-400 font-mono focus:outline-hidden focus:border-teal-600 focus:bg-white"
                   />
                 </div>

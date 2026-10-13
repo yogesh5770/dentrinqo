@@ -91,7 +91,7 @@ export class AuthController {
     if (!body.currentPassword || !body.newPassword) {
       throw new BadRequestException('Both current password and new password are required');
     }
-    return this.authService.changePassword(user.userId, body.currentPassword, body.newPassword);
+    return this.authService.changePassword(user.userId, body.currentPassword, body.newPassword, user.clinicId);
   }
 
   @Post('forgot-password')
@@ -124,6 +124,6 @@ export class AuthController {
   @UseGuards(AuthGuard)
   @ApiOperation({ summary: 'Get currently authenticated user profile and clinic details' })
   async getProfile(@CurrentUser() userPayload: any) {
-    return this.authService.getCurrentProfile(userPayload.userId);
+    return this.authService.getCurrentProfile(userPayload.userId, userPayload.clinicId);
   }
 }

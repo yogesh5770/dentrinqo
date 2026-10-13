@@ -59,7 +59,7 @@ export const LoginScreen: React.FC = () => {
         {/* Brand Header */}
         <div className="flex justify-center mb-4">
           <div className="w-24 h-24 p-2 bg-white rounded-3xl border border-slate-200 shadow-md flex items-center justify-center">
-            <img src="/logo.png" alt="AKS Elite Dental Clinic Logo" className="w-full h-full object-contain" />
+            <img src="/logo.png" alt={`${clinic?.name || "Dental Clinic"} Logo`} className="w-full h-full object-contain" />
           </div>
         </div>
 
@@ -127,7 +127,7 @@ export const LoginScreen: React.FC = () => {
                   required
                   value={identifier}
                   onChange={e => setIdentifier(e.target.value)}
-                  placeholder={clinic?.email ? `name@${clinic.email.split('@')[1] || 'akselitedental.com'}` : 'name@akselitedental.com'}
+                  placeholder={clinic?.email ? `name@${clinic.email.split('@')[1] || 'clinic.com'}` : 'name@clinic.com'}
                   className="block w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 placeholder-slate-400 focus:outline-none focus:border-teal-600 focus:bg-white transition-all"
                 />
               </div>
@@ -263,19 +263,22 @@ export const LoginScreen: React.FC = () => {
             </p>
 
             <div className="mt-4 p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2 text-xs">
-              <p className="font-bold text-slate-800">Please contact the Clinic Administrator:</p>
-              <div className="flex items-center gap-2 text-teal-800 font-bold">
-                <User className="w-4 h-4" />
-                <span>Dr. Khalidh Khan (BDS, MDS)</span>
-              </div>
-              <div className="flex items-center gap-2 text-slate-700 font-bold">
-                <Phone className="w-4 h-4 text-slate-500" />
-                <span>+91 95387 23872</span>
-              </div>
-              <div className="flex items-center gap-2 text-slate-700 font-bold">
-                <Mail className="w-4 h-4 text-slate-500" />
-                <span>akselitedental.madurai@gmail.com</span>
-              </div>
+              <p className="font-bold text-slate-800">Please contact your Clinic Administrator:</p>
+              {clinic?.name && (
+                <div className="flex items-center gap-2 text-teal-800 font-bold">
+                  <Building2 className="w-4 h-4" />
+                  <span>{clinic.name}</span>
+                </div>
+              )}
+              {clinic?.phone && (
+                <div className="flex items-center gap-2 text-slate-700 font-bold">
+                  <Phone className="w-4 h-4 text-slate-500" />
+                  <span>{clinic.phone}</span>
+                </div>
+              )}
+              <p className="text-slate-500 text-[11px] pt-1">
+                For security reasons, password resets must be initiated by an authorized administrator at the reception desk.
+              </p>
             </div>
 
             <div className="mt-5 flex justify-end">

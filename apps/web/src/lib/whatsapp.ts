@@ -49,8 +49,8 @@ Your dental appointment has been confirmed:
 ⏰ *Time:* ${params.time}
 🪑 *Chair:* Operatory Chair ${params.chairNumber}
 ${params.doctorName ? `👨‍⚕️ *Doctor:* ${params.doctorName}\n` : ''}${params.reason ? `📋 *Purpose:* ${params.reason}\n` : ''}
-📍 *Clinic Address:* ${params.clinicAddress || 'Madurai, Tamil Nadu'}
-📞 *Helpline / Reschedule:* ${params.clinicPhone || '+91 94431 55660'}
+📍 *Clinic Address:* ${params.clinicAddress || ''}
+📞 *Helpline / Reschedule:* ${params.clinicPhone || 'the clinic'}
 
 _Please arrive 5 minutes before your slot. We look forward to caring for your smile!_`;
 }
@@ -89,7 +89,7 @@ Rx #${params.prescriptionNumber} • ${params.date}
 ${medsList}
 
 ${params.generalInstructions ? `⚠️ *General Instructions:*\n${params.generalInstructions}\n` : ''}
-📞 *Need help with your medicine? Call:* ${params.clinicPhone || '+91 94431 55660'}
+📞 *Need help with your medicine? Call:* ${params.clinicPhone || 'the clinic'}
 _Take medications strictly as instructed with water after meals._`;
 }
 
@@ -114,7 +114,7 @@ Thank you for your visit! Here is your billing summary:
 ${params.receiptNumber ? `🧾 *Receipt #:* ${params.receiptNumber}\n` : ''}💵 *Total Bill:* ₹${params.totalRupees.toLocaleString('en-IN')}
 ✅ *Amount Paid:* ₹${params.paidRupees.toLocaleString('en-IN')}${params.paymentMethod ? ` (${params.paymentMethod})` : ''}
 ${params.balanceRupees > 0 ? `⏳ *Balance Outstanding:* ₹${params.balanceRupees.toLocaleString('en-IN')}\n` : '🎉 *Status:* Paid in Full\n'}
-📞 *For questions or receipts, call:* ${params.clinicPhone || '+91 94431 55660'}
+📞 *For questions or receipts, call:* ${params.clinicPhone || 'the clinic'}
 _Wishing you excellent dental health!_`;
 }
 
@@ -133,7 +133,7 @@ It has been 6 months since your last dental cleaning (${params.procedure}).
 
 Preventive care keeps your teeth healthy and prevents plaque buildup! Would you like to schedule your routine 6-month checkup this week?
 
-📞 *Reply to this message or call:* ${params.clinicPhone || '+91 94431 55660'}`;
+📞 *Reply to this message or call:* ${params.clinicPhone || 'the clinic'}`;
   }
 
   return `🦷 *${params.clinicName} — Post-Treatment Care Check*
@@ -143,5 +143,5 @@ We are checking in following your recent dental procedure (*${params.procedure}*
 
 How is your recovery? If you are experiencing any sensitivity, tenderness, or have questions about medications, please let us know right away!
 
-📞 *Clinic Helpline:* ${params.clinicPhone || '+91 94431 55660'}`;
+📞 *Clinic Helpline:* ${params.clinicPhone || 'the clinic'}`;
 }

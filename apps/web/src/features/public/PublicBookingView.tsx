@@ -78,12 +78,12 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
   doctorName = 'Chief Dental Surgeon',
 }) => {
   const { clinic: tenantClinic } = useTenant();
-  const clinicName = tenantClinic?.name || propClinicName || "AK's Elite Dental Clinic and Multi-Speciality Dental Hospital";
+  const clinicName = tenantClinic?.name || propClinicName || 'Dental Clinic';
   const clinicAddress = tenantClinic?.address 
     ? `${tenantClinic.address}, ${tenantClinic.city || ''} ${tenantClinic.postalCode || ''}` 
-    : (propClinicAddress || 'Plot No. 162/2A, Alagar Complex, 5th Meenakshi Amman Nagar Main Road, K.Pudur, Madurai');
-  const clinicPhone = tenantClinic?.phone || propClinicPhone || '+91 95387 23872';
-  const clinicCode = tenantClinic?.code || propClinicCode || 'AKS';
+    : (propClinicAddress || '');
+  const clinicPhone = tenantClinic?.phone || propClinicPhone || '';
+  const clinicCode = tenantClinic?.code || propClinicCode || '';
   const [step, setStep] = useState<number>(1);
   const [visitType, setVisitType] = useState<'ONLINE_BOOKING' | 'WALK_IN'>('ONLINE_BOOKING');
   const [selectedReason, setSelectedReason] = useState<string>('TOOTH_PAIN');
@@ -1577,161 +1577,6 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
               </div>
             </div>
 
-            {/* Fast-Track Pre-Visit Health Intake */}
-            <div className="bg-white border border-slate-200 rounded-3xl p-6 space-y-4 shadow-md">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-teal-50 text-teal-700 flex items-center justify-center shrink-0 border border-teal-200">
-                    <Activity className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="font-black text-slate-900 text-base">Skip the Waiting Room Clipboard</h4>
-                    <p className="text-xs text-slate-500">
-                      Complete your 45-second health declaration now so the doctor has safety alerts before you sit in the chair.
-                    </p>
-                  </div>
-                </div>
-
-                {!intakeSubmitted && (
-                  <button
-                    type="button"
-                    onClick={() => setIntakeOpen(!intakeOpen)}
-                    className="px-3 py-1.5 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 font-bold text-xs border border-teal-200 transition cursor-pointer shrink-0"
-                  >
-                    {intakeOpen ? 'Collapse' : 'Fill Intake (45s)'}
-                  </button>
-                )}
-              </div>
-
-              {intakeSubmitted ? (
-                <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center gap-2">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                  <span>
-                    Medical health screening recorded! Doctor has received safety alerts for your chair session.
-                  </span>
-                </div>
-              ) : intakeOpen ? (
-                <form onSubmit={handleSubmitIntake} className="space-y-4 pt-2 border-t border-slate-100 text-xs">
-                  <div className="space-y-2">
-                    <span className="font-black text-slate-800 uppercase tracking-wider text-[11px] block">
-                      Common Medical Conditions:
-                    </span>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      <label className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={diabetic}
-                          onChange={(e) => setDiabetic(e.target.checked)}
-                          className="w-4 h-4 rounded text-teal-600 focus:ring-0"
-                        />
-                        <span className="text-slate-900 font-semibold">Diabetes</span>
-                      </label>
-
-                      <label className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={hypertension}
-                          onChange={(e) => setHypertension(e.target.checked)}
-                          className="w-4 h-4 rounded text-teal-600 focus:ring-0"
-                        />
-                        <span className="text-slate-900 font-semibold">High Blood Pressure</span>
-                      </label>
-
-                      <label className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={cardiac}
-                          onChange={(e) => setCardiac(e.target.checked)}
-                          className="w-4 h-4 rounded text-teal-600 focus:ring-0"
-                        />
-                        <span className="text-slate-900 font-semibold">Heart / Cardiac</span>
-                      </label>
-
-                      <label className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={bloodThinners}
-                          onChange={(e) => setBloodThinners(e.target.checked)}
-                          className="w-4 h-4 rounded text-teal-600 focus:ring-0"
-                        />
-                        <span className="text-slate-900 font-semibold">Takes Blood Thinners</span>
-                      </label>
-
-                      <label className="flex items-center gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={pregnant}
-                          onChange={(e) => setPregnant(e.target.checked)}
-                          className="w-4 h-4 rounded text-teal-600 focus:ring-0"
-                        />
-                        <span className="text-slate-900 font-semibold">Pregnant / Nursing</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* Drug Allergies */}
-                  <div className="space-y-2 pt-1">
-                    <span className="font-black text-slate-800 uppercase tracking-wider text-[11px] block">
-                      Known Drug Allergies:
-                    </span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {['Penicillin', 'Sulfa Drugs', 'Amoxicillin', 'Aspirin', 'Local Anaesthesia (Lignocaine)', 'None / No Allergies'].map((allergy) => (
-                        <button
-                          key={allergy}
-                          type="button"
-                          onClick={() => toggleAllergy(allergy)}
-                          className={`px-3 py-1.5 rounded-xl font-bold transition text-xs cursor-pointer ${
-                            selectedAllergies.includes(allergy)
-                              ? 'bg-rose-50 text-rose-800 border border-rose-300'
-                              : 'bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100'
-                          }`}
-                        >
-                          {selectedAllergies.includes(allergy) ? '✓ ' : '+ '}{allergy}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Emergency Contact */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                    <div>
-                      <label className="block text-[11px] font-black text-slate-700 mb-1">
-                        Emergency Contact Name (Optional)
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Spouse / Parent / Sibling"
-                        value={emergencyName}
-                        onChange={(e) => setEmergencyName(e.target.value)}
-                        className="w-full px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-900"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-black text-slate-700 mb-1">
-                        Emergency Contact Phone (Optional)
-                      </label>
-                      <input
-                        type="tel"
-                        placeholder="10-digit mobile"
-                        value={emergencyPhone}
-                        onChange={(e) => setEmergencyPhone(e.target.value)}
-                        className="w-full px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-900"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="pt-2 flex justify-end">
-                    <button
-                      type="submit"
-                      disabled={submittingIntake}
-                      className="py-3 px-6 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-black text-xs shadow-md transition cursor-pointer"
-                    >
-                      {submittingIntake ? 'Saving...' : '⚡ Submit Health Intake to Doctor'}
-                    </button>
-                  </div>
-                </form>
-              ) : null}
-            </div>
 
             {/* Back button */}
             <div className="text-center pt-2">

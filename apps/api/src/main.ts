@@ -90,9 +90,10 @@ async function bootstrap() {
   SwaggerModule.setup('api/docs', app, document);
 
   const port = process.env.PORT || 3001;
-  await app.listen(port);
-  logger.log(`AKS Elite Dental API running on http://localhost:${port}`);
-  logger.log(`OpenAPI Swagger Docs available at http://localhost:${port}/api/docs`);
+  const host = process.env.HOST || '127.0.0.1';
+  await app.listen(port, host);
+  logger.log(`Clinic Management API running on http://${host}:${port}`);
+  logger.log(`OpenAPI Swagger Docs available at http://${host}:${port}/api/docs`);
 }
 
 bootstrap();

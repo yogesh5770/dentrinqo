@@ -304,9 +304,14 @@ export class UsersService {
       const user = await tx.user.findFirst({ where: { id, clinicId } });
       if (!user) throw new NotFoundException('Staff member not found');
 
-      // Prevent modifying core protected admin email
-      if ((user.email === 'akselitedental.madurai@gmail.com' || user.email === 'aksdental@gmail.com') && data.role && data.role !== 'CLINIC_ADMIN') {
-        throw new ForbiddenException('Primary Hospital Administrator role cannot be changed');
+      // Prevent demoting the sole active Clinic Administrator
+      if (user.role === 'CLINIC_ADMIN' && data.role && data.role !== 'CLINIC_ADMIN') {
+        const adminCount = await tx.user.count({
+          where: { clinicId, role: 'CLINIC_ADMIN', isActive: true },
+        });
+        if (adminCount <= 1) {
+          throw new ForbiddenException('Cannot change the role of the sole active Clinic Administrator');
+        }
       }
 
       const updated = await tx.user.update({
@@ -367,8 +372,14 @@ export class UsersService {
         throw new ForbiddenException('You cannot deactivate your own administrative account');
       }
 
-      if ((user.email === 'akselitedental.madurai@gmail.com' || user.email === 'aksdental@gmail.com') && !isActive) {
-        throw new ForbiddenException('Primary Hospital Administrator account cannot be deactivated');
+      // Prevent deactivating the sole active Clinic Administrator
+      if (user.role === 'CLINIC_ADMIN' && !isActive) {
+        const activeAdminCount = await tx.user.count({
+          where: { clinicId, role: 'CLINIC_ADMIN', isActive: true },
+        });
+        if (activeAdminCount <= 1) {
+          throw new ForbiddenException('Cannot deactivate the sole active Clinic Administrator account');
+        }
       }
 
       const updated = await tx.user.update({

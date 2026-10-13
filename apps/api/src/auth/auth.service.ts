@@ -131,16 +131,29 @@ export class AuthService {
     return hash(plainText);
   }
 
-  async changePassword(userId: string, currentPass: string, newPass: string) {
+  async changePassword(userId: string, currentPass: string, newPass: string, clinicId?: string) {
     if (!newPass || newPass.trim().length < 6) {
       throw new BadRequestException('New password must be at least 6 characters long');
     }
 
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    });
+    const fetchUser = (tx: any) => tx.user.findUnique({ where: { id: userId } });
+    let user: any = null;
+    let targetClinicId = clinicId;
 
-    if (!user) {
+    if (targetClinicId) {
+      user = await this.prisma.forTenant(targetClinicId, fetchUser);
+    } else {
+      const clinics = await this.prisma.clinic.findMany({ select: { id: true } });
+      for (const c of clinics) {
+        user = await this.prisma.forTenant(c.id, fetchUser);
+        if (user) {
+          targetClinicId = c.id;
+          break;
+        }
+      }
+    }
+
+    if (!user || !targetClinicId) {
       throw new UnauthorizedException('User not found');
     }
 
@@ -155,12 +168,14 @@ export class AuthService {
 
     const newPasswordHash = await hash(newPass);
 
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        passwordHash: newPasswordHash,
-        mustChangePassword: false,
-      },
+    await this.prisma.forTenant(targetClinicId, async (tx) => {
+      return tx.user.update({
+        where: { id: userId },
+        data: {
+          passwordHash: newPasswordHash,
+          mustChangePassword: false,
+        },
+      });
     });
 
     this.logger.log(`Password changed successfully for user: ${user.email}`);
@@ -171,12 +186,22 @@ export class AuthService {
 
   async forgotPassword(email: string) {
     const cleanEmail = (email || '').toLowerCase().trim();
-    const user = await this.prisma.user.findUnique({
-      where: { email: cleanEmail },
-    });
+    const clinics = await this.prisma.clinic.findMany({ select: { id: true } });
+    let user: any = null;
+    let userClinicId: string | null = null;
+    for (const c of clinics) {
+      const u = await this.prisma.forTenant(c.id, async (tx) => {
+        return tx.user.findFirst({ where: { email: cleanEmail } });
+      });
+      if (u) {
+        user = u;
+        userClinicId = c.id;
+        break;
+      }
+    }
 
     // To prevent email enumeration attacks, always return generic message
-    if (!user) {
+    if (!user || !userClinicId) {
       return {
         message: 'If an active account exists with this email address, password reset instructions have been generated.',
       };
@@ -185,12 +210,14 @@ export class AuthService {
     const resetToken = crypto.randomBytes(32).toString('hex');
     const resetExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: {
-        resetPasswordToken: resetToken,
-        resetPasswordExpiry: resetExpiry,
-      },
+    await this.prisma.forTenant(userClinicId, async (tx) => {
+      return tx.user.update({
+        where: { id: user.id },
+        data: {
+          resetPasswordToken: resetToken,
+          resetPasswordExpiry: resetExpiry,
+        },
+      });
     });
 
     this.logger.log(`Password reset token generated for ${user.email}: ${resetToken}`);
@@ -208,27 +235,41 @@ export class AuthService {
       throw new BadRequestException('New password must be at least 6 characters long');
     }
 
-    const user = await this.prisma.user.findFirst({
-      where: {
-        resetPasswordToken: token,
-        resetPasswordExpiry: { gt: new Date() },
-      },
-    });
+    const clinics = await this.prisma.clinic.findMany({ select: { id: true } });
+    let user: any = null;
+    let userClinicId: string | null = null;
+    for (const c of clinics) {
+      const u = await this.prisma.forTenant(c.id, async (tx) => {
+        return tx.user.findFirst({
+          where: {
+            resetPasswordToken: token,
+            resetPasswordExpiry: { gt: new Date() },
+          },
+        });
+      });
+      if (u) {
+        user = u;
+        userClinicId = c.id;
+        break;
+      }
+    }
 
-    if (!user) {
+    if (!user || !userClinicId) {
       throw new BadRequestException('Password reset link is invalid or has expired. Please request a new one.');
     }
 
     const newPasswordHash = await hash(newPass);
 
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: {
-        passwordHash: newPasswordHash,
-        resetPasswordToken: null,
-        resetPasswordExpiry: null,
-        mustChangePassword: false,
-      },
+    await this.prisma.forTenant(userClinicId, async (tx) => {
+      return tx.user.update({
+        where: { id: user.id },
+        data: {
+          passwordHash: newPasswordHash,
+          resetPasswordToken: null,
+          resetPasswordExpiry: null,
+          mustChangePassword: false,
+        },
+      });
     });
 
     return {
@@ -236,51 +277,63 @@ export class AuthService {
     };
   }
 
-  async getCurrentProfile(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        clinicId: true,
-        email: true,
-        username: true,
-        fullName: true,
-        role: true,
-        permissions: true,
-        phone: true,
-        designation: true,
-        department: true,
-        employeeId: true,
-        licenseNumber: true,
-        specialization: true,
-        mustChangePassword: true,
-        isActive: true,
-        lastLoginAt: true,
-        clinic: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
-            tagline: true,
-            city: true,
-            state: true,
-            postalCode: true,
-            timezone: true,
-            currency: true,
-            chairCount: true,
-            phone: true,
-            address: true,
-            email: true,
-            subdomain: true,
-            upiVpa: true,
-            workingHours: true,
-            gstin: true,
-            isOnLeave: true,
-            leaveReason: true,
+  async getCurrentProfile(userId: string, clinicId?: string) {
+    const fetchProfile = (tx: any) =>
+      tx.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          clinicId: true,
+          email: true,
+          username: true,
+          fullName: true,
+          role: true,
+          permissions: true,
+          phone: true,
+          designation: true,
+          department: true,
+          employeeId: true,
+          licenseNumber: true,
+          specialization: true,
+          mustChangePassword: true,
+          isActive: true,
+          lastLoginAt: true,
+          clinic: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+              tagline: true,
+              city: true,
+              state: true,
+              postalCode: true,
+              timezone: true,
+              currency: true,
+              chairCount: true,
+              phone: true,
+              address: true,
+              email: true,
+              subdomain: true,
+              upiVpa: true,
+              workingHours: true,
+              gstin: true,
+              isOnLeave: true,
+              leaveReason: true,
+            },
           },
         },
-      },
-    });
+      });
+
+    let user: any = null;
+    if (clinicId) {
+      user = await this.prisma.forTenant(clinicId, fetchProfile);
+    } else {
+      const clinics = await this.prisma.clinic.findMany({ select: { id: true } });
+      for (const c of clinics) {
+        user = await this.prisma.forTenant(c.id, fetchProfile);
+        if (user) break;
+      }
+    }
 
     if (!user || !user.isActive) {
       throw new UnauthorizedException('User session invalid or user inactive');

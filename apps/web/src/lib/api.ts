@@ -1,7 +1,9 @@
-// AKS Elite Dental Clinic - Production API Client
+// Clinic Portal – shared API client (tenant-agnostic)
+// Auth is carried exclusively via the aks_session httpOnly cookie set by the server.
+// No tokens are written to localStorage; credentials:'include' on every fetch is sufficient.
 
-const BASE_URL = import.meta.env.VITE_API_URL 
-  ? import.meta.env.VITE_API_URL.replace(/\/$/, '') 
+const BASE_URL = import.meta.env.VITE_API_URL
+  ? import.meta.env.VITE_API_URL.replace(/\/$/, '')
   : '';
 
 export class ApiError extends Error {
@@ -11,26 +13,17 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * In-memory token kept only for the duration of the page session so that
+ * existing callers sending an Authorization header remain compatible during
+ * the cookie-only transition. The server validates the cookie first; this
+ * header is a secondary fallback that will be removed in a follow-up.
+ */
 let sessionToken: string | null = null;
 
-const AUTH_TOKEN_KEY = 'auth_access_token';
-
-// Initialize token from storage if present
-if (typeof window !== 'undefined') {
-  sessionToken = localStorage.getItem(AUTH_TOKEN_KEY) || localStorage.getItem('aks_auth_token');
-}
-
 export function setSessionToken(token: string | null) {
+  // Only update the in-memory reference – no localStorage writes.
   sessionToken = token;
-  if (typeof window !== 'undefined') {
-    if (token) {
-      localStorage.setItem(AUTH_TOKEN_KEY, token);
-      localStorage.setItem('aks_auth_token', token);
-    } else {
-      localStorage.removeItem(AUTH_TOKEN_KEY);
-      localStorage.removeItem('aks_auth_token');
-    }
-  }
 }
 
 export async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -40,9 +33,7 @@ export async function apiRequest<T>(endpoint: string, options: RequestInit = {})
     headers.set('Content-Type', 'application/json');
   }
 
-  if (!sessionToken && typeof window !== 'undefined') {
-    sessionToken = localStorage.getItem(AUTH_TOKEN_KEY) || localStorage.getItem('aks_auth_token');
-  }
+  // sessionToken is in-memory only; no localStorage fallback.
 
   if (sessionToken && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${sessionToken}`);

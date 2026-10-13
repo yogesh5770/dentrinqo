@@ -29,25 +29,10 @@ interface PatientAuthContextType {
   refresh: () => Promise<void>;
 }
 
-const PATIENT_TOKEN_KEY = 'dental_patient_token';
+// Keys retained for non-sensitive UI state (phone display) only - NOT for auth.
+// Tokens are carried by the httpOnly aks_patient_session cookie from the server.
 const PATIENT_ACCOUNT_KEY = 'dental_patient_account';
 const PATIENT_FAMILY_KEY = 'dental_patient_family';
-
-function getStoredPatientToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem(PATIENT_TOKEN_KEY) || localStorage.getItem('aks_patient_token');
-}
-
-function setStoredPatientToken(tok: string | null) {
-  if (typeof window === 'undefined') return;
-  if (tok) {
-    localStorage.setItem(PATIENT_TOKEN_KEY, tok);
-    localStorage.setItem('aks_patient_token', tok);
-  } else {
-    localStorage.removeItem(PATIENT_TOKEN_KEY);
-    localStorage.removeItem('aks_patient_token');
-  }
-}
 
 function getStoredPatientAccount(): PatientAccount | null {
   if (typeof window === 'undefined') return null;
@@ -77,6 +62,8 @@ function setStoredPatientData(acc: PatientAccount | null, fam: FamilyMember[] = 
   } else {
     localStorage.removeItem(PATIENT_ACCOUNT_KEY);
     localStorage.removeItem(PATIENT_FAMILY_KEY);
+    // Legacy token keys removed
+    ['dental_patient_token', 'aks_patient_token'].forEach((k) => localStorage.removeItem(k));
   }
 }
 
@@ -85,27 +72,15 @@ const PatientAuthContext = createContext<PatientAuthContextType | undefined>(und
 export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [account, setAccount] = useState<PatientAccount | null>(() => getStoredPatientAccount());
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>(() => getStoredFamilyMembers());
-  const [token, setToken] = useState<string | null>(() => getStoredPatientToken());
-  const [isLoading, setIsLoading] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return Boolean(getStoredPatientToken() && !getStoredPatientAccount());
-  });
+  // token is no longer stored; kept in state as null - context consumers that
+  // read it will receive null and should not be sending it via Authorization header.
+  const [token, setToken] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const refresh = async () => {
     try {
-      const storedToken = getStoredPatientToken();
-      if (!storedToken) {
-        setAccount(null);
-        setFamilyMembers([]);
-        setStoredPatientData(null, []);
-        setIsLoading(false);
-        return;
-      }
-
+      // Session is carried by the httpOnly cookie; no Authorization header needed.
       const res = await fetch('/api/patient-auth/me', {
-        headers: {
-          Authorization: `Bearer ${storedToken}`,
-        },
         credentials: 'include',
       });
 
@@ -121,8 +96,6 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setFamilyMembers(fam);
         setStoredPatientData(acc, fam);
       } else if (res.status === 401) {
-        // ONLY clear session if server explicitly returns 401 Unauthorized
-        setStoredPatientToken(null);
         setStoredPatientData(null, []);
         setToken(null);
         setAccount(null);
@@ -152,8 +125,8 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
       throw new Error(data.message || 'Login failed');
     }
 
-    setStoredPatientToken(data.token);
-    setToken(data.token);
+    // Server sets aks_patient_session httpOnly cookie; no token stored client-side.
+    setToken(null);
     setAccount(data.account);
     const fam = data.familyMembers || [];
     setFamilyMembers(fam);
@@ -174,8 +147,8 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
       throw new Error(data.message || 'Registration failed');
     }
 
-    setStoredPatientToken(data.token);
-    setToken(data.token);
+    // Server sets aks_patient_session httpOnly cookie.
+    setToken(null);
     setAccount(data.account);
     const fam = data.familyMembers || [];
     setFamilyMembers(fam);
@@ -188,7 +161,6 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
     try {
       await fetch('/api/patient-auth/logout', { method: 'POST', credentials: 'include' });
     } catch {}
-    setStoredPatientToken(null);
     setStoredPatientData(null, []);
     setToken(null);
     setAccount(null);
@@ -196,13 +168,11 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
   };
 
   const addFamilyMember = async (member: any) => {
-    const storedToken = getStoredPatientToken() || token;
+    // No Authorization header - session cookie is sent automatically.
     const res = await fetch('/api/patient-auth/family', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${storedToken}`,
-      },
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify(member),
     });
 

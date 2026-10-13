@@ -23,6 +23,14 @@ export class ClinicController {
     return this.clinicService.getPublicInfo(identifier);
   }
 
+  @Get('marketing-info')
+  @ApiOperation({ summary: 'Get minimal public clinic info for external marketing/landing sites' })
+  async getMarketingInfo(@Query('code') code?: string, @Req() req?: any) {
+    const rawHost = (req?.headers?.['x-forwarded-host'] || req?.headers?.['host'] || '').split(':')[0].toLowerCase();
+    const identifier = code || req?.clinicId || (req?.tenantClinic && req?.tenantClinic.id) || req?.headers?.['x-clinic-id'] || req?.headers?.['x-clinic-code'] || rawHost;
+    return this.clinicService.getMarketingInfo(identifier);
+  }
+
   @Get('resolve')
   @ApiOperation({ summary: 'Resolve tenant clinic info by host/header' })
   async resolveClinic(@Req() req: any, @Query('code') code?: string) {

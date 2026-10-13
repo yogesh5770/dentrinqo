@@ -31,22 +31,23 @@ export class TenantContextMiddleware implements NestMiddleware {
       const isDev = process.env.NODE_ENV !== 'production';
       let identifier: string | undefined;
 
-      // In development mode only: allow explicit header/query parameter testing overrides
+      // In development mode only: allow explicit header testing overrides from localhost
       if (isDev) {
-        identifier = ((req.headers['x-clinic-id'] || req.headers['x-tenant-id'] || req.headers['x-clinic-code']) as string) || (req.query.clinicCode as string);
+        identifier = ((req.headers['x-clinic-id'] || req.headers['x-tenant-id'] || req.headers['x-clinic-code']) as string);
       }
 
       let clinic: any = null;
 
-      // 1. Resolve via public hostname using ClinicDomain table
-      const rawHost = (req.headers['x-forwarded-host'] as string) || (req.headers['host'] as string) || req.hostname || '';
-      const host = rawHost.split(':')[0].toLowerCase();
+      // 1. Resolve via public hostname using Express-validated hostname
+      // When Express 'trust proxy' is configured, req.hostname trusts X-Forwarded-Host only from the upstream proxy
+      const host = (req.hostname || (req.headers['host'] as string) || '').split(':')[0].toLowerCase();
+
       if (!identifier && host) {
         const cachedDomain = TenantContextMiddleware.clinicCache.get(host);
         if (cachedDomain && cachedDomain.expiresAt > Date.now()) {
           clinic = cachedDomain.clinic;
         } else {
-          // Lookup in ClinicDomain table
+          // Lookup strictly in ClinicDomain table
           const domainEntry = await this.prisma.clinicDomain.findUnique({
             where: { domain: host },
             include: { clinic: true },
@@ -61,16 +62,16 @@ export class TenantContextMiddleware implements NestMiddleware {
           }
         }
 
-        // Subdomain fallback if not in ClinicDomain table
-        if (!clinic && !/^\d+\.\d+\.\d+\.\d+$/.test(host) && host !== 'localhost') {
+        // Tightly restricted local dev subdomains (e.g., aks.localhost, jacobs.localhost)
+        if (!clinic && isDev && host.endsWith('.localhost')) {
           const parts = host.split('.');
-          if (parts.length > 2 || (parts.length === 2 && parts[1] === 'localhost')) {
+          if (parts.length === 2) {
             identifier = parts[0];
           }
         }
       }
 
-      // 2. Resolve via identifier (code, subdomain, or id)
+      // 2. Resolve via identifier (explicit code, subdomain, or id in dev or local test)
       if (!clinic && identifier) {
         const clean = identifier.trim();
         const cached = TenantContextMiddleware.clinicCache.get(clean);
@@ -96,6 +97,7 @@ export class TenantContextMiddleware implements NestMiddleware {
         }
       }
 
+      // 3. Attach clinic context if resolved; unknown hosts remain fail-closed (req.clinicId = undefined)
       if (clinic) {
         if (clinic.status === 'SUSPENDED') {
           throw new ForbiddenException(`Clinic "${clinic.name}" is currently suspended. Please contact platform administration.`);

@@ -1,0 +1,25 @@
+[EVIDENCE: PHASE 6 - CLINICAL SAFETY]
+
+1. Zero Server-Side Allergy Validation in Prescriptions
+File: apps/api/src/prescriptions/prescriptions.service.ts
+Lines: 110-151
+Code snippet:
+const patient = await tx.patient.findFirst({ where: { id: dto.patientId, clinicId } });
+// Directly creates prescription items without checking patient.allergies:
+const prescription = await tx.prescription.create({
+  data: {
+    clinicId,
+    patientId: dto.patientId,
+    dentistId: actor.userId || actor.id,
+    ...
+  }
+});
+Observation: If patient has allergies = 'Penicillin', doctor can prescribe 'Augmentin 625mg' or 'Amoxicillin 500mg'. The backend performs ZERO checks, provides ZERO warnings, requires ZERO override rationale, and directly marks the prescription status as FINALIZED.
+
+2. Concurrent Prescription Number Collision & Unhandled Crash
+File: apps/api/src/prescriptions/prescriptions.service.ts (lines 118-120) & apps/api/prisma/schema.prisma (line 441)
+Code:
+const count = await tx.prescription.count({ where: { clinicId } });
+const prescriptionNumber = `RX-${currentYear}-${String(count + 1).padStart(4, '0')}`;
+Schema constraint: @@unique([clinicId, prescriptionNumber])
+Observation: If two dentists finalize prescriptions concurrently, both receive identical count + 1, resulting in an unhandled PostgreSQL P2002 Unique Constraint crash for the second dentist.

@@ -26,6 +26,9 @@ import {
   Printer,
   Power,
   X,
+  KeyRound,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { QuickReconsultModal } from '../../components/QuickReconsultModal';
 
@@ -48,21 +51,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [chairStatus, setChairStatus] = useState<Record<number, boolean>>({ 1: true, 2: true, 3: true });
   const [togglingChair, setTogglingChair] = useState<number | null>(null);
   const [showQrModal, setShowQrModal] = useState<boolean>(false);
+  const [qrModalTab, setQrModalTab] = useState<'BOTH' | 'CHECKIN' | 'WALKIN'>('BOTH');
+  const [copiedLink, setCopiedLink] = useState<string | null>(null);
   const [reconsultModalOpen, setReconsultModalOpen] = useState<boolean>(false);
   const [lobbyCode, setLobbyCode] = useState<string>('');
   const { user } = useAuth();
   const totalChairs = user?.clinic?.chairCount || 3;
-  const clinicName = user?.clinic?.name || (user?.clinic?.code === 'JDC' ? 'Jacobs Dental Clinic' : "AK's Elite Dental Clinic");
-  const standeeUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}/book?mode=walkin${lobbyCode ? `&code=${lobbyCode}` : ''}`
-    : (user?.clinic?.code === 'JDC'
-      ? `https://jacobdental.duckdns.org/book?mode=walkin${lobbyCode ? `&code=${lobbyCode}` : ''}`
-      : `https://aksdental.duckdns.org/book?mode=walkin${lobbyCode ? `&code=${lobbyCode}` : ''}`);
-  const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(standeeUrl)}`;
+  const clinicName = user?.clinic?.name || 'Clinic';
+
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  const checkInUrl = `${baseUrl}/check-in`;
+  const walkinUrl = `${baseUrl}/check-in?mode=walkin`;
+  const checkinQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(checkInUrl)}`;
+  const walkinQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(walkinUrl)}`;
 
   const fetchChairStatus = async () => {
     try {
-      const res = await apiRequest<{ chairs: any; lobbyCode?: string }>('/appointments/public-chair-status');
+      const res = await apiRequest<{ chairs: any; lobbyCode?: string; dailyCode?: string }>('/appointments/public-chair-status');
       if (res) {
         if (Array.isArray(res.chairs)) {
           const map: Record<number, boolean> = {};
@@ -71,7 +76,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         } else if (res.chairs) {
           setChairStatus(res.chairs);
         }
-        if (res.lobbyCode) setLobbyCode(res.lobbyCode);
+        if (res.dailyCode) setLobbyCode(res.dailyCode);
+        else if (res.lobbyCode) setLobbyCode(res.lobbyCode);
       }
     } catch {}
   };
@@ -173,14 +179,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          {/* Live TV 4-Digit Arrival Code Card */}
+          <div className="flex items-center gap-2 bg-linear-to-r from-amber-50 to-orange-50 border-2 border-amber-400 text-amber-950 font-black text-xs py-1.5 px-3 rounded-xl shadow-xs">
+            <KeyRound className="w-4 h-4 text-amber-700 shrink-0" />
+            <div>
+              <span className="text-[9px] uppercase tracking-wider text-amber-800 font-extrabold block -mb-0.5">
+                Live TV Code
+              </span>
+              <strong className="font-mono text-sm tracking-widest text-teal-950 bg-white px-2 py-0.5 rounded-md border border-amber-300 shadow-2xs font-black">
+                {lobbyCode || '••••'}
+              </strong>
+            </div>
+          </div>
+
           <button
             onClick={() => setShowQrModal(true)}
-            className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-teal-300 font-bold text-xs flex items-center gap-1.5 border border-slate-700 cursor-pointer transition-all"
-            title="Hospital Lobby Standee QR Code for Walk-In Self Check-In"
+            className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-teal-300 font-bold text-xs flex items-center gap-1.5 border border-slate-700 cursor-pointer transition-all shadow-xs"
+            title="Hospital Lobby Dual Standee QR Codes (Booked Check-in & Walk-in)"
           >
             <QrCode className="w-4 h-4 text-teal-400" />
-            <span>Standee QR</span>
+            <span>Dual Standee QRs</span>
           </button>
           <button
             onClick={() => fetchDashboardData()}
@@ -612,11 +631,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {/* Printable Hospital Lobby Standee QR Modal */}
       {showQrModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full border border-slate-200 p-6 relative text-center">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full border border-slate-200 p-6 relative text-center my-8">
             <button
               onClick={() => setShowQrModal(false)}
-              className="absolute right-4 top-4 text-slate-400 hover:text-slate-600 p-1"
+              className="absolute right-4 top-4 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -625,40 +644,149 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <QrCode className="w-6 h-6" />
             </div>
 
-            <h3 className="text-lg font-black text-slate-900">{clinicName}</h3>
-            <p className="text-xs text-slate-500 font-medium">Hospital Lobby Standee QR Code</p>
+            <h3 className="text-xl font-black text-slate-900">{clinicName}</h3>
+            <p className="text-xs text-slate-500 font-medium">Official Hospital Reception & Lobby Standee QRs</p>
 
-            <div className="my-5 p-4 bg-slate-50 rounded-2xl border border-slate-200 inline-block shadow-inner">
-              <img
-                src={qrCodeUrl}
-                alt="Standee QR Code"
-                className="w-48 h-48 mx-auto rounded-xl object-contain bg-white p-2 shadow-xs"
-              />
+            {/* Live 4-Digit Arrival Code Callout */}
+            <div className="mt-4 p-3 bg-amber-50 border border-amber-300 rounded-2xl flex items-center justify-between gap-3 text-left">
+              <div className="flex items-center gap-2.5">
+                <KeyRound className="w-5 h-5 text-amber-700 shrink-0" />
+                <div>
+                  <span className="text-[10px] uppercase tracking-wider text-amber-800 font-extrabold block">
+                    Today's Live TV Check-in Code
+                  </span>
+                  <p className="text-[11px] text-amber-900 font-medium">
+                    Patients must type this 4-digit code upon scanning to confirm physical lobby presence.
+                  </p>
+                </div>
+              </div>
+              <strong className="font-mono text-lg tracking-widest text-teal-950 bg-white px-3 py-1 rounded-xl border border-amber-300 shadow-xs font-black shrink-0">
+                {lobbyCode || '••••'}
+              </strong>
             </div>
 
-            <div className="bg-teal-50/70 border border-teal-200 rounded-xl p-3 text-xs text-teal-900 mb-4 text-left">
-              <p className="font-bold mb-1">🏥 Standee Placement Guide:</p>
-              <p className="text-slate-600 text-[11px] leading-relaxed">
-                Print this QR code and display it on acrylic standees at the clinic reception desk and lobby waiting area. Walk-in patients can scan to register directly into today's queue.
-              </p>
-            </div>
-
-            <div className="flex items-center justify-center gap-2">
+            {/* Tab Selector */}
+            <div className="flex items-center justify-center gap-2 mt-4 p-1 bg-slate-100 rounded-xl max-w-md mx-auto text-xs font-extrabold">
               <button
+                type="button"
+                onClick={() => setQrModalTab('BOTH')}
+                className={`flex-1 py-1.5 px-3 rounded-lg transition cursor-pointer ${
+                  qrModalTab === 'BOTH' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Dual Standee (Both QRs)
+              </button>
+              <button
+                type="button"
+                onClick={() => setQrModalTab('CHECKIN')}
+                className={`flex-1 py-1.5 px-3 rounded-lg transition cursor-pointer ${
+                  qrModalTab === 'CHECKIN' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                1. Booked Check-in
+              </button>
+              <button
+                type="button"
+                onClick={() => setQrModalTab('WALKIN')}
+                className={`flex-1 py-1.5 px-3 rounded-lg transition cursor-pointer ${
+                  qrModalTab === 'WALKIN' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                2. Walk-in Registration
+              </button>
+            </div>
+
+            {/* QR Display Area */}
+            <div className="mt-5">
+              {(qrModalTab === 'BOTH' || qrModalTab === 'CHECKIN') && (
+                <div className={`p-4 bg-slate-50 rounded-2xl border border-slate-200 inline-block m-2 text-center ${qrModalTab === 'BOTH' ? 'w-full sm:w-[46%]' : 'w-full sm:w-80'}`}>
+                  <span className="text-xs font-black text-teal-900 uppercase tracking-wide block mb-1">
+                    QR 1: Booked Patient Check-in
+                  </span>
+                  <p className="text-[10px] text-slate-500 mb-2">For patients with prior scheduled booking</p>
+                  <img
+                    src={checkinQrUrl}
+                    alt="Booked Check-in QR"
+                    className="w-44 h-44 mx-auto rounded-xl object-contain bg-white p-2 shadow-xs border border-slate-200"
+                  />
+                  <div className="mt-2.5 flex items-center justify-center gap-1.5 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(checkInUrl);
+                        setCopiedLink('checkin');
+                        setTimeout(() => setCopiedLink(null), 2000);
+                      }}
+                      className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-700 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                    >
+                      {copiedLink === 'checkin' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedLink === 'checkin' ? 'Copied!' : 'Copy Link'}</span>
+                    </button>
+                    <a
+                      href={checkInUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-2.5 py-1 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg text-teal-800 font-bold text-[11px]"
+                    >
+                      Open
+                    </a>
+                  </div>
+                </div>
+              )}
+
+              {(qrModalTab === 'BOTH' || qrModalTab === 'WALKIN') && (
+                <div className={`p-4 bg-slate-50 rounded-2xl border border-slate-200 inline-block m-2 text-center ${qrModalTab === 'BOTH' ? 'w-full sm:w-[46%]' : 'w-full sm:w-80'}`}>
+                  <span className="text-xs font-black text-emerald-900 uppercase tracking-wide block mb-1">
+                    QR 2: Walk-In Registration & Token
+                  </span>
+                  <p className="text-[10px] text-slate-500 mb-2">For walk-in arrivals with zero prior booking</p>
+                  <img
+                    src={walkinQrUrl}
+                    alt="Walk-in QR"
+                    className="w-44 h-44 mx-auto rounded-xl object-contain bg-white p-2 shadow-xs border border-slate-200"
+                  />
+                  <div className="mt-2.5 flex items-center justify-center gap-1.5 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(walkinUrl);
+                        setCopiedLink('walkin');
+                        setTimeout(() => setCopiedLink(null), 2000);
+                      }}
+                      className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-700 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                    >
+                      {copiedLink === 'walkin' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedLink === 'walkin' ? 'Copied!' : 'Copy Link'}</span>
+                    </button>
+                    <a
+                      href={walkinUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-emerald-800 font-bold text-[11px]"
+                    >
+                      Open
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-4 flex items-center justify-center gap-3">
+              <button
+                type="button"
                 onClick={() => window.print()}
-                className="px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded-xl shadow-xs flex items-center gap-2 transition cursor-pointer"
+                className="px-5 py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-black text-xs rounded-xl shadow-xs flex items-center gap-2 transition cursor-pointer"
               >
                 <Printer className="w-4 h-4" />
-                <span>Print Standee Poster</span>
+                <span>Print Official Standees</span>
               </button>
-              <a
-                href={standeeUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition"
+              <button
+                type="button"
+                onClick={() => setShowQrModal(false)}
+                className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl border border-slate-300 transition cursor-pointer"
               >
-                Test Link
-              </a>
+                Close
+              </button>
             </div>
           </div>
         </div>

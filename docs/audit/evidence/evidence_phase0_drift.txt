@@ -1,0 +1,19 @@
+[EVIDENCE: PHASE 0 - REPOSITORY INVENTORY & CODE DRIFT]
+Command: python compare_codebases.py
+Result: 63 files differ between aks-elite-dental-management and jacobs-dental-management.
+
+Key Drift Files:
+- apps/api/src/appointments/appointments.controller.ts (Differs)
+- apps/api/src/appointments/appointments.service.ts (Differs)
+- apps/api/src/auth/auth.service.ts (Differs)
+- apps/api/src/clinic/clinic.controller.ts (Differs)
+- apps/api/src/common/middleware/tenant-context.middleware.ts (Differs)
+- apps/api/src/users/users.service.ts (Differs)
+- apps/web/src/features/public/PublicBookingView.tsx (Differs)
+- apps/web/src/features/public/PublicCheckInView.tsx (Differs)
+- apps/web/src/features/dashboard/ReceptionDashboard.tsx (Differs)
+
+Git Status & Remote Differences:
+- aks-elite-dental-management: Branch 'integration/clinic-hours-and-dual-qr', Remote origin: https://github.com/yogesh5770/dentrinqo.git (Commit 847fb23)
+- jacobs-dental-management: Branch 'staging/smart-queue-balancing', Remote: NONE (Disconnected local clone with uncommitted new files)
+- Naming drift: jacobs-dental-management package.json still references 'aks-api', 'aks-web', '@aks/shared-types'

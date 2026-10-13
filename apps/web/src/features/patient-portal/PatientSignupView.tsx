@@ -9,9 +9,9 @@ export const PatientSignupView: React.FC = () => {
   const { signup, account } = usePatientAuth();
   const { clinic } = useTenant();
 
-  const hostClinicName = clinic?.name || (typeof window !== 'undefined' && window.location.hostname.includes('jacob') ? 'Jacobs Dental Clinic' : "AK's Elite Dental Clinic");
+  const hostClinicName = clinic?.name || 'Dental Clinic';
   const hostClinicCode = clinic?.code || (typeof window !== 'undefined' && window.location.hostname.includes('jacob') ? 'JDC' : 'AKS');
-  const hostClinicCity = clinic?.city || (typeof window !== 'undefined' && window.location.hostname.includes('jacob') ? 'Nagercoil' : 'Madurai');
+  const hostClinicCity = clinic?.city || (typeof window !== 'undefined' && window.location.hostname.includes('jacob') ? 'Chennai' : 'Madurai');
 
   useEffect(() => {
     if (account) {

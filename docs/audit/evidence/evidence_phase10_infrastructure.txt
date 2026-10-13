@@ -1,0 +1,26 @@
+[EVIDENCE: PHASE 10 - INFRASTRUCTURE & DEPLOYMENT]
+
+1. Plain-Text Credentials & Secrets in Deployment Scripts
+File: deploy_lightsail_jacobs.sh
+Lines: 6, 91-92, 201
+Code:
+JWT_SECRET="jacobs-dental-jwt-secure-super-key-vellore-2026-production"
+COOKIE_SECRET="jacobs-cookie-secret-production-random-key-902834"
+Admin Password: jacob@123
+
+2. Destructive Commands in Automated Production Deployment
+File: deploy_lightsail_jacobs.sh
+Lines: 105-106
+Code:
+npx prisma db push --accept-data-loss
+npx ts-node prisma/seed.ts
+Impact: 'prisma db push --accept-data-loss' drops conflicting schema columns in live database without migration safety. 'prisma/seed.ts' calls 'prisma.medicalFile.deleteMany({})' and wipes existing clinic records.
+
+3. Database Owner Bypasses Row Level Security
+File: deploy_vps_ubuntu.sh (line 66) & deploy_lightsail_jacobs.sh (line 61)
+Code:
+sudo -u postgres psql -c "ALTER DATABASE ${DB_NAME} OWNER TO ${DB_USER};"
+
+4. Lack of Single-Tenant Backup & Restore Capability
+File: deploy_vps_ubuntu.sh (lines 80-95) & scripts/backup_postgresql.sh
+Observation: Backup script executes pg_dump on the entire database (all clinics combined). There is no provision to backup or restore a single tenant clinic independently. Restoring a backup for Clinic A overwrites all data for Clinic B.

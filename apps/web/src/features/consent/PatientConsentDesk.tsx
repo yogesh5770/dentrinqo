@@ -55,7 +55,7 @@ export const PatientConsentDesk: React.FC<PatientConsentDeskProps> = ({
   patientName,
   patientUhid,
   patientPhone,
-  clinicName = 'Elite Dental Clinic',
+  clinicName = 'Dental Clinic',
 }) => {
   const [consents, setConsents] = useState<PatientConsentRecord[]>([]);
   const [templates, setTemplates] = useState<ConsentTemplate[]>([]);

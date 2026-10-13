@@ -22,14 +22,14 @@ export const WaitingRoomTvView: React.FC = () => {
   const [searchParams] = useSearchParams();
 
   // Clinic Info
-  const clinicName = tenantClinic?.name || "AK's Elite Dental Clinic and Hospital";
-  const clinicCode = tenantClinic?.code || 'AKS';
+  const clinicName = tenantClinic?.name || 'Dental Clinic';
+  const clinicCode = tenantClinic?.code || 'CLINIC';
   const chairCount = tenantClinic?.chairCount || 3;
 
   // Display Token Management
   const queryToken = searchParams.get('token') || searchParams.get('displayToken') || '';
   const [displayToken, setDisplayToken] = useState<string>(
-    queryToken || localStorage.getItem('aks_tv_display_token') || ''
+    queryToken || localStorage.getItem('dental_tv_display_token') || ''
   );
   const [showSetupModal, setShowSetupModal] = useState<boolean>(!displayToken);
   const [tempTokenInput, setTempTokenInput] = useState<string>('');
@@ -53,7 +53,7 @@ export const WaitingRoomTvView: React.FC = () => {
   // Save display token to localStorage if provided in URL
   useEffect(() => {
     if (queryToken) {
-      localStorage.setItem('aks_tv_display_token', queryToken);
+      localStorage.setItem('dental_tv_display_token', queryToken);
       setDisplayToken(queryToken);
       setShowSetupModal(false);
     }
@@ -108,10 +108,18 @@ export const WaitingRoomTvView: React.FC = () => {
   // Fetch Public Chairs & Waiting Queue
   const fetchChairsAndQueue = async () => {
     try {
+      const headers: Record<string, string> = {};
+      if (displayToken) {
+        headers['x-display-token'] = displayToken;
+      }
+
+      const queryParam = clinicCode ? `?clinicCode=${encodeURIComponent(clinicCode)}` : '';
       const res = await apiRequest<{
         chairs: any[];
         called?: any[];
-      }>(`/appointments/public-chair-status?clinicCode=${clinicCode}`);
+      }>(`/appointments/public-chair-status${queryParam}`, {
+        headers,
+      });
 
       if (res && res.chairs) {
         setChairs(res.chairs);
@@ -174,7 +182,7 @@ export const WaitingRoomTvView: React.FC = () => {
     e.preventDefault();
     const clean = tempTokenInput.trim();
     if (clean) {
-      localStorage.setItem('aks_tv_display_token', clean);
+      localStorage.setItem('dental_tv_display_token', clean);
       setDisplayToken(clean);
       setShowSetupModal(false);
       fetchLobbyCode();
@@ -410,7 +418,7 @@ export const WaitingRoomTvView: React.FC = () => {
       {/* Footer Navigation Bar */}
       <footer className="border-t border-slate-800 pt-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 font-medium">
         <div>
-          <span>{clinicName}</span> • <span>Self Check-In Powered by AKS Elite Cloud</span>
+          <span>{clinicName}</span> • <span>Self Check-In & Live Queue TV</span>
         </div>
         <div className="flex items-center gap-4">
           <span>Need assistance? Step forward to the reception counter</span>
@@ -461,7 +469,7 @@ export const WaitingRoomTvView: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      localStorage.removeItem('aks_tv_display_token');
+                      localStorage.removeItem('dental_tv_display_token');
                       setDisplayToken('');
                       setTempTokenInput('');
                     }}

@@ -346,7 +346,7 @@ export const ClinicSettingsView: React.FC = () => {
                     required
                     value={clinicName}
                     onChange={e => setClinicName(e.target.value)}
-                    placeholder="AKS Elite Dental Clinic"
+                    placeholder="e.g. My Dental Clinic"
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 focus:bg-white focus:border-teal-600 focus:outline-none"
                   />
                 </div>
@@ -424,7 +424,7 @@ export const ClinicSettingsView: React.FC = () => {
                     type="email"
                     value={email}
                     onChange={e => setEmail(e.target.value)}
-                    placeholder="akselitedental.madurai@gmail.com"
+                    placeholder="contact@clinic.com"
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 focus:bg-white focus:border-teal-600 focus:outline-none"
                   />
                 </div>
@@ -605,7 +605,7 @@ export const ClinicSettingsView: React.FC = () => {
                     type="text"
                     value={upiVpa}
                     onChange={(e) => setUpiVpa(e.target.value.trim())}
-                    placeholder="e.g. akselitedental@icici"
+                    placeholder="e.g. myclinic@icici"
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 font-mono text-xs focus:bg-white focus:border-teal-600 outline-none"
                   />
                   <p className="text-[11px] text-slate-500 mt-1">

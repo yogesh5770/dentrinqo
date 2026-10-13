@@ -21,6 +21,10 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
   if (!isOpen || !invoice) return null;
 
   const handlePrint = () => {
+    if (!clinic?.name || clinic.name === 'Dental Clinic') {
+      alert('Cannot print invoice: Clinic details are missing from the profile. Please configure clinic profile in settings before printing.');
+      return;
+    }
     window.print();
   };
 
@@ -45,9 +49,9 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
       : null;
 
     const text = generateInvoiceWhatsAppText({
-      clinicName: clinic.name || 'AKS Elite Dental Clinic',
+      clinicName: clinic.name || 'Dental Clinic',
       patientName: patient.fullName || 'Patient',
-      uhid: patient.uhid || 'AKS-PATIENT',
+      uhid: patient.uhid || 'PATIENT',
       invoiceNumber: invoice.invoiceNumber,
       receiptNumber: latestPayment?.receiptNumber,
       totalRupees: invoice.totalPaise / 100,
@@ -119,12 +123,12 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
             <div className="flex items-start gap-4">
               <img
                 src="/logo.png"
-                alt="AKS Elite Dental Clinic"
+                alt={clinic.name || "Dental Clinic"}
                 className="w-16 h-16 object-contain shrink-0"
               />
               <div>
                 <h2 className="text-2xl font-black tracking-tight text-teal-900">
-                  AKS ELITE DENTAL CLINIC
+                  {(clinic.name || "DENTAL CLINIC").toUpperCase()}
                 </h2>
                 <p className="text-xs font-bold text-teal-700 tracking-wide uppercase mt-0.5">
                   {clinic.tagline}
@@ -234,7 +238,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
                 </div>
               )}
               <div className="text-[11px] text-slate-400 leading-relaxed">
-                Thank you for choosing AKS Elite Dental Clinic. All procedures carry standard clinical guarantees.
+                Thank you for choosing {clinic.name || 'the clinic'}. All procedures carry standard clinical guarantees.
               </div>
             </div>
 
@@ -318,9 +322,9 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
 
             <div className="text-center min-w-[200px]">
               <div className="h-12 border-b border-dashed border-slate-400 mb-1 flex items-end justify-center pb-1 font-serif italic text-teal-900 font-bold">
-                AKS Elite Dental Clinic
+                {clinic.name}
               </div>
-              <p className="font-bold text-slate-900 text-xs">For AKS Elite Dental Clinic</p>
+              <p className="font-bold text-slate-900 text-xs">For {clinic.name}</p>
               <p className="text-[10px] text-slate-500">Authorized Accounts Signatory</p>
             </div>
           </div>

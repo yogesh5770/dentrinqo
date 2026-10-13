@@ -1,0 +1,39 @@
+ID,Severity,Category,Status,Title,File,Line,Effort
+SEC-TENANT-01,CRITICAL,Tenant Isolation,VERIFIED,Arbitrary Clinic Fallback via findFirst() in Appointments Service,apps/api/src/appointments/appointments.service.ts,954,S
+SEC-TENANT-02,HIGH,Tenant Isolation,VERIFIED,Missing RLS Policies on ClinicClosure and ClinicWorkingHour,apps/api/prisma/migrations/multi_tenant_rls.sql,189,S
+SEC-TENANT-03,HIGH,Database Security,VERIFIED,Database Application User is Table Owner Bypassing RLS,deploy_vps_ubuntu.sh,66,M
+SEC-TENANT-04,HIGH,Tenant Resolution,VERIFIED,Untrusted X-Forwarded-Host Header Spoofing,apps/api/src/common/middleware/tenant-context.middleware.ts,42,S
+SEC-AUTH-01,HIGH,Authentication,VERIFIED,Hardcoded Production Fallback Secret in Patient Auth,apps/api/src/patient-auth/patient-auth.service.ts,44,S
+SEC-AUTH-02,HIGH,Authorization,VERIFIED,PatientAuthGuard Lacks Cross-Tenant Host Boundary Check,apps/api/src/patient-auth/guards/patient-auth.guard.ts,25,S
+SEC-AUTH-03,HIGH,Authentication,VERIFIED,Missing Account Lockout & Rate Limiting on Staff Login,apps/api/src/auth/auth.service.ts,77,M
+SEC-AUTH-04,MEDIUM,Authorization,VERIFIED,Hardcoded Super-Admin Deletion Guard Only for AKS Elite,apps/api/src/users/users.service.ts,308,S
+SEC-AUTH-05,MEDIUM,Authentication,VERIFIED,Timing Discrepancy on Staff Login Enables Email Enumeration,apps/api/src/auth/auth.service.ts,85,S
+SEC-AUTH-06,MEDIUM,Session Storage,VERIFIED,Patient Profile and Family Data Stored in LocalStorage,apps/web/src/hooks/usePatientAuth.tsx,60,M
+SEC-API-01,HIGH,API Security,VERIFIED,Missing Security Headers (Helmet Middleware Absent),apps/api/src/main.ts,20,S
+SEC-API-02,MEDIUM,API Security,VERIFIED,Global Validation Pipe Permits Non-Whitelisted Body Fields,apps/api/src/main.ts,65,S
+SEC-API-03,HIGH,Input & Storage,VERIFIED,Unrestricted File Type Upload and Inline Execution (Stored XSS),apps/api/src/medical-files/medical-files.service.ts,67,M
+SEC-API-04,MEDIUM,API Security,VERIFIED,Hardcoded Cookie Secret Fallback in main.ts,apps/api/src/main.ts,24,S
+SEC-API-05,MEDIUM,Third-Party Risk,VERIFIED,Sensitive Financial and Tracking Data Sent to api.qrserver.com,apps/web/src/features/dashboard/ReceptionDashboard.tsx,2247,M
+SEC-CLIN-01,CRITICAL,Clinical Safety,VERIFIED,Zero Server-Side Allergy Validation When Prescribing Medications,apps/api/src/prescriptions/prescriptions.service.ts,118,M
+SEC-CLIN-02,HIGH,Clinical Safety,VERIFIED,Concurrency Collision in Prescription Numbering Causes Crash,apps/api/src/prescriptions/prescriptions.service.ts,119,S
+SEC-CLIN-03,MEDIUM,Clinical Safety,VERIFIED,Medical Verification Gate Blocks Seating but Permits Prescribing & Billing,apps/api/src/prescriptions/prescriptions.service.ts,112,S
+SEC-BILL-01,CRITICAL,Billing & Money,VERIFIED,Voiding Paid Invoices Without Payment Reversal Creates Cash Discrepancy,apps/api/src/billing/billing.service.ts,409,M
+SEC-BILL-02,HIGH,Billing & Money,VERIFIED,Blank UPI VPA Falls Back to Broken Dynamic Payment QR,apps/web/src/features/dashboard/ReceptionDashboard.tsx,2248,S
+SEC-BILL-03,MEDIUM,Billing & Money,VERIFIED,Manual UPI Payment Recording Without Reference Number Verification,apps/api/src/billing/billing.dto.ts,88,S
+SEC-WORKFLOW-01,HIGH,Workflow & Queue,VERIFIED,Non-Enforced State Machine Allows Arbitrary Lifecycle Jumps,apps/api/src/appointments/appointments.service.ts,563,M
+SEC-WORKFLOW-02,MEDIUM,Workflow & Queue,VERIFIED,Client-Supplied Token Number Can Alter Daily Queue Order,apps/api/src/appointments/appointments.service.ts,377,S
+SEC-WORKFLOW-03,MEDIUM,Workflow & Queue,VERIFIED,Hardcoded Salt Fallback for Rotating Lobby Code HMAC,apps/api/src/appointments/appointments.service.ts,845,S
+SEC-WORKFLOW-04,HIGH,Reliability,VERIFIED,In-Memory Lobby Code Rate Limiting Wiped on Server Restart,apps/api/src/appointments/appointments.service.ts,870,M
+SEC-PRIV-01,HIGH,Privacy & Compliance,VERIFIED,WhatsApp Medical & Invoice Sharing Bypasses Consent Flag,apps/web/src/features/billing/InvoicePrintModal.tsx,46,S
+SEC-PRIV-02,HIGH,Privacy & Compliance,VERIFIED,Full Diagnostic & Prescription Data Exposed in Plain URLs,apps/web/src/lib/whatsapp.ts,28,M
+SEC-PRIV-03,MEDIUM,Privacy & Compliance,VERIFIED,Marketing Site Contains Hardcoded Mock Reviews and Claims,scratch/aks-elite-dental-madurai/src/data/clinicData.ts,679,S
+SEC-PRIV-04,MEDIUM,Privacy & Compliance,VERIFIED,Clinical Before/After Cases Published Without Attached Digital Consent,scratch/aks-elite-dental-madurai/src/data/clinicData.ts,250,M
+SEC-FRONT-01,MEDIUM,Frontend Quality,VERIFIED,Hardcoded Clinic Code Fallbacks Leak Across Multi-Tenant Apps,apps/web/src/features/patient-portal/PatientLoginView.tsx,13,S
+SEC-FRONT-02,HIGH,Performance,VERIFIED,High-Frequency HTTP Polling Causes Server Exhaustion,apps/web/src/features/public/WaitingRoomTvView.tsx,160,L
+SEC-DEPL-01,CRITICAL,Deployment & Ops,VERIFIED,Automated Deployment Script Uses Destructive db push --accept-data-loss,deploy_lightsail_jacobs.sh,105,M
+SEC-DEPL-02,HIGH,Deployment & Ops,VERIFIED,Production Seed Script Invoked During Automated Deployment,deploy_lightsail_jacobs.sh,106,S
+SEC-DEPL-03,HIGH,Deployment & Ops,VERIFIED,Hardcoded Passwords and Production JWT Secrets in Shell Scripts,deploy_lightsail_jacobs.sh,6,S
+SEC-DEPL-04,HIGH,Infrastructure,VERIFIED,Plain-HTTP Port 80 Listener Without Mandatory HTTPS Redirect,deploy_vps_ubuntu.sh,105,S
+SEC-DEPL-05,HIGH,Infrastructure,VERIFIED,Lack of Single-Tenant Backup and Isolated Restore Provisioning,scripts/backup_postgresql.sh,15,L
+SEC-DEPL-06,HIGH,Architecture,VERIFIED,Two Disconnected Repositories with 63 Files of Code Drift,apps/api/src/appointments/appointments.service.ts,1,L
+SEC-DEPL-07,HIGH,Security Vulnerability,VERIFIED,41 NPM Vulnerabilities Including Tinypool Prototype Pollution to RCE,package.json,1,M

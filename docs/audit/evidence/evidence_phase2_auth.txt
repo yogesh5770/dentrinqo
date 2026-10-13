@@ -1,0 +1,26 @@
+[EVIDENCE: PHASE 2 - AUTHENTICATION & AUTHORIZATION]
+
+1. Hardcoded Fallback Production Secret in Patient Auth
+File: apps/api/src/patient-auth/patient-auth.service.ts
+Line: 44
+Code snippet:
+private readonly jwtSecret = process.env.SESSION_SECRET || 'aks-elite-jwt-secure-super-key-madurai-2026-production';
+Impact: If SESSION_SECRET is unset or empty in production, patient tokens are signed with a known public secret, allowing arbitrary patient token generation.
+
+2. PatientAuthGuard Lacks Cross-Tenant Host Validation
+File: apps/api/src/patient-auth/guards/patient-auth.guard.ts
+Lines: 20-35
+Observation: Validates JWT signature and extracts payload.clinicId, but NEVER compares payload.clinicId against the request host's req.clinicId. A valid patient token from Clinic A can be passed to Clinic B endpoints.
+
+3. Missing Account Lockout & Brute-Force Rate Limiting for Staff Login
+File: apps/api/src/auth/auth.service.ts (lines 77-128) & apps/api/src/auth/auth.controller.ts (lines 20-40)
+Observation: No @Throttle decorator on staff login endpoint. Staff accounts lack failedLoginAttempts and lockoutUntil fields (unlike PatientAccount). Brute-force dictionary attacks against staff accounts are unimpeded.
+
+4. Hardcoded Super-Admin Protection Only for AKS Gmail Addresses
+File: apps/api/src/users/users.service.ts
+Lines: 308, 370
+Code snippet:
+if (targetUser.email.toLowerCase() === 'akselitedental.madurai@gmail.com' || targetUser.email.toLowerCase() === 'aksdental@gmail.com') {
+  throw new ForbiddenException('The primary clinic owner account cannot be deactivated');
+}
+Impact: Super-admin deletion/deactivation guard is hardcoded exclusively for AKS Elite Gmail addresses. Jacobs Dental Clinic admins have zero deactivation protection.

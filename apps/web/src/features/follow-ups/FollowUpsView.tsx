@@ -183,10 +183,10 @@ export const FollowUpsView: React.FC<{ onOpenBooking?: () => void }> = ({ onOpen
   const sendWhatsApp = (item: FollowUpItem) => {
     const text = generateFollowUpWhatsAppText({
       patientName: item.patient.fullName,
-      clinicName: user?.clinic?.name || 'AKS Elite Dental Clinic',
+      clinicName: user?.clinic?.name || 'Dental Clinic',
       procedure: item.notes || item.type,
       type: item.type,
-      clinicPhone: user?.clinic?.phone || '+91 94431 55660',
+      clinicPhone: user?.clinic?.phone || '',
     });
     openWhatsApp(item.patient.phone, text);
     markStatus(item.id, 'CONTACTED');

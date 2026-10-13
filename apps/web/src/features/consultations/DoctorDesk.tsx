@@ -45,7 +45,7 @@ interface DoctorDeskProps {
 
 export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examination' }) => {
   const { user } = useAuth();
-  const doctorDisplayName = user?.fullName || (user?.clinic?.code === 'JDC' ? 'Dr. Josy Jacob (MDS)' : 'Dr. Khalidh Khan (BDS, MDS)');
+  const doctorDisplayName = user?.fullName || 'Doctor';
   const [todayPatients, setTodayPatients] = useState<any[]>([]);
   const [selectedAppt, setSelectedAppt] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);

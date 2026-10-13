@@ -26,6 +26,8 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { SpeechToTextDictation } from '../../components/SpeechToTextDictation';
+import { useAuth } from '../../hooks/useAuth';
+import { useTenant } from '../../hooks/useTenant';
 
 interface NewPatientModalProps {
   isOpen: boolean;
@@ -45,6 +47,10 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
   initialSerialNo = '',
 }) => {
   if (!isOpen) return null;
+
+  const { user } = useAuth();
+  const { clinic: tenantClinic } = useTenant();
+  const clinicName = tenantClinic?.name || user?.clinic?.name || 'Dental Clinic';
 
   // Active registration mode - defaults to LEGACY_ARCHIVE if opened with serial or archive
   const [recordMode, setRecordMode] = useState<'STANDARD' | 'LEGACY_ARCHIVE'>(
@@ -246,7 +252,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
         </head>
         <body>
           <div class="header">
-            <div class="clinic-name">AK's Elite Dental Clinic</div>
+            <div class="clinic-name">${clinicName}</div>
             <div>PATIENT QUEUE SLIP</div>
           </div>
           <div class="token-box">
@@ -367,7 +373,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
               </button>
 
               <a
-                href={`https://wa.me/${phone.replace(/\D/g, '').length === 10 ? '91' + phone.replace(/\D/g, '') : phone.replace(/\D/g, '')}?text=${encodeURIComponent(`Hello ${fullName}, your walk-in token at AK's Elite Dental Clinic is #${walkinSuccessData.tokenNumber}. Expected chair: Chair #${walkinSuccessData.chairNumber || walkinSuccessData.expectedChairNumber}. Estimated wait: approx. ${Math.max(5, (walkinSuccessData.patientsAhead ?? 1) * 15)} mins.`)}`}
+                href={`https://wa.me/${phone.replace(/\D/g, '').length === 10 ? '91' + phone.replace(/\D/g, '') : phone.replace(/\D/g, '')}?text=${encodeURIComponent(`Hello ${fullName}, your walk-in token at ${clinicName} is #${walkinSuccessData.tokenNumber}. Expected chair: Chair #${walkinSuccessData.chairNumber || walkinSuccessData.expectedChairNumber}. Estimated wait: approx. ${Math.max(5, (walkinSuccessData.patientsAhead ?? 1) * 15)} mins.`)}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="px-4 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs transition cursor-pointer shadow-md flex items-center justify-center gap-2"

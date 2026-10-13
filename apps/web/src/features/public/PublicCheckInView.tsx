@@ -41,12 +41,12 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
   defaultWalkIn = false,
 }) => {
   const { clinic: tenantClinic } = useTenant();
-  const activeClinicCode = tenantClinic?.code || clinicCode || (typeof window !== 'undefined' && window.location.hostname.includes('jacob') ? 'JDC' : 'AKS');
-  const activeClinicName = tenantClinic?.name || clinicName || (typeof window !== 'undefined' && window.location.hostname.includes('jacob') ? 'Jacobs Dental Clinic' : "AK's Elite Dental Clinic");
-  const activeClinicPhone = tenantClinic?.phone || clinicPhone || '+91 95387 23872';
+  const activeClinicCode = tenantClinic?.code || clinicCode || '';
+  const activeClinicName = tenantClinic?.name || clinicName || 'Dental Clinic';
+  const activeClinicPhone = tenantClinic?.phone || clinicPhone || '';
   const activeClinicAddress = tenantClinic?.address 
     ? `${tenantClinic.address}, ${tenantClinic.city || ''}` 
-    : (clinicAddress || 'Hospital & Multi-Speciality Dental Centre');
+    : (clinicAddress || '');
 
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -92,24 +92,6 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
   // Success State
   const [checkInSuccess, setCheckInSuccess] = useState<any | null>(null);
 
-  // Pre-visit Health Intake Mini-Form
-  const [showIntake, setShowIntake] = useState(false);
-  const [allergies, setAllergies] = useState<string[]>([]);
-  const [medicalConditions, setMedicalConditions] = useState<{
-    diabetic: boolean;
-    hypertension: boolean;
-    cardiac: boolean;
-    bloodThinners: boolean;
-    pregnant: boolean;
-  }>({
-    diabetic: false,
-    hypertension: false,
-    cardiac: false,
-    bloodThinners: false,
-    pregnant: false,
-  });
-  const [intakeSaving, setIntakeSaving] = useState(false);
-  const [intakeSaved, setIntakeSaved] = useState(false);
 
   // Live Beeper Pager State & Turn Alarm
   const [turnAlarmFired, setTurnAlarmFired] = useState(false);
@@ -190,7 +172,7 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
 
     try {
       // Determine if identifier is booking reference or phone
-      const isRef = cleanRefOrName.toUpperCase().includes('AKS') || cleanRefOrName.includes('-');
+      const isRef = (activeClinicCode && cleanRefOrName.toUpperCase().startsWith(activeClinicCode.toUpperCase())) || cleanRefOrName.includes('-');
       const identifier = isRef ? cleanRefOrName : cleanPhone;
       const patientNameParam = isRef ? undefined : cleanRefOrName;
 
@@ -316,32 +298,6 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
     }
   };
 
-  const handleSubmitIntake = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const ref = checkInSuccess?.reference;
-    if (!ref) return;
-
-    setIntakeSaving(true);
-    try {
-      await apiRequest(`/appointments/public-intake/${ref}`, {
-        method: 'POST',
-        body: JSON.stringify({
-          ...medicalConditions,
-          allergies,
-        }),
-      });
-      setIntakeSaved(true);
-      setShowIntake(false);
-    } catch (err: any) {
-      alert(err.message || 'Failed to submit safety intake.');
-    } finally {
-      setIntakeSaving(false);
-    }
-  };
-
-  const toggleAllergy = (name: string) => {
-    setAllergies((prev) => (prev.includes(name) ? prev.filter((a) => a !== name) : [...prev, name]));
-  };
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col justify-between font-sans selection:bg-teal-600 selection:text-white">
@@ -888,89 +844,6 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
               </div>
             )}
 
-            {/* Fast-Track Medical Screening Button */}
-            {!intakeSaved && (
-              <div className="border border-teal-200 rounded-2xl p-4 bg-white text-left space-y-3 shadow-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-black text-xs text-teal-950">While Waiting: 30s Health Safety Check</span>
-                  <button
-                    type="button"
-                    onClick={() => setShowIntake(!showIntake)}
-                    className="px-3 py-1 bg-white hover:bg-teal-100 text-teal-900 border border-teal-300 rounded-lg text-xs font-black transition cursor-pointer"
-                  >
-                    {showIntake ? 'Close' : 'Fill Form'}
-                  </button>
-                </div>
-
-                {showIntake && (
-                  <form onSubmit={handleSubmitIntake} className="space-y-3 pt-2 border-t border-teal-200/60 text-xs">
-                    <p className="text-[11px] text-teal-900 font-medium">
-                      Select any existing health conditions so the dentist can adjust anesthesia and medications:
-                    </p>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      {[
-                        { key: 'diabetic', label: 'Diabetes' },
-                        { key: 'hypertension', label: 'High BP / Hypertension' },
-                        { key: 'cardiac', label: 'Heart / Cardiac Condition' },
-                        { key: 'bloodThinners', label: 'Taking Blood Thinners' },
-                        { key: 'pregnant', label: 'Pregnancy / Nursing' },
-                      ].map((item) => (
-                        <label
-                          key={item.key}
-                          className="flex items-center gap-2 p-2 bg-slate-50 rounded-xl border border-teal-200 cursor-pointer text-[11px] font-semibold text-slate-800"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={(medicalConditions as any)[item.key]}
-                            onChange={(e) =>
-                              setMedicalConditions({ ...medicalConditions, [item.key]: e.target.checked })
-                            }
-                            className="rounded text-teal-600 focus:ring-teal-500 w-4 h-4"
-                          />
-                          <span>{item.label}</span>
-                        </label>
-                      ))}
-                    </div>
-
-                    <div>
-                      <span className="text-[11px] font-bold text-slate-700 block mb-1">Known Drug Allergies:</span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {['Penicillin', 'Sulfa Drugs', 'Aspirin', 'Local Anesthesia'].map((alg) => (
-                          <button
-                            key={alg}
-                            type="button"
-                            onClick={() => toggleAllergy(alg)}
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
-                              allergies.includes(alg)
-                                ? 'bg-rose-600 text-white border border-rose-700'
-                                : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
-                            }`}
-                          >
-                            {alg}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={intakeSaving}
-                      className="w-full py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-black text-xs transition cursor-pointer"
-                    >
-                      {intakeSaving ? 'Saving Safety Profile...' : 'Save Health Safety Profile'}
-                    </button>
-                  </form>
-                )}
-              </div>
-            )}
-
-            {intakeSaved && (
-              <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-xs font-bold text-emerald-950 flex items-center justify-center gap-2">
-                <Check className="w-4 h-4 text-emerald-600" />
-                <span>Health Safety Profile recorded! Doctor alerted.</span>
-              </div>
-            )}
 
             {/* Reset / Search Another */}
             <div className="pt-2 text-center">

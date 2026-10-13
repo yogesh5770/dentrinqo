@@ -23,12 +23,13 @@ export class ClinicService {
             { subdomain: clean.toLowerCase() },
           ],
         },
+        include: { domains: true },
       });
 
       if (!clinic) {
         const domainEntry = await this.prisma.clinicDomain.findUnique({
           where: { domain: clean.toLowerCase() },
-          include: { clinic: true },
+          include: { clinic: { include: { domains: true } } },
         });
         if (domainEntry?.clinic) {
           clinic = domainEntry.clinic;
@@ -37,6 +38,7 @@ export class ClinicService {
     } else {
       clinic = await this.prisma.clinic.findFirst({
         where: { status: 'ACTIVE' },
+        include: { domains: true },
       });
     }
 
@@ -58,24 +60,63 @@ export class ClinicService {
     return this.formatPublicClinic(clinic, activeClosure);
   }
 
+  /**
+   * Minimal public info for marketing/landing sites.
+   * Safe to expose cross-origin with no authentication.
+   * Does NOT include email, UPI VPA, GSTIN, chairCount, or leave details.
+   */
+  async getMarketingInfo(identifier?: string) {
+    const clean = (identifier || '').trim();
+    if (!clean) {
+      throw new NotFoundException('Clinic identifier is required');
+    }
+
+    let clinic = await this.prisma.clinicDomain.findUnique({
+      where: { domain: clean.toLowerCase() },
+      include: { clinic: true },
+    }).then((d) => d?.clinic ?? null);
+
+    if (!clinic) {
+      clinic = await this.prisma.clinic.findFirst({
+        where: {
+          OR: [
+            { id: clean },
+            { code: clean.toUpperCase() },
+            { subdomain: clean.toLowerCase() },
+          ],
+        },
+      });
+    }
+
+    if (!clinic || clinic.status !== 'ACTIVE') {
+      throw new NotFoundException('Clinic not found or inactive');
+    }
+
+    return this.formatMarketingClinic(clinic);
+  }
+
+  /**
+   * Operational public shape — used by the check-in kiosk and booking flow.
+   * Requires the tenant to be resolved by the middleware first (req.clinicId).
+   * Does NOT include email or UPI VPA (those are staff-only fields).
+   */
   private formatPublicClinic(clinic: any, activeClosure?: any) {
+    const primaryDomain = clinic.domains?.find((d: any) => d.isPrimary)?.domain || clinic.domains?.[0]?.domain || null;
     return {
       id: clinic.id,
       name: clinic.name,
       code: clinic.code,
       tagline: clinic.tagline,
+      primaryDomain: primaryDomain ? `https://${primaryDomain}` : null,
       phone: clinic.phone,
       emergencyPhone: clinic.emergencyPhone || clinic.phone,
-      email: clinic.email,
       address: clinic.address,
       city: clinic.city,
       state: clinic.state,
       postalCode: clinic.postalCode,
-      chairCount: clinic.chairCount,
       subdomain: clinic.subdomain,
-      upiVpa: clinic.upiVpa,
       isOnLeave: Boolean(activeClosure),
-      leaveReason: activeClosure?.reason || null,
+      // leaveReason omitted — internal clinic management detail
       hoursEnforced: clinic.hoursEnforced ?? false,
       workingHoursConfigured: clinic.workingHoursConfigured ?? false,
       lastWalkinMinutesBeforeClose: clinic.lastWalkinMinutesBeforeClose ?? 30,
@@ -93,14 +134,43 @@ export class ClinicService {
     };
   }
 
+  /**
+   * Marketing-only shape — minimal, safe for cross-origin GET with no login.
+   */
+  private formatMarketingClinic(clinic: any) {
+    const primaryDomain = clinic.domains?.find((d: any) => d.isPrimary)?.domain || clinic.domains?.[0]?.domain || null;
+    return {
+      name: clinic.name,
+      tagline: clinic.tagline,
+      primaryDomain: primaryDomain ? `https://${primaryDomain}` : null,
+      phone: clinic.phone,
+      emergencyPhone: clinic.emergencyPhone || clinic.phone,
+      address: clinic.address,
+      city: clinic.city,
+      state: clinic.state,
+      workingHours: clinic.workingHours
+        ? (() => {
+            try {
+              return JSON.parse(clinic.workingHours);
+            } catch {
+              return clinic.workingHours;
+            }
+          })()
+        : null,
+    };
+  }
+
   async getSettings(clinicId: string) {
     const clinic = await this.prisma.clinic.findUnique({
       where: { id: clinicId },
+      include: { domains: true },
     });
 
     if (!clinic) {
       throw new NotFoundException('Clinic record not found');
     }
+
+    const primaryDomain = clinic.domains?.find((d: any) => d.isPrimary)?.domain || clinic.domains?.[0]?.domain || null;
 
     const now = new Date();
     const activeClosure = await this.prisma.clinicClosure.findFirst({
@@ -117,6 +187,7 @@ export class ClinicService {
       id: clinic.id,
       name: clinic.name,
       code: clinic.code,
+      primaryDomain: primaryDomain ? `https://${primaryDomain}` : null,
       tagline: clinic.tagline,
       phone: clinic.phone,
       emergencyPhone: clinic.emergencyPhone || clinic.phone,

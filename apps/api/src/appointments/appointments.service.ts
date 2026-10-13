@@ -617,12 +617,6 @@ export class AppointmentsService {
 
       // 2. Seating Safety Enforcement, Timing Realignment & Booking Conflict Protection
       if (dto.status === 'IN_CHAIR') {
-        if (appt.patient?.needsVerification) {
-          throw new BadRequestException(
-            'Cannot seat patient in chair: First-visit identity and allergies must be verified at reception desk before seating.'
-          );
-        }
-
         // Check if another patient is currently occupying the chair (including treatment overrun detection)
         const currentOccupant = await tx.appointment.findFirst({
           where: {
@@ -922,15 +916,18 @@ export class AppointmentsService {
   }
 
   // STEP 2: Online booking - Single transaction find-or-create Patient & create Appointment (SCHEDULED)
-  async createPublicRequest(dto: CreatePublicAppointmentDto, clientIp?: string, patientToken?: string) {
+  async createPublicRequest(dto: CreatePublicAppointmentDto, clientIp?: string, patientToken?: string, hostClinicId?: string) {
     // 1. Resolve clinic strictly and isolate
     let clinic = null;
-    if (dto.clinicCode) {
+    if (hostClinicId) {
+      clinic = await this.prisma.clinic.findUnique({
+        where: { id: hostClinicId },
+      });
+    }
+    if (!clinic && dto.clinicCode) {
       clinic = await this.prisma.clinic.findFirst({
         where: { code: dto.clinicCode.toUpperCase() },
       });
-    } else {
-      clinic = await this.prisma.clinic.findFirst();
     }
 
     if (!clinic) {
@@ -2163,7 +2160,7 @@ export class AppointmentsService {
       clinic = await this.prisma.clinic.findFirst({ where: { code: codePrefix } });
     }
     if (!clinic) {
-      clinic = await this.prisma.clinic.findFirst({ where: { status: 'ACTIVE' } });
+      throw new BadRequestException('Dental clinic could not be resolved from host context.');
     }
     // Unified assertOpen check (Requirement 1, 3: Self check-in allowed only inside working hours)
     await this.clinicHoursService.assertOpen(
@@ -2427,15 +2424,35 @@ export class AppointmentsService {
     });
   }
 
-  async getPublicChairStatus(clinicCode?: string) {
+  async getPublicChairStatus(clinicCode?: string, displayToken?: string, reqClinicId?: string) {
     let clinic = null;
-    if (clinicCode) {
+
+    if (displayToken) {
+      const cleanToken = displayToken.trim();
+      const tokenHash = crypto.createHash('sha256').update(cleanToken).digest('hex');
+      const tokenRecord = await this.prisma.clinicDisplayToken.findFirst({
+        where: { tokenHash, isRevoked: false },
+        include: { clinic: true },
+      });
+      if (tokenRecord?.clinic) {
+        clinic = tokenRecord.clinic;
+      }
+    }
+
+    if (!clinic && reqClinicId) {
+      clinic = await this.prisma.clinic.findUnique({ where: { id: reqClinicId } });
+    }
+
+    if (!clinic && clinicCode) {
       clinic = await this.prisma.clinic.findFirst({
         where: { code: clinicCode.toUpperCase() },
       });
-    } else {
+    }
+
+    if (!clinic) {
       clinic = await this.prisma.clinic.findFirst({ where: { status: 'ACTIVE' } });
     }
+
     if (!clinic) throw new NotFoundException('Clinic not found');
 
     const totalChairs = Math.max(clinic.chairCount || 1, 1);

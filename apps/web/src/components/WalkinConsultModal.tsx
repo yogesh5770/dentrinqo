@@ -38,8 +38,8 @@ export const WalkinConsultModal: React.FC<WalkinConsultModalProps> = ({
   if (!isOpen) return null;
 
   const { user } = useAuth();
-  const clinicName = user?.clinic?.name || 'AK’s Elite Dental Clinic';
-  const clinicCode = user?.clinic?.code || 'AED';
+  const clinicName = user?.clinic?.name || 'Dental Clinic';
+  const clinicCode = user?.clinic?.code || '';
 
   // Form Fields
   const [phone, setPhone] = useState('');

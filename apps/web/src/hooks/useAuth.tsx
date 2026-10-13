@@ -50,40 +50,17 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(() => {
-    if (typeof window === 'undefined') return null;
-    try {
-      const saved = localStorage.getItem('auth_user_profile');
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
-  const [isLoading, setIsLoading] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    const token = localStorage.getItem('auth_access_token') || localStorage.getItem('aks_auth_token');
-    const profile = localStorage.getItem('auth_user_profile');
-    return Boolean(token && !profile);
-  });
+  const [user, setUser] = useState<User | null>(null);
+  // Start loading=true so protected routes wait for the /auth/me check
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const refreshProfile = async () => {
-    const token = localStorage.getItem('auth_access_token') || localStorage.getItem('aks_auth_token');
-    if (!token) {
-      setUser(null);
-      localStorage.removeItem('auth_user_profile');
-      setIsLoading(false);
-      return;
-    }
-
     try {
       const profile = await apiRequest<User>('/auth/me');
       setUser(profile);
-      localStorage.setItem('auth_user_profile', JSON.stringify(profile));
     } catch (err: any) {
-      // ONLY clear session if server explicitly returns 401 Unauthorized
       if (err?.statusCode === 401) {
         setSessionToken(null);
-        localStorage.removeItem('auth_user_profile');
         setUser(null);
       }
     } finally {
@@ -100,9 +77,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       method: 'POST',
       body: JSON.stringify({ emailOrUsername: identifier, password: pass }),
     });
+    // Keep token in-memory for the Authorization header fallback.
+    // The server already set the aks_session httpOnly cookie.
     setSessionToken(res.token);
     setUser(res.user);
-    localStorage.setItem('auth_user_profile', JSON.stringify(res.user));
     return res.user;
   };
 
@@ -111,8 +89,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await apiRequest('/auth/logout', { method: 'POST' });
     } finally {
       setSessionToken(null);
-      localStorage.removeItem('auth_user_profile');
       setUser(null);
+      // Remove any legacy localStorage keys from previous versions.
+      if (typeof window !== 'undefined') {
+        ['auth_access_token', 'aks_auth_token', 'auth_user_profile'].forEach(
+          (k) => localStorage.removeItem(k),
+        );
+      }
     }
   };
 

@@ -1,0 +1,15 @@
+[EVIDENCE: PHASE 7 - BILLING AND FINANCIAL INTEGRITY]
+
+1. Voiding Paid Invoices Without Payment Reversal
+File: apps/api/src/billing/billing.service.ts
+Lines: 401-440
+Code snippet:
+async deleteInvoice(clinicId: string, id: string, actor: any, reason?: string) {
+  const invoice = await tx.invoice.findFirst({ where: { id, clinicId } });
+  if (invoice.status === 'VOIDED') throw new BadRequestException('Invoice is already voided');
+  // NOTE: No check whether invoice.paidPaise > 0 or invoice.payments.length > 0!
+  // Resets completed procedures to isBilled: false:
+  await tx.completedProcedure.updateMany({ where: { id: { in: procIds } }, data: { isBilled: false } });
+  await tx.invoice.update({ where: { id }, data: { status: 'VOIDED', balancePaise: 0 } });
+}
+Impact: A clinic admin or accountant can void an invoice that already has collected payments. The payments remain in the database as orphaned records while procedures are marked unbilled, creating a major cash embezzlement and audit discrepancy loophole.

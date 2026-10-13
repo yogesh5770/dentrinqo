@@ -315,15 +315,15 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
                     openWhatsApp(
                       bookingSuccessData.patient?.phone,
                       generateAppointmentWhatsAppText({
-                        clinicName: user?.clinic?.name || (user?.clinic?.code === 'JDC' ? 'Jacobs Dental Clinic' : "AK's Elite Dental Clinic"),
+                        clinicName: user?.clinic?.name || 'Dental Clinic',
                         patientName: bookingSuccessData.patient?.fullName || 'Patient',
                         date: bookingSuccessData.date,
                         time: bookingSuccessData.time,
                         chairNumber: bookingSuccessData.chairNumber,
                         doctorName: bookingSuccessData.doctorName,
                         reason: bookingSuccessData.reason,
-                        clinicAddress: user?.clinic?.address || (user?.clinic?.code === 'JDC' ? '14th East Cross Main Road, Gandhi Nagar East, Vellore' : 'Plot No. 162/2A, Alagar Complex, K.Pudur, Madurai'),
-                        clinicPhone: user?.clinic?.phone || (user?.clinic?.code === 'JDC' ? '+91 97500 31330' : '+91 95387 23872'),
+                        clinicAddress: user?.clinic?.address || '',
+                        clinicPhone: user?.clinic?.phone || '',
                       }),
                     );
                   }}

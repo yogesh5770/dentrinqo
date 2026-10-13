@@ -99,9 +99,26 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
   const { user } = useAuth();
   const totalChairs = user?.clinic?.chairCount || 2;
   const clinicName = user?.clinic?.name || "Dental Clinic";
-  const clinicCode = user?.clinic?.code || 'AKS';
+  const clinicCode = user?.clinic?.code || '';
   const [standeeType, setStandeeType] = useState<'DUAL' | 'CHECKIN' | 'WALKIN'>('DUAL');
-  const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  const [primaryDomain, setPrimaryDomain] = useState<string>('');
+
+  useEffect(() => {
+    if ((user?.clinic as any)?.primaryDomain) {
+      setPrimaryDomain((user?.clinic as any)?.primaryDomain);
+    } else {
+      apiRequest('/clinic/public-info')
+        .then((data: any) => {
+          if (data?.primaryDomain) setPrimaryDomain(data.primaryDomain);
+        })
+        .catch(() => {});
+    }
+  }, [user]);
+
+  // Priority: primaryDomain from database ClinicDomain -> window.location.origin
+  const baseUrl = primaryDomain
+    ? (primaryDomain.startsWith('http') ? primaryDomain : `https://${primaryDomain}`)
+    : (typeof window !== 'undefined' ? window.location.origin : '');
 
   // QR & Lobby Code Settings State
   const [customLobbyCode, setCustomLobbyCode] = useState<string>('');
@@ -2228,7 +2245,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                       <div className="bg-white p-2.5 rounded-xl border border-slate-200 inline-block shadow-xs">
                         <img
                           src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(
-                            `upi://pay?pa=${user?.clinic?.upiVpa || 'akselitedental@icici'}&pn=${encodeURIComponent(clinicName)}&am=${checkoutAmountRs}&cu=INR`
+                            `upi://pay?pa=${user?.clinic?.upiVpa || ''}&pn=${encodeURIComponent(clinicName)}&am=${checkoutAmountRs}&cu=INR`
                           )}`}
                           alt="UPI Payment QR"
                           className="w-40 h-40 mx-auto"

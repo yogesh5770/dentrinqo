@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { apiRequest } from '../../lib/api';
+import { useTenant } from '../../hooks/useTenant';
 import {
   Armchair,
   Bell,
@@ -35,6 +36,7 @@ interface TrackingData {
 
 export const PublicTrackView: React.FC = () => {
   const { code } = useParams<{ code: string }>();
+  const { clinic } = useTenant();
   const [data, setData] = useState<TrackingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -123,7 +125,7 @@ export const PublicTrackView: React.FC = () => {
             </span>
           </div>
           <h1 className="text-base sm:text-lg font-black tracking-tight text-white mt-0.5">
-            {data?.clinicName || 'AK’s Elite Dental Clinic'}
+            {data?.clinicName || clinic?.name || 'Dental Clinic'}
           </h1>
         </div>
 

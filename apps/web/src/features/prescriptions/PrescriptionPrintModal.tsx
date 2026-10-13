@@ -21,6 +21,10 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
   if (!isOpen || !prescription) return null;
 
   const handlePrint = () => {
+    if (!clinic?.name || clinic.name === 'Dental Clinic') {
+      alert('Cannot print prescription: Clinic details are missing from the profile. Please configure clinic profile in settings before printing.');
+      return;
+    }
     window.print();
   };
 
@@ -55,11 +59,11 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
     }));
 
     const text = generatePrescriptionWhatsAppText({
-      clinicName: clinic.name || 'AKS Elite Dental Clinic',
+      clinicName: clinic.name || 'Dental Clinic',
       patientName: patient.fullName || 'Patient',
-      uhid: patient.uhid || 'AKS-PATIENT',
+      uhid: patient.uhid || 'PATIENT',
       prescriptionNumber: prescription.prescriptionNumber || 'RX-001',
-      doctorName: doctor.fullName || 'Dr. A. K. Saravanan',
+      doctorName: doctor.fullName || 'Doctor',
       date: new Date(prescription.createdAt || Date.now()).toLocaleDateString('en-IN'),
       medications: meds,
       generalInstructions: prescription.notes || prescription.instructions,
@@ -128,12 +132,12 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
             <div className="flex items-start gap-4">
               <img
                 src="/logo.png"
-                alt="AKS Elite Dental Clinic"
+                alt={clinic?.name || "Dental Clinic"}
                 className="w-16 h-16 object-contain shrink-0"
               />
               <div>
                 <span className="text-2xl font-extrabold tracking-tight text-teal-900 block">
-                  {clinic.name ? clinic.name.toUpperCase() : 'AKS ELITE DENTAL CLINIC'}
+                  {clinic?.name ? clinic.name.toUpperCase() : 'DENTAL CLINIC'}
                 </span>
                 <p className="text-xs font-semibold text-teal-700 tracking-wide uppercase mt-0.5">
                   {clinic.tagline}
