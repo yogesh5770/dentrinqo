@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { TenantContextMiddleware } from '../common/middleware/tenant-context.middleware';
@@ -111,6 +112,24 @@ export class ClinicService {
       isBillingVerified: clinic.isBillingVerified ?? false,
       isOnLeave: (clinic as any).isOnLeave ?? false,
       leaveReason: (clinic as any).leaveReason ?? null,
+      customLobbyCode: (() => {
+        try {
+          const p = JSON.parse(clinic.workingHours || '{}');
+          return p.customLobbyCode || null;
+        } catch { return null; }
+      })(),
+      customWalkinQrUrl: (() => {
+        try {
+          const p = JSON.parse(clinic.workingHours || '{}');
+          return p.customWalkinQrUrl || null;
+        } catch { return null; }
+      })(),
+      customCheckinQrUrl: (() => {
+        try {
+          const p = JSON.parse(clinic.workingHours || '{}');
+          return p.customCheckinQrUrl || null;
+        } catch { return null; }
+      })(),
       workingHours: clinic.workingHours
         ? (() => {
             try {
@@ -124,6 +143,31 @@ export class ClinicService {
   }
 
   async updateSettings(clinicId: string, data: any, actor: any) {
+    const current = await this.prisma.clinic.findUnique({ where: { id: clinicId } });
+    let workingHoursObj: any = {};
+    if (current?.workingHours) {
+      try {
+        workingHoursObj = JSON.parse(current.workingHours);
+      } catch {
+        workingHoursObj = {};
+      }
+    }
+
+    if (data.customLobbyCode !== undefined) {
+      workingHoursObj.customLobbyCode = data.customLobbyCode && String(data.customLobbyCode).trim() ? String(data.customLobbyCode).trim() : null;
+    }
+    if (data.customWalkinQrUrl !== undefined) {
+      workingHoursObj.customWalkinQrUrl = data.customWalkinQrUrl && String(data.customWalkinQrUrl).trim() ? String(data.customWalkinQrUrl).trim() : null;
+    }
+    if (data.customCheckinQrUrl !== undefined) {
+      workingHoursObj.customCheckinQrUrl = data.customCheckinQrUrl && String(data.customCheckinQrUrl).trim() ? String(data.customCheckinQrUrl).trim() : null;
+    }
+    if (data.workingHours !== undefined) {
+      if (typeof data.workingHours === 'object') {
+        workingHoursObj = { ...workingHoursObj, ...data.workingHours };
+      }
+    }
+
     const updated = await this.prisma.clinic.update({
       where: { id: clinicId },
       data: {
@@ -136,9 +180,7 @@ export class ClinicService {
         state: data.state,
         postalCode: data.postalCode,
         chairCount: data.chairCount ? parseInt(data.chairCount, 10) : undefined,
-        workingHours: data.workingHours !== undefined
-          ? (typeof data.workingHours === 'string' ? data.workingHours : JSON.stringify(data.workingHours))
-          : undefined,
+        workingHours: JSON.stringify(workingHoursObj),
         gstin: data.gstin,
         upiVpa: data.upiVpa,
         requireLobbyCode: data.requireLobbyCode !== undefined ? Boolean(data.requireLobbyCode) : undefined,
@@ -166,7 +208,69 @@ export class ClinicService {
 
     // Exclude lobbySecret from returned object
     const { lobbySecret, ...safeClinic } = updated as any;
-    return safeClinic;
+    return {
+      ...safeClinic,
+      customLobbyCode: workingHoursObj.customLobbyCode || null,
+      customWalkinQrUrl: workingHoursObj.customWalkinQrUrl || null,
+      customCheckinQrUrl: workingHoursObj.customCheckinQrUrl || null,
+    };
+  }
+
+  async rotateLobbyCode(clinicId: string, actor: any) {
+    const current = await this.prisma.clinic.findUnique({ where: { id: clinicId } });
+    if (!current) throw new NotFoundException('Clinic not found');
+
+    let workingHoursObj: any = {};
+    if (current.workingHours) {
+      try { workingHoursObj = JSON.parse(current.workingHours); } catch { workingHoursObj = {}; }
+    }
+    // Clear any static custom code on rotation so it returns to dynamic auto-generated code
+    workingHoursObj.customLobbyCode = null;
+
+    const newSecret = crypto.randomBytes(32).toString('hex');
+    const updated = await this.prisma.clinic.update({
+      where: { id: clinicId },
+      data: {
+        lobbySecret: newSecret,
+        workingHours: JSON.stringify(workingHoursObj),
+      },
+    });
+
+    TenantContextMiddleware.clearClinicCache(clinicId);
+
+    await this.auditService.log({
+      clinicId,
+      actorId: actor?.userId || actor?.id,
+      actorRole: actor?.role || 'STAFF',
+      action: 'LOBBY_CODE_ROTATED',
+      entityType: 'Clinic',
+      entityId: clinicId,
+      details: { rotatedAt: new Date().toISOString() },
+    });
+
+    const windowSec = updated.lobbyCodeWindowSeconds || 300;
+    const digits = updated.lobbyCodeDigits === 6 ? 6 : 4;
+    const now = Math.floor(Date.now() / 1000);
+    const bucket = Math.floor(now / windowSec);
+    const hmac = crypto.createHmac('sha256', newSecret);
+    hmac.update(`${updated.id}:${bucket}`);
+    const hash = hmac.digest('hex');
+
+    const modulo = digits === 6 ? 900000 : 9000;
+    const base = digits === 6 ? 100000 : 1000;
+    const code = (parseInt(hash.substring(0, 8), 16) % modulo + base).toString();
+
+    const expiresAt = (bucket + 1) * windowSec * 1000;
+    const secondsRemaining = Math.max(0, (bucket + 1) * windowSec - now);
+
+    return {
+      success: true,
+      code,
+      expiresAt,
+      secondsRemaining,
+      digits,
+      message: 'Live TV arrival code successfully rotated.',
+    };
   }
 
   async toggleLeave(clinicId: string, isOnLeave: boolean, leaveReason?: string, actor?: any) {

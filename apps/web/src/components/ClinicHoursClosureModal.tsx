@@ -67,12 +67,22 @@ export const ClinicHoursClosureModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
   onStatusChanged?: () => void;
-}> = ({ isOpen, onClose, onStatusChanged }) => {
+  initialTab?: 'STATUS_CLOSURES' | 'WORKING_HOURS' | 'HISTORY';
+}> = ({ isOpen, onClose, onStatusChanged, initialTab = 'STATUS_CLOSURES' }) => {
   const { user } = useAuth();
   const isAdmin = user?.role === 'CLINIC_ADMIN';
   const isReceptionist = user?.role === 'RECEPTIONIST';
 
-  const [activeTab, setActiveTab] = useState<'STATUS_CLOSURES' | 'WORKING_HOURS' | 'HISTORY'>('STATUS_CLOSURES');
+  const [activeTab, setActiveTab] = useState<'STATUS_CLOSURES' | 'WORKING_HOURS' | 'HISTORY'>(
+    initialTab || 'STATUS_CLOSURES'
+  );
+
+  useEffect(() => {
+    if (initialTab && isOpen) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab, isOpen]);
+
   const [loading, setLoading] = useState(false);
   const [clinicStatus, setClinicStatus] = useState<ClinicStatus | null>(null);
 

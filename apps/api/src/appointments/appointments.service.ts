@@ -52,9 +52,26 @@ export class AppointmentsService {
 
   /**
    * Generates a deterministic time-bucket HMAC lobby code (4 or 6 digits)
-   * using the clinic's 32-byte secret.
+   * using the clinic's 32-byte secret, or returns customLobbyCode if configured.
    */
-  getRotatingLobbyCode(clinic: { id: string; lobbySecret?: string | null; lobbyCodeDigits?: number; lobbyCodeWindowSeconds?: number }, timeOffsetBuckets = 0): { code: string; expiresAt: number; secondsRemaining: number } {
+  getRotatingLobbyCode(clinic: { id: string; lobbySecret?: string | null; lobbyCodeDigits?: number; lobbyCodeWindowSeconds?: number; workingHours?: string | null }, timeOffsetBuckets = 0): { code: string; expiresAt: number; secondsRemaining: number } {
+    let parsed: any = {};
+    if (clinic.workingHours) {
+      try {
+        parsed = typeof clinic.workingHours === 'string' ? JSON.parse(clinic.workingHours) : clinic.workingHours;
+      } catch (e) {
+        parsed = {};
+      }
+    }
+
+    if (parsed && parsed.customLobbyCode && typeof parsed.customLobbyCode === 'string' && parsed.customLobbyCode.trim()) {
+      return {
+        code: parsed.customLobbyCode.trim(),
+        expiresAt: Date.now() + 86400000,
+        secondsRemaining: 86400,
+      };
+    }
+
     const windowSec = clinic.lobbyCodeWindowSeconds || 300; // default 5 minutes
     const digits = clinic.lobbyCodeDigits === 6 ? 6 : 4;
     const now = Math.floor(Date.now() / 1000);
@@ -84,10 +101,23 @@ export class AppointmentsService {
     return this.getRotatingLobbyCode(clinicObj, 0).code;
   }
 
-  verifyRotatingLobbyCode(clinic: { id: string; lobbySecret?: string | null; lobbyCodeDigits?: number; lobbyCodeWindowSeconds?: number; requireLobbyCode?: boolean }, candidateCode: string): boolean {
+  verifyRotatingLobbyCode(clinic: { id: string; lobbySecret?: string | null; lobbyCodeDigits?: number; lobbyCodeWindowSeconds?: number; requireLobbyCode?: boolean; workingHours?: string | null }, candidateCode: string): boolean {
     if (!clinic.requireLobbyCode) return true;
     if (!candidateCode) return false;
     const clean = candidateCode.trim();
+
+    let parsed: any = {};
+    if (clinic.workingHours) {
+      try {
+        parsed = typeof clinic.workingHours === 'string' ? JSON.parse(clinic.workingHours) : clinic.workingHours;
+      } catch (e) {
+        parsed = {};
+      }
+    }
+    if (parsed && parsed.customLobbyCode && typeof parsed.customLobbyCode === 'string' && parsed.customLobbyCode.trim()) {
+      if (clean === parsed.customLobbyCode.trim()) return true;
+    }
+
     // Accept current bucket (0) or previous bucket (-1) for grace window
     const current = this.getRotatingLobbyCode(clinic, 0);
     const previous = this.getRotatingLobbyCode(clinic, -1);

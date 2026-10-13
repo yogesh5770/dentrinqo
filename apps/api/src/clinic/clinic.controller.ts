@@ -62,6 +62,14 @@ export class ClinicController {
     return this.clinicService.updateSettings(user.clinicId, body, user);
   }
 
+  @Post('rotate-lobby-code')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('CLINIC_ADMIN', 'RECEPTIONIST')
+  @ApiOperation({ summary: 'Rotate the live TV arrival code on demand (Staff/Admin)' })
+  async rotateLobbyCode(@CurrentUser() user: any) {
+    return this.clinicService.rotateLobbyCode(user.clinicId, user);
+  }
+
   @Get('hours')
   @UseGuards(AuthGuard)
   @ApiOperation({ summary: 'Get weekly operating hours with breaks for all 7 days' })
