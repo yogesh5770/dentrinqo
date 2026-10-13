@@ -13,17 +13,28 @@ export class ApiError extends Error {
   }
 }
 
-/**
- * In-memory token kept only for the duration of the page session so that
- * existing callers sending an Authorization header remain compatible during
- * the cookie-only transition. The server validates the cookie first; this
- * header is a secondary fallback that will be removed in a follow-up.
- */
-let sessionToken: string | null = null;
+let sessionToken: string | null = typeof window !== 'undefined'
+  ? (localStorage.getItem('aks_auth_token') || localStorage.getItem('auth_access_token'))
+  : null;
+
+export function getSessionToken(): string | null {
+  if (typeof window !== 'undefined') {
+    return sessionToken || localStorage.getItem('aks_auth_token') || localStorage.getItem('auth_access_token');
+  }
+  return sessionToken;
+}
 
 export function setSessionToken(token: string | null) {
-  // Only update the in-memory reference – no localStorage writes.
   sessionToken = token;
+  if (typeof window !== 'undefined') {
+    if (token) {
+      localStorage.setItem('aks_auth_token', token);
+      localStorage.setItem('auth_access_token', token);
+    } else {
+      localStorage.removeItem('aks_auth_token');
+      localStorage.removeItem('auth_access_token');
+    }
+  }
 }
 
 export async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -33,10 +44,9 @@ export async function apiRequest<T>(endpoint: string, options: RequestInit = {})
     headers.set('Content-Type', 'application/json');
   }
 
-  // sessionToken is in-memory only; no localStorage fallback.
-
-  if (sessionToken && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${sessionToken}`);
+  const activeToken = getSessionToken();
+  if (activeToken && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${activeToken}`);
   }
 
   // Normalize endpoint path: ensure starts with /api

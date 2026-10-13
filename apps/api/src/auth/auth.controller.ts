@@ -31,11 +31,11 @@ export class AuthController {
     const user = await this.authService.validateUserCredentials(identifier, dto.password, req.clinicId);
     const token = this.authService.createToken(user);
 
-    const isProduction = process.env.NODE_ENV === 'production';
+    const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
     res.cookie('aks_session', token, {
       httpOnly: true,
-      secure: isProduction,
-      sameSite: isProduction ? 'strict' : 'lax',
+      secure: Boolean(isHttps),
+      sameSite: 'lax',
       maxAge: 8 * 60 * 60 * 1000, // 8 hours
       path: '/',
     });

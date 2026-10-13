@@ -72,15 +72,21 @@ const PatientAuthContext = createContext<PatientAuthContextType | undefined>(und
 export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [account, setAccount] = useState<PatientAccount | null>(() => getStoredPatientAccount());
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>(() => getStoredFamilyMembers());
-  // token is no longer stored; kept in state as null - context consumers that
-  // read it will receive null and should not be sending it via Authorization header.
-  const [token, setToken] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return localStorage.getItem('aks_patient_token');
+  });
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const refresh = async () => {
     try {
-      // Session is carried by the httpOnly cookie; no Authorization header needed.
+      const activeToken = token || (typeof window !== 'undefined' ? localStorage.getItem('aks_patient_token') : null);
+      const headers: Record<string, string> = {};
+      if (activeToken) {
+        headers['Authorization'] = `Bearer ${activeToken}`;
+      }
       const res = await fetch('/api/patient-auth/me', {
+        headers,
         credentials: 'include',
       });
 
@@ -98,6 +104,7 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
       } else if (res.status === 401) {
         setStoredPatientData(null, []);
         setToken(null);
+        if (typeof window !== 'undefined') localStorage.removeItem('aks_patient_token');
         setAccount(null);
         setFamilyMembers([]);
       }
@@ -125,8 +132,10 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
       throw new Error(data.message || 'Login failed');
     }
 
-    // Server sets aks_patient_session httpOnly cookie; no token stored client-side.
-    setToken(null);
+    if (data.token) {
+      setToken(data.token);
+      if (typeof window !== 'undefined') localStorage.setItem('aks_patient_token', data.token);
+    }
     setAccount(data.account);
     const fam = data.familyMembers || [];
     setFamilyMembers(fam);

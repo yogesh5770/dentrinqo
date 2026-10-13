@@ -50,18 +50,37 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  // Start loading=true so protected routes wait for the /auth/me check
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [user, setUser] = useState<User | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const saved = localStorage.getItem('auth_user_profile');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const token = typeof window !== 'undefined' ? (localStorage.getItem('aks_auth_token') || localStorage.getItem('auth_access_token')) : null;
+    const profile = localStorage.getItem('auth_user_profile');
+    return Boolean(token && !profile);
+  });
 
   const refreshProfile = async () => {
     try {
       const profile = await apiRequest<User>('/auth/me');
       setUser(profile);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('auth_user_profile', JSON.stringify(profile));
+      }
     } catch (err: any) {
       if (err?.statusCode === 401) {
         setSessionToken(null);
         setUser(null);
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('auth_user_profile');
+        }
       }
     } finally {
       setIsLoading(false);
@@ -77,10 +96,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       method: 'POST',
       body: JSON.stringify({ emailOrUsername: identifier, password: pass }),
     });
-    // Keep token in-memory for the Authorization header fallback.
-    // The server already set the aks_session httpOnly cookie.
     setSessionToken(res.token);
     setUser(res.user);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('auth_user_profile', JSON.stringify(res.user));
+    }
     return res.user;
   };
 
@@ -90,7 +110,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } finally {
       setSessionToken(null);
       setUser(null);
-      // Remove any legacy localStorage keys from previous versions.
       if (typeof window !== 'undefined') {
         ['auth_access_token', 'aks_auth_token', 'auth_user_profile'].forEach(
           (k) => localStorage.removeItem(k),
