@@ -65,6 +65,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const checkinQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(checkInUrl)}`;
   const walkinQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(walkinUrl)}`;
 
+  const fetchLiveLobbyCode = async () => {
+    try {
+      const res = await apiRequest<{ code: string }>('/appointments/live-lobby-code');
+      if (res && res.code) {
+        setLobbyCode(res.code);
+        return;
+      }
+    } catch {}
+
+    try {
+      const fallback = await apiRequest<{ code: string }>('/appointments/lobby-code');
+      if (fallback && fallback.code) {
+        setLobbyCode(fallback.code);
+      }
+    } catch {}
+  };
+
   const fetchChairStatus = async () => {
     try {
       const res = await apiRequest<{ chairs: any; lobbyCode?: string; dailyCode?: string }>('/appointments/public-chair-status');
@@ -80,6 +97,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         else if (res.lobbyCode) setLobbyCode(res.lobbyCode);
       }
     } catch {}
+    fetchLiveLobbyCode();
   };
 
   const handleToggleChair = async (chairNum: number, currentActive: boolean) => {
@@ -102,6 +120,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const fetchDashboardData = async (silent = false) => {
     if (!silent) setLoading(true);
     fetchChairStatus();
+    fetchLiveLobbyCode();
     try {
       const todayStr = new Date().toISOString().split('T')[0];
       const [apptsData, summaryData, logsData, followUpsData] = await Promise.all([
@@ -125,11 +144,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   useEffect(() => {
     fetchDashboardData(false);
     fetchChairStatus();
+    fetchLiveLobbyCode();
+    const ticker = setInterval(fetchLiveLobbyCode, 20000);
+    return () => clearInterval(ticker);
   }, []);
 
   useClinicSync(() => {
     fetchDashboardData(true);
     fetchChairStatus();
+    fetchLiveLobbyCode();
   });
 
   const handleUpdateStatus = async (id: string, newStatus: string) => {

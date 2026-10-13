@@ -2500,6 +2500,8 @@ export class AppointmentsService {
       });
     }
 
+    const rotating = this.getRotatingLobbyCode(clinic, 0);
+
     return {
       clinicCode: clinic.code,
       clinicName: clinic.name,
@@ -2508,6 +2510,10 @@ export class AppointmentsService {
       todayDate: istDate,
       totalChairs,
       chairs,
+      lobbyCode: rotating.code,
+      dailyCode: rotating.code,
+      expiresAt: rotating.expiresAt,
+      secondsRemaining: rotating.secondsRemaining,
     };
   }
 
