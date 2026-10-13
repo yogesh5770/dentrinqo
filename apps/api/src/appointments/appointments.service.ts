@@ -248,7 +248,9 @@ export class AppointmentsService {
     for (let c = 1; c <= totalChairs; c++) {
       if (!offDutyChairs.has(c)) onDutyChairs.push(c);
     }
-    if (onDutyChairs.length === 0) onDutyChairs.push(1);
+    if (onDutyChairs.length === 0) {
+      return [];
+    }
 
     const activeStatuses = ['PENDING_CONFIRMATION', 'SCHEDULED', 'CONFIRMED', 'CALLED', 'IN_CHAIR'];
 
@@ -346,6 +348,7 @@ export class AppointmentsService {
       'RECEPTION_BOOKING',
       dto.overrideReason,
       actor,
+      duration,
     );
 
     return this.prisma.forTenant(clinicId, async (tx) => {
@@ -774,20 +777,23 @@ export class AppointmentsService {
       throw new BadRequestException('Invalid scheduled start time');
     }
 
-    // Unified assertOpen check (Requirement 3)
-    await this.clinicHoursService.assertOpen(
-      clinicId,
-      newStart,
-      'RESCHEDULE',
-      dto.overrideReason,
-      actor,
-    );
-
     return this.prisma.forTenant(clinicId, async (tx) => {
       const appt = await tx.appointment.findFirst({ where: { id, clinicId } });
       if (!appt) throw new NotFoundException('Appointment not found');
 
-      const duration = dto.durationMinutes || appt.durationMinutes;
+      const duration = dto.durationMinutes || appt.durationMinutes || 30;
+
+      // Unified assertOpen check (Requirement 3)
+      await this.clinicHoursService.assertOpen(
+        clinicId,
+        newStart,
+        'RESCHEDULE',
+        dto.overrideReason,
+        actor,
+        duration,
+        tx,
+      );
+
       const newEnd = new Date(newStart.getTime() + duration * 60 * 1000);
       const chair = dto.chairNumber || appt.chairNumber;
 

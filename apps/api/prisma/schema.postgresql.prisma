@@ -41,6 +41,12 @@ model Clinic {
   codeRotationHours       Int       @default(24)
   maxLateMinutes          Int       @default(45)
   waitingWarningMinutes   Int       @default(30)
+  hoursEnforced           Boolean   @default(false)
+  workingHoursConfigured  Boolean   @default(false)
+  lastWalkinMinutesBeforeClose Int  @default(30)
+  lastWalkinTime          String?   @default("20:00")
+  minVisitsForWaitEstimate Int      @default(20)
+  emergencyPhone          String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -740,4 +746,40 @@ model ClinicDisplayToken {
 
   @@index([clinicId])
 }
+
+model ClinicClosure {
+  id          String    @id @default(uuid())
+  clinicId    String
+  clinic      Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  startAt     DateTime
+  endAt       DateTime
+  reason      String
+  createdById String
+  createdBy   User      @relation("CreatedClosures", fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now())
+  endedAt     DateTime?
+  endedById   String?
+  endedBy     User?     @relation("EndedClosures", fields: [endedById], references: [id])
+  isStaffDeclared     Boolean   @default(false)
+  adminAcknowledged   Boolean   @default(false)
+
+  @@index([clinicId, startAt, endAt])
+}
+
+model ClinicWorkingHour {
+  id         String   @id @default(uuid())
+  clinicId   String
+  clinic     Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  dayOfWeek  Int      // 0=Sunday, 1=Monday, ..., 6=Saturday
+  isOpen     Boolean  @default(true)
+  openTime   String   @default("09:30")
+  closeTime  String   @default("20:30")
+  hasBreak   Boolean  @default(false)
+  breakStart String?  @default("13:30")
+  breakEnd   String?  @default("14:30")
+
+  @@unique([clinicId, dayOfWeek])
+  @@index([clinicId])
+}
+
 

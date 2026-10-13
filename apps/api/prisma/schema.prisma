@@ -41,6 +41,12 @@ model Clinic {
   codeRotationHours       Int       @default(24)
   maxLateMinutes          Int       @default(45)
   waitingWarningMinutes   Int       @default(30)
+  hoursEnforced           Boolean   @default(false)
+  workingHoursConfigured  Boolean   @default(false)
+  lastWalkinMinutesBeforeClose Int  @default(30)
+  lastWalkinTime          String?   @default("20:00")
+  minVisitsForWaitEstimate Int      @default(20)
+  emergencyPhone          String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -761,6 +767,8 @@ model ClinicClosure {
   endedAt     DateTime?
   endedById   String?
   endedBy     User?     @relation("EndedClosures", fields: [endedById], references: [id])
+  isStaffDeclared     Boolean   @default(false)
+  adminAcknowledged   Boolean   @default(false)
 
   @@index([clinicId, startAt, endAt])
 }

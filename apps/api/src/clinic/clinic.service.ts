@@ -44,16 +44,28 @@ export class ClinicService {
       throw new NotFoundException(`Clinic not found or inactive`);
     }
 
-    return this.formatPublicClinic(clinic);
+    const now = new Date();
+    const activeClosure = await this.prisma.clinicClosure.findFirst({
+      where: {
+        clinicId: clinic.id,
+        startAt: { lte: now },
+        endAt: { gt: now },
+        endedAt: null,
+      },
+      orderBy: { endAt: 'desc' },
+    });
+
+    return this.formatPublicClinic(clinic, activeClosure);
   }
 
-  private formatPublicClinic(clinic: any) {
+  private formatPublicClinic(clinic: any, activeClosure?: any) {
     return {
       id: clinic.id,
       name: clinic.name,
       code: clinic.code,
       tagline: clinic.tagline,
       phone: clinic.phone,
+      emergencyPhone: clinic.emergencyPhone || clinic.phone,
       email: clinic.email,
       address: clinic.address,
       city: clinic.city,
@@ -62,8 +74,13 @@ export class ClinicService {
       chairCount: clinic.chairCount,
       subdomain: clinic.subdomain,
       upiVpa: clinic.upiVpa,
-      isOnLeave: (clinic as any).isOnLeave ?? false,
-      leaveReason: (clinic as any).leaveReason ?? null,
+      isOnLeave: Boolean(activeClosure),
+      leaveReason: activeClosure?.reason || null,
+      hoursEnforced: clinic.hoursEnforced ?? false,
+      workingHoursConfigured: clinic.workingHoursConfigured ?? false,
+      lastWalkinMinutesBeforeClose: clinic.lastWalkinMinutesBeforeClose ?? 30,
+      lastWalkinTime: clinic.lastWalkinTime || '20:00',
+      minVisitsForWaitEstimate: clinic.minVisitsForWaitEstimate ?? 20,
       workingHours: clinic.workingHours
         ? (() => {
             try {
@@ -85,12 +102,24 @@ export class ClinicService {
       throw new NotFoundException('Clinic record not found');
     }
 
+    const now = new Date();
+    const activeClosure = await this.prisma.clinicClosure.findFirst({
+      where: {
+        clinicId: clinic.id,
+        startAt: { lte: now },
+        endAt: { gt: now },
+        endedAt: null,
+      },
+      orderBy: { endAt: 'desc' },
+    });
+
     return {
       id: clinic.id,
       name: clinic.name,
       code: clinic.code,
       tagline: clinic.tagline,
       phone: clinic.phone,
+      emergencyPhone: clinic.emergencyPhone || clinic.phone,
       email: clinic.email,
       address: clinic.address,
       city: clinic.city,
@@ -110,8 +139,13 @@ export class ClinicService {
       lobbyCodeWindowSeconds: clinic.lobbyCodeWindowSeconds ?? 300,
       isDoctorVerified: clinic.isDoctorVerified ?? false,
       isBillingVerified: clinic.isBillingVerified ?? false,
-      isOnLeave: (clinic as any).isOnLeave ?? false,
-      leaveReason: (clinic as any).leaveReason ?? null,
+      isOnLeave: Boolean(activeClosure),
+      leaveReason: activeClosure?.reason || null,
+      hoursEnforced: clinic.hoursEnforced ?? false,
+      workingHoursConfigured: clinic.workingHoursConfigured ?? false,
+      lastWalkinMinutesBeforeClose: clinic.lastWalkinMinutesBeforeClose ?? 30,
+      lastWalkinTime: clinic.lastWalkinTime || '20:00',
+      minVisitsForWaitEstimate: clinic.minVisitsForWaitEstimate ?? 20,
       customLobbyCode: (() => {
         try {
           const p = JSON.parse(clinic.workingHours || '{}');
@@ -274,11 +308,42 @@ export class ClinicService {
   }
 
   async toggleLeave(clinicId: string, isOnLeave: boolean, leaveReason?: string, actor?: any) {
+    const now = new Date();
+    const cleanReason = leaveReason !== undefined && leaveReason ? leaveReason : (isOnLeave ? 'Hospital Closed / Holiday' : null);
+
+    if (isOnLeave) {
+      // Create a 24-hour closure record in ClinicClosure
+      const endAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      await this.prisma.clinicClosure.create({
+        data: {
+          clinicId,
+          startAt: now,
+          endAt,
+          reason: cleanReason || 'Hospital Closed / Holiday',
+          createdById: actor?.userId || actor?.id || 'admin',
+        },
+      });
+    } else {
+      // End all active closures in ClinicClosure
+      await this.prisma.clinicClosure.updateMany({
+        where: {
+          clinicId,
+          endedAt: null,
+          startAt: { lte: now },
+          endAt: { gt: now },
+        },
+        data: {
+          endedAt: now,
+          endedById: actor?.userId || actor?.id || 'admin',
+        },
+      });
+    }
+
     const updated = await this.prisma.clinic.update({
       where: { id: clinicId },
       data: {
         isOnLeave: Boolean(isOnLeave),
-        leaveReason: leaveReason !== undefined ? leaveReason : (isOnLeave ? 'Hospital Closed / Holiday' : null),
+        leaveReason: isOnLeave ? cleanReason : null,
       },
     });
 
@@ -286,15 +351,17 @@ export class ClinicService {
 
     await this.auditService.log({
       clinicId,
-      actorId: actor?.userId || actor?.id,
+      actorId: actor?.userId || actor?.id || 'admin',
       actorRole: actor?.role || 'STAFF',
       action: isOnLeave ? 'HOSPITAL_LEAVE_ON' : 'HOSPITAL_LEAVE_OFF',
       entityType: 'Clinic',
       entityId: clinicId,
-      details: { isOnLeave: Boolean(isOnLeave), leaveReason },
+      details: { isOnLeave: Boolean(isOnLeave), leaveReason: cleanReason },
     });
 
     const { lobbySecret, ...safeClinic } = updated as any;
+    safeClinic.isOnLeave = Boolean(isOnLeave);
+    safeClinic.leaveReason = isOnLeave ? cleanReason : null;
     return safeClinic;
   }
 }

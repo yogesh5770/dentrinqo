@@ -116,8 +116,14 @@ export class ClinicHoursService {
           name: true,
           code: true,
           phone: true,
+          emergencyPhone: true,
           chairCount: true,
           workingHours: true,
+          hoursEnforced: true,
+          workingHoursConfigured: true,
+          lastWalkinMinutesBeforeClose: true,
+          lastWalkinTime: true,
+          minVisitsForWaitEstimate: true,
         },
       });
 
@@ -145,7 +151,7 @@ export class ClinicHoursService {
         orderBy: { dayOfWeek: 'asc' },
       });
 
-      if (hours.length === 0) {
+      if (hours.length === 0 && clinic.workingHoursConfigured) {
         hours = await this.initializeDefaultWorkingHours(clinicId, tx);
       }
 
@@ -163,6 +169,11 @@ export class ClinicHoursService {
         closureReason = activeClosure.reason;
         message = `Clinic is closed for: ${activeClosure.reason}`;
         nextOpenAt = activeClosure.endAt.toISOString();
+      } else if (!clinic.hoursEnforced && !clinic.workingHoursConfigured) {
+        // Brand-new clinic: hours have never been configured — open-access mode
+        isOpen = true;
+        statusText = 'OPEN';
+        message = 'Clinic hours have not been configured yet (Operating in open-access mode).';
       } else if (!todaySchedule || !todaySchedule.isOpen) {
         isOpen = false;
         statusText = 'CLOSED';
@@ -194,6 +205,12 @@ export class ClinicHoursService {
         clinicCode: clinic.code,
         clinicName: clinic.name,
         clinicPhone: clinic.phone,
+        emergencyPhone: clinic.emergencyPhone || clinic.phone,
+        hoursEnforced: clinic.hoursEnforced ?? false,
+        workingHoursConfigured: clinic.workingHoursConfigured ?? false,
+        lastWalkinMinutesBeforeClose: clinic.lastWalkinMinutesBeforeClose ?? 30,
+        lastWalkinTime: clinic.lastWalkinTime || '20:00',
+        minVisitsForWaitEstimate: clinic.minVisitsForWaitEstimate ?? 20,
         isOpen,
         status: statusText,
         message,
@@ -205,6 +222,7 @@ export class ClinicHoursService {
               startAt: activeClosure.startAt,
               endAt: activeClosure.endAt,
               createdByName: activeClosure.createdBy?.fullName || 'Staff',
+              isStaffDeclared: (activeClosure as any).isStaffDeclared ?? false,
             }
           : null,
         todaySchedule: todaySchedule
@@ -281,6 +299,13 @@ export class ClinicHoursService {
         });
         records.push(rec);
       }
+
+      // Mark clinic hours as configured — enforcement will now be active
+      await tx.clinic.update({
+        where: { id: clinicId },
+        data: { workingHoursConfigured: true },
+      });
+
       return records;
     });
   }
@@ -320,6 +345,11 @@ export class ClinicHoursService {
     actor: any,
     txClient?: any,
   ) {
+    const role = actor?.role || '';
+    if (role !== 'CLINIC_ADMIN' && role !== 'ADMIN') {
+      throw new ForbiddenException('Only CLINIC_ADMIN can configure or edit clinic operating hours.');
+    }
+
     for (const s of schedules) {
       if (s.isOpen) {
         if (!s.openTime || !s.closeTime || s.openTime >= s.closeTime) {
@@ -367,6 +397,15 @@ export class ClinicHoursService {
         });
       }
 
+      // Mark clinic hours as configured and enforcement active
+      await tx.clinic.update({
+        where: { id: clinicId },
+        data: {
+          workingHoursConfigured: true,
+          hoursEnforced: true,
+        },
+      });
+
       // Immediately invalidate in-memory clinic cache!
       TenantContextMiddleware.clearClinicCache(clinicId);
 
@@ -403,19 +442,30 @@ export class ClinicHoursService {
       | 'RESCHEDULE',
     overrideReason?: string,
     actor?: any,
+    durationMinutes: number = 30,
     txClient?: any,
   ): Promise<AssertOpenResult> {
     return this.runInTenant(clinicId, txClient, async (tx) => {
-      const istTarget = this.getKolkataTimeInfo(instant);
+      // 1. Check Active Closures directly from DB
+      const isScheduledBooking = ['PUBLIC_BOOKING', 'RECEPTION_BOOKING', 'RESCHEDULE'].includes(source);
+      const slotStart = instant;
+      const slotEnd = new Date(instant.getTime() + durationMinutes * 60 * 1000);
 
-      // 1. Check Active Closures covering this target instant directly from DB
+      const closureWhere: any = {
+        clinicId,
+        endedAt: null,
+      };
+
+      if (isScheduledBooking) {
+        closureWhere.startAt = { lt: slotEnd };
+        closureWhere.endAt = { gt: slotStart };
+      } else {
+        closureWhere.startAt = { lte: instant };
+        closureWhere.endAt = { gt: instant };
+      }
+
       const closure = await tx.clinicClosure.findFirst({
-        where: {
-          clinicId,
-          startAt: { lte: instant },
-          endAt: { gt: instant },
-          endedAt: null,
-        },
+        where: closureWhere,
         orderBy: { endAt: 'desc' },
       });
 
@@ -440,7 +490,27 @@ export class ClinicHoursService {
         });
       }
 
-      // 2. Check Weekday Schedule & Breaks directly from DB
+      // 2. Fetch Clinic Settings to check if working hours enforcement is active
+      const clinic = await tx.clinic.findUnique({
+        where: { id: clinicId },
+        select: {
+          hoursEnforced: true,
+          workingHoursConfigured: true,
+          lastWalkinMinutesBeforeClose: true,
+          lastWalkinTime: true,
+        },
+      });
+
+      // Enforcement is active when: admin explicitly enabled it OR hours have been configured (via API or migration)
+      const shouldEnforce = clinic?.hoursEnforced || clinic?.workingHoursConfigured;
+
+      // If hours enforcement is disabled and hours are unconfigured (brand-new clinic open-access mode), allow immediately
+      if (!shouldEnforce) {
+        return { isOpen: true };
+      }
+
+      // 3. Operating hours ARE enforced: Evaluate schedule in Asia/Kolkata
+      const istTarget = this.getKolkataTimeInfo(instant);
       let schedule = await tx.clinicWorkingHour.findUnique({
         where: { clinicId_dayOfWeek: { clinicId, dayOfWeek: istTarget.dayOfWeek } },
       });
@@ -464,42 +534,111 @@ export class ClinicHoursService {
         });
       }
 
-      // Check Operating Hours
-      if (
-        istTarget.timeStr < schedule.openTime ||
-        istTarget.timeStr >= schedule.closeTime
-      ) {
-        if (this.canOverride(actor, overrideReason)) {
-          await this.logOverride(clinicId, instant, source, overrideReason!, actor, `Outside hours (${istTarget.timeStr} vs ${schedule.openTime}-${schedule.closeTime})`, tx);
-          return { isOpen: true, overridden: true };
+      if (isScheduledBooking) {
+        // Scheduled booking / reschedule: evaluate requested slot [slotStartStr, slotEndIst]
+        const slotStartStr = istTarget.timeStr;
+        const endInfo = this.getKolkataTimeInfo(slotEnd);
+        const slotEndIst = endInfo.timeStr;
+        const isNextDay = endInfo.dateStr !== istTarget.dateStr;
+
+        if (
+          slotStartStr < schedule.openTime ||
+          slotStartStr >= schedule.closeTime ||
+          slotEndIst > schedule.closeTime ||
+          isNextDay
+        ) {
+          if (this.canOverride(actor, overrideReason)) {
+            await this.logOverride(clinicId, instant, source, overrideReason!, actor, `Slot extends outside hours (${slotStartStr}-${slotEndIst} vs ${schedule.openTime}-${schedule.closeTime})`, tx);
+            return { isOpen: true, overridden: true };
+          }
+
+          throw new BadRequestException({
+            code: 'CLINIC_OUTSIDE_HOURS',
+            message: `Requested slot (${slotStartStr} - ${slotEndIst} IST) is outside clinic operating hours (${schedule.openTime} - ${schedule.closeTime} IST).`,
+            closedUntil: schedule.openTime,
+          });
         }
 
-        throw new BadRequestException({
-          code: 'CLINIC_OUTSIDE_HOURS',
-          message: `Selected time (${istTarget.timeStr} IST) is outside clinic operating hours (${schedule.openTime} - ${schedule.closeTime} IST).`,
-          closedUntil: schedule.openTime,
-        });
-      }
+        if (schedule.hasBreak && schedule.breakStart && schedule.breakEnd) {
+          if (slotStartStr < schedule.breakEnd && slotEndIst > schedule.breakStart) {
+            if (this.canOverride(actor, overrideReason)) {
+              await this.logOverride(clinicId, instant, source, overrideReason!, actor, `Slot overlaps break (${slotStartStr}-${slotEndIst} vs ${schedule.breakStart}-${schedule.breakEnd})`, tx);
+              return { isOpen: true, overridden: true };
+            }
 
-      // Check Intermission Break
-      if (
-        schedule.hasBreak &&
-        schedule.breakStart &&
-        schedule.breakEnd &&
-        istTarget.timeStr >= schedule.breakStart &&
-        istTarget.timeStr < schedule.breakEnd
-      ) {
-        if (this.canOverride(actor, overrideReason)) {
-          await this.logOverride(clinicId, instant, source, overrideReason!, actor, `Break intermission (${schedule.breakStart}-${schedule.breakEnd})`, tx);
-          return { isOpen: true, overridden: true };
+            throw new BadRequestException({
+              code: 'CLINIC_ON_BREAK',
+              message: `Requested appointment slot (${slotStartStr} - ${slotEndIst} IST) overlaps with clinic intermission / break (${schedule.breakStart} - ${schedule.breakEnd} IST).`,
+              closedUntil: schedule.breakEnd,
+              nextOpenAt: `${istTarget.dateStr}T${schedule.breakEnd}:00+05:30`,
+            });
+          }
+        }
+      } else if (source === 'RECEPTION_WALKIN') {
+        // Walk-in at reception: evaluate NOW against hours, breaks, and last walk-in cutoff
+        const nowStr = istTarget.timeStr;
+        if (nowStr < schedule.openTime || nowStr >= schedule.closeTime) {
+          if (this.canOverride(actor, overrideReason)) {
+            await this.logOverride(clinicId, instant, source, overrideReason!, actor, `Walk-in outside hours (${nowStr} vs ${schedule.openTime}-${schedule.closeTime})`, tx);
+            return { isOpen: true, overridden: true };
+          }
+          throw new BadRequestException({
+            code: 'CLINIC_OUTSIDE_HOURS',
+            message: `Walk-in registration is only accepted during clinic operating hours (${schedule.openTime} - ${schedule.closeTime} IST).`,
+            closedUntil: schedule.openTime,
+          });
         }
 
-        throw new BadRequestException({
-          code: 'CLINIC_ON_BREAK',
-          message: `Clinic is on intermission / break from ${schedule.breakStart} to ${schedule.breakEnd} IST. Appointments cannot be scheduled during this interval.`,
-          closedUntil: schedule.breakEnd,
-          nextOpenAt: `${istTarget.dateStr}T${schedule.breakEnd}:00+05:30`,
-        });
+        if (schedule.hasBreak && schedule.breakStart && schedule.breakEnd && nowStr >= schedule.breakStart && nowStr < schedule.breakEnd) {
+          if (this.canOverride(actor, overrideReason)) {
+            await this.logOverride(clinicId, instant, source, overrideReason!, actor, `Walk-in during break (${nowStr})`, tx);
+            return { isOpen: true, overridden: true };
+          }
+          throw new BadRequestException({
+            code: 'CLINIC_ON_BREAK',
+            message: `Clinic is on intermission / break until ${schedule.breakEnd} IST. Walk-in queue re-opens at ${schedule.breakEnd} IST.`,
+            closedUntil: schedule.breakEnd,
+            nextOpenAt: `${istTarget.dateStr}T${schedule.breakEnd}:00+05:30`,
+          });
+        }
+
+        // Check last walk-in cutoff
+        const [closeH, closeM] = schedule.closeTime.split(':').map(Number);
+        const closeTotalMins = closeH * 60 + closeM;
+        const cutoffMins = closeTotalMins - (clinic.lastWalkinMinutesBeforeClose || 30);
+        const currentTotalMins = istTarget.hour * 60 + istTarget.minute;
+
+        if (currentTotalMins >= cutoffMins) {
+          const cutoffH = Math.floor(cutoffMins / 60);
+          const cutoffMin = cutoffMins % 60;
+          const cutoffStr = `${String(cutoffH).padStart(2, '0')}:${String(cutoffMin).padStart(2, '0')}`;
+          if (this.canOverride(actor, overrideReason)) {
+            await this.logOverride(clinicId, instant, source, overrideReason!, actor, `Walk-in after cutoff (${nowStr} vs ${cutoffStr})`, tx);
+            return { isOpen: true, overridden: true };
+          }
+          throw new BadRequestException({
+            code: 'CLINIC_LAST_WALKIN_EXCEEDED',
+            message: `Walk-in registration has closed for today. Last walk-in cutoff is ${cutoffStr} IST (clinic closing time: ${schedule.closeTime} IST).`,
+            closedUntil: schedule.openTime,
+          });
+        }
+      } else if (source === 'SELF_CHECKIN') {
+        const nowStr = istTarget.timeStr;
+        if (nowStr < schedule.openTime || nowStr >= schedule.closeTime) {
+          throw new BadRequestException({
+            code: 'CLINIC_OUTSIDE_HOURS',
+            message: `Lobby self-check-in kiosk is only available during operational hours (${schedule.openTime} - ${schedule.closeTime} IST).`,
+            closedUntil: schedule.openTime,
+          });
+        }
+        if (schedule.hasBreak && schedule.breakStart && schedule.breakEnd && nowStr >= schedule.breakStart && nowStr < schedule.breakEnd) {
+          throw new BadRequestException({
+            code: 'CLINIC_ON_BREAK',
+            message: `Clinic is on intermission / break until ${schedule.breakEnd} IST. Please check in when reception re-opens.`,
+            closedUntil: schedule.breakEnd,
+            nextOpenAt: `${istTarget.dateStr}T${schedule.breakEnd}:00+05:30`,
+          });
+        }
       }
 
       return { isOpen: true };
@@ -589,6 +728,8 @@ export class ClinicHoursService {
     }
 
     return this.runInTenant(clinicId, txClient, async (tx) => {
+      const isReceptionist = role === 'RECEPTIONIST';
+
       // Persist closure record
       const closure = await tx.clinicClosure.create({
         data: {
@@ -597,30 +738,39 @@ export class ClinicHoursService {
           endAt: end,
           reason: dto.reason.trim(),
           createdById: actor?.userId || actor?.id,
+          isStaffDeclared: isReceptionist,
+          adminAcknowledged: !isReceptionist,
         },
         include: {
           createdBy: { select: { fullName: true, role: true } },
         },
       });
 
+      // Update Clinic.isOnLeave and leaveReason to stay 100% in sync
+      await tx.clinic.update({
+        where: { id: clinicId },
+        data: {
+          isOnLeave: true,
+          leaveReason: dto.reason.trim(),
+        },
+      });
+
       // Invalidate in-memory cache
       TenantContextMiddleware.clearClinicCache(clinicId);
-
-      const isReceptionistAlert = role === 'RECEPTIONIST';
 
       await this.auditService.log({
         clinicId,
         actorId: actor?.userId || actor?.id,
         actorRole: role,
-        action: isReceptionistAlert ? 'CLINIC_CLOSURE_CREATED_BY_STAFF' : 'CLINIC_CLOSURE_CREATED',
+        action: isReceptionist ? 'CLINIC_CLOSURE_CREATED_BY_STAFF' : 'CLINIC_CLOSURE_CREATED',
         entityType: 'ClinicClosure',
         entityId: closure.id,
         details: {
           reason: closure.reason,
           startAt: closure.startAt.toISOString(),
           endAt: closure.endAt.toISOString(),
-          receptionistAlert: isReceptionistAlert,
-          alertAdmin: isReceptionistAlert,
+          receptionistAlert: isReceptionist,
+          alertAdmin: isReceptionist,
         },
       }, tx);
 
@@ -655,6 +805,19 @@ export class ClinicHoursService {
         },
         include: {
           endedBy: { select: { fullName: true, role: true } },
+        },
+      });
+
+      // Check if any other closure is active right now
+      const remaining = await tx.clinicClosure.findFirst({
+        where: { clinicId, startAt: { lte: now }, endAt: { gt: now }, endedAt: null },
+      });
+
+      await tx.clinic.update({
+        where: { id: clinicId },
+        data: {
+          isOnLeave: Boolean(remaining),
+          leaveReason: remaining?.reason || null,
         },
       });
 
