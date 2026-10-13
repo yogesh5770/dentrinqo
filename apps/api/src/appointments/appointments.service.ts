@@ -2376,6 +2376,274 @@ export class AppointmentsService {
     });
   }
 
+  async publicWalkInCheckIn(dto: any, clientIp?: string, hostClinicId?: string) {
+    const ip = clientIp || '127.0.0.1';
+
+    // 1. IP Lockout check
+    if (this.isIpLockedOut(ip)) {
+      throw new BadRequestException(
+        'Too many failed check-in attempts from this connection. Please proceed to the reception desk for assistance.',
+      );
+    }
+
+    // 2. Resolve Clinic
+    let clinic: any = null;
+    if (hostClinicId) {
+      clinic = await this.prisma.clinic.findUnique({ where: { id: hostClinicId } });
+    }
+    if (!clinic && dto.clinicCode) {
+      clinic = await this.prisma.clinic.findFirst({
+        where: { code: dto.clinicCode.toUpperCase() },
+      });
+    }
+    if (!clinic) {
+      clinic = await this.prisma.clinic.findFirst();
+    }
+    if (!clinic) {
+      throw new BadRequestException('Dental clinic could not be resolved from host context.');
+    }
+
+    // 3. Clinic Hours / Pause assertion
+    await this.clinicHoursService.assertOpen(
+      clinic.id,
+      new Date(),
+      'SELF_CHECKIN',
+    );
+
+    if (this.isClinicCheckinPaused(clinic.id)) {
+      throw new BadRequestException(
+        'Self check-in is temporarily paused. Please check in directly with the receptionist at the front desk.',
+      );
+    }
+
+    // 4. Rotating HMAC Lobby Code Verification
+    if (clinic.requireLobbyCode) {
+      const codeCandidate = dto.lobbyCode ? String(dto.lobbyCode).trim() : '';
+      const isValid = this.verifyRotatingLobbyCode(clinic, codeCandidate);
+      if (!isValid) {
+        this.recordFailedLobbyAttempt(ip, clinic.id);
+        throw new BadRequestException(
+          `Invalid or expired lobby code. Please enter the ${clinic.lobbyCodeDigits || 4}-digit code currently displayed on the waiting room TV or reception screen.`,
+        );
+      }
+    }
+
+    // 5. Patient Input Validation & Normalization
+    const patientName = (dto.patientName || dto.fullName || '').trim();
+    if (!patientName) {
+      throw new BadRequestException('Please enter your full name.');
+    }
+
+    const rawPhone = (dto.patientPhone || dto.phone || '').trim();
+    const digitsOnly = rawPhone.replace(/\D/g, '');
+    let phoneTail = digitsOnly;
+    if (digitsOnly.startsWith('91') && digitsOnly.length === 12) phoneTail = digitsOnly.slice(2);
+    else if (digitsOnly.startsWith('0') && digitsOnly.length === 11) phoneTail = digitsOnly.slice(1);
+    if (phoneTail.length !== 10) {
+      throw new BadRequestException('Please provide a valid 10-digit mobile number.');
+    }
+    const normalizedPhone = `+91${phoneTail}`;
+
+    const age = dto.age ? Number(dto.age) : undefined;
+    const gender = (dto.gender || 'OTHER').toUpperCase();
+    const reason = dto.reason || '[WALK-IN] Dental Consultation';
+
+    // 6. Atomic Transaction for Patient, Token & Appointment creation
+    return this.prisma.forTenant(clinic.id, async (tx) => {
+      // Step A: Find or Create Patient
+      const existingPatients = await tx.patient.findMany({
+        where: {
+          clinicId: clinic.id,
+          phone: normalizedPhone,
+        },
+      });
+
+      let patient = existingPatients.find(
+        (p: any) => p.fullName.trim().toLowerCase() === patientName.toLowerCase(),
+      );
+
+      if (!patient) {
+        const year = new Date().getFullYear();
+        const patientCount = await tx.patient.count({ where: { clinicId: clinic.id } });
+        const randSuffix = crypto.randomBytes(2).toString('hex').toUpperCase();
+        const uhid = `${clinic.code}-${year}-${String(patientCount + 1).padStart(4, '0')}-${randSuffix}`;
+
+        patient = await tx.patient.create({
+          data: {
+            clinicId: clinic.id,
+            uhid,
+            fullName: patientName,
+            phone: normalizedPhone,
+            age: age || undefined,
+            gender: ['MALE', 'FEMALE', 'OTHER'].includes(gender) ? gender : 'OTHER',
+            source: 'SELF_QR',
+            needsVerification: false,
+            possibleDuplicate: existingPatients.length > 0,
+            consentDataUse: true,
+            consentWhatsapp: true,
+            consentVersion: 'v1.0',
+            consentAt: new Date(),
+            notes: `Self-registered walk-in via Hospital Lobby Portal (${reason})`,
+          },
+        });
+      }
+
+      // Step B: Resolve Active Dentist
+      let dentist = await tx.user.findFirst({
+        where: { clinicId: clinic.id, role: 'DENTIST', isActive: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (!dentist) {
+        dentist = await tx.user.findFirst({
+          where: { clinicId: clinic.id, isActive: true },
+          orderBy: { createdAt: 'asc' },
+        });
+      }
+      if (!dentist) {
+        throw new BadRequestException('No active dentist or staff member configured for this clinic.');
+      }
+
+      // Step C: Atomic Daily Queue Sequence in Asia/Kolkata
+      const now = new Date();
+      const { dateStr: istDateStr, start: todayStart, end: todayEnd } = this.getKolkataDayBounds(now);
+      const seqRecord = await tx.dailyQueueSequence.upsert({
+        where: {
+          clinicId_dateString: {
+            clinicId: clinic.id,
+            dateString: istDateStr,
+          },
+        },
+        update: {
+          lastSequence: { increment: 1 },
+        },
+        create: {
+          clinicId: clinic.id,
+          dateString: istDateStr,
+          lastSequence: 1,
+        },
+      });
+      const tokenNumber = seqRecord.lastSequence;
+
+      // Step D: Calculate Active Chairs and Queue Load
+      const totalChairs = Math.max(clinic.chairCount || 2, 1);
+      let chairConfig: Record<string, boolean> = {};
+      for (let i = 1; i <= totalChairs; i++) chairConfig[String(i)] = true;
+      if (clinic.workingHours) {
+        try {
+          const parsed = typeof clinic.workingHours === 'string' ? JSON.parse(clinic.workingHours) : clinic.workingHours;
+          if (parsed && parsed.chairStatus) chairConfig = { ...chairConfig, ...parsed.chairStatus };
+        } catch {}
+      }
+
+      const onDutyChairs: number[] = [];
+      for (let i = 1; i <= totalChairs; i++) {
+        if (chairConfig[String(i)] !== false) {
+          onDutyChairs.push(i);
+        }
+      }
+      if (onDutyChairs.length === 0) onDutyChairs.push(1);
+
+      // Find in-chair / called appointments today
+      const inChairAppts = await tx.appointment.findMany({
+        where: {
+          clinicId: clinic.id,
+          status: { in: ['IN_CHAIR', 'CALLED'] },
+          scheduledStart: { gte: todayStart, lte: todayEnd },
+        },
+        select: { id: true, chairNumber: true, status: true, scheduledEnd: true },
+      });
+      const occupiedChairs = new Set(inChairAppts.map((a: any) => a.chairNumber));
+      const freeOnDutyChairs = onDutyChairs.filter(c => !occupiedChairs.has(c));
+
+      // Count waiting ahead (CHECKED_IN)
+      const waitingAhead = await tx.appointment.count({
+        where: {
+          clinicId: clinic.id,
+          status: 'CHECKED_IN',
+          scheduledStart: { gte: todayStart, lte: todayEnd },
+        },
+      });
+
+      let expectedChair = onDutyChairs[0];
+      if (freeOnDutyChairs.length > 0) {
+        expectedChair = freeOnDutyChairs[0];
+      } else {
+        const sortedBusy = inChairAppts
+          .filter((a: any) => onDutyChairs.includes(a.chairNumber))
+          .sort((a: any, b: any) => new Date(a.scheduledEnd).getTime() - new Date(b.scheduledEnd).getTime());
+        expectedChair = sortedBusy.length > 0 ? sortedBusy[0].chairNumber : onDutyChairs[0];
+      }
+
+      const apptStart = now;
+      const apptEnd = new Date(now.getTime() + 30 * 60 * 1000);
+      const trackingCode = crypto.randomBytes(16).toString('hex');
+
+      // Step E: Create Appointment record
+      const appt = await tx.appointment.create({
+        data: {
+          clinicId: clinic.id,
+          patientId: patient.id,
+          dentistId: dentist.id,
+          createdById: dentist.id,
+          chairNumber: expectedChair,
+          expectedChairNumber: expectedChair,
+          scheduledStart: apptStart,
+          scheduledEnd: apptEnd,
+          durationMinutes: 30,
+          reason,
+          status: 'CHECKED_IN',
+          checkInTime: now,
+          isConfirmedAtDesk: true,
+          checkInSource: 'SELF_QR',
+          tokenNumber,
+          trackingCode,
+          notes: `Walk-in self-registered via lobby QR portal\nChief Complaint: ${reason}\nClient IP: ${ip}`,
+        },
+      });
+
+      const sameDayAppts = await tx.appointment.findMany({
+        where: {
+          clinicId: clinic.id,
+          scheduledStart: { gte: todayStart, lte: todayEnd },
+          status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+        },
+        orderBy: { scheduledStart: 'asc' },
+        select: { id: true },
+      });
+
+      const activeChairsServing = inChairAppts.map((ic: any) => ({
+        chairNumber: ic.chairNumber,
+        tokenNumber: sameDayAppts.findIndex((a: any) => a.id === ic.id) + 1 || 1,
+        isBusy: ic.status === 'IN_CHAIR',
+        isCalling: ic.status === 'CALLED',
+      }));
+
+      const shortId = appt.id.replace(/-/g, '').substring(0, 5).toUpperCase();
+      const reference = `${clinic.code}-${now.getFullYear()}-${shortId}`;
+
+      return {
+        success: true,
+        reference,
+        tokenNumber,
+        trackingCode,
+        trackingUrl: `/track/${trackingCode}`,
+        chairNumber: expectedChair,
+        currentlyAhead: waitingAhead,
+        patientsAhead: waitingAhead,
+        activeChairsServing,
+        dentistName: dentist.fullName,
+        patientName: patient.fullName,
+        status: 'CHECKED_IN',
+        isConfirmedAtDesk: true,
+        appointmentId: appt.id,
+        clinicName: clinic.name,
+        clinicPhone: clinic.phone,
+        clinicAddress: clinic.address,
+        message: `Welcome to ${clinic.name}! Walk-in check-in successful. Your Token is #${tokenNumber}. Please take a seat in the waiting lobby.`,
+      };
+    });
+  }
+
   async submitPublicIntake(reference: string, intakeData: any, maybeClinicId?: string) {
     const statusData = await this.getPublicStatus(reference, maybeClinicId);
     if (!statusData || !statusData.patientUhid || !(statusData as any).clinicId) {

@@ -4,7 +4,7 @@ import { Request } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { AppointmentsService } from './appointments.service';
 import { CreateAppointmentDto, UpdateAppointmentStatusDto, RescheduleAppointmentDto, ReceptionQuickConsultDto, PublicLookupDto } from './appointment.dto';
-import { CreatePublicAppointmentDto, PublicCheckInDto } from './public-booking.dto';
+import { CreatePublicAppointmentDto, PublicCheckInDto, PublicWalkInDto } from './public-booking.dto';
 import { AuthService } from '../auth/auth.service';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -36,6 +36,23 @@ export class AppointmentsController {
 
     const hostClinicId = (req as any).clinicId || ((req as any).tenantClinic && (req as any).tenantClinic.id);
     return this.appointmentsService.createPublicRequest(dto, clientIp, patientToken, hostClinicId);
+  }
+
+  @Post('public-book')
+  @Throttle({ default: { limit: 15, ttl: 60000 } })
+  @ApiOperation({ summary: 'Submit public walk-in booking or appointment request' })
+  async publicBook(@Body() dto: any, @Req() req: Request) {
+    const forwarded = req.headers['x-forwarded-for'];
+    const clientIp = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : (req.ip || req.socket.remoteAddress);
+    const hostClinicId = (req as any).clinicId || ((req as any).tenantClinic && (req as any).tenantClinic.id);
+    if (dto.preferredDate && dto.preferredSlot && !dto.isWalkIn) {
+      let patientToken = req.cookies ? req.cookies['aks_patient_session'] : undefined;
+      if (!patientToken && req.headers.authorization?.startsWith('Bearer ')) {
+        patientToken = req.headers.authorization.split(' ')[1];
+      }
+      return this.appointmentsService.createPublicRequest(dto, clientIp, patientToken, hostClinicId);
+    }
+    return this.appointmentsService.publicWalkInCheckIn(dto, clientIp, hostClinicId);
   }
 
   @Post('public-checkin')

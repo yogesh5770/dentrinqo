@@ -125,3 +125,49 @@ export class PublicCheckInDto {
   @IsString()
   clinicCode?: string;
 }
+
+export class PublicWalkInDto {
+  @ApiProperty({ example: 'Yogesh', description: 'Patient full name for lobby walk-in registration' })
+  @IsString()
+  @IsNotEmpty()
+  patientName: string;
+
+  @ApiProperty({ example: '9876543210', description: 'Patient contact mobile number' })
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^\+?[0-9\s-]{10,15}$/, { message: 'Please provide a valid 10-15 digit phone number' })
+  patientPhone: string;
+
+  @ApiPropertyOptional({ example: 25, description: 'Patient age in years' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(120)
+  age?: number;
+
+  @ApiPropertyOptional({ example: 'MALE', description: 'Patient gender' })
+  @IsOptional()
+  @IsString()
+  gender?: string;
+
+  @ApiPropertyOptional({ example: 'Toothache / Dental Consultation', description: 'Chief complaint / reason for visit' })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+
+  @ApiPropertyOptional({ example: 'JDC', description: 'Clinic code identifier' })
+  @IsOptional()
+  @IsString()
+  clinicCode?: string;
+
+  @ApiPropertyOptional({ example: '3549', description: 'On-screen TV arrival lobby code' })
+  @IsOptional()
+  @IsString()
+  lobbyCode?: string;
+
+  @ApiPropertyOptional({ example: true, description: 'Explicit walk-in flag' })
+  @IsOptional()
+  @IsBoolean()
+  isWalkIn?: boolean;
+}
+
