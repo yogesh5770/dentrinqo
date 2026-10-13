@@ -37,6 +37,7 @@ import {
 import { TreatmentCatalogManager } from './TreatmentCatalogManager';
 import { PERMISSION_GROUPS, DEFAULT_ROLE_PERMISSIONS } from '@aks/shared-types';
 
+import { ClinicLogo } from '../../components/ClinicLogo';
 interface StaffMember {
   id: string;
   email: string;
@@ -1050,7 +1051,7 @@ export const AdminDesk: React.FC = () => {
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 p-1 rounded-2xl bg-white border border-slate-200 flex items-center justify-center shrink-0">
-                  <img src="/logo.png" alt="AKS Logo" className="w-full h-full object-contain" />
+                  <ClinicLogo className="w-full h-full object-contain" />
                 </div>
                 <div>
                   <h3 className="text-base font-black text-slate-900">Staff Account Created</h3>

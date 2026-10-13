@@ -25,6 +25,7 @@ import { apiRequest } from '../../lib/api';
 import { triggerClinicSync, playClinicAlertChime, playPatientTurnBeeper } from '../../lib/sync';
 import { useTenant } from '../../hooks/useTenant';
 
+import { ClinicLogo } from '../../components/ClinicLogo';
 interface PublicCheckInViewProps {
   clinicCode?: string;
   clinicName?: string;
@@ -306,7 +307,7 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
         <div className="max-w-xl mx-auto px-4 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 p-1 bg-white rounded-xl border border-slate-200 shadow-sm flex items-center justify-center shrink-0">
-              <img src="/logo.png" alt={`${activeClinicName} Logo`} className="w-full h-full object-contain" />
+              <ClinicLogo className="w-full h-full object-contain" />
             </div>
             <div>
               <h1 className="text-sm font-black text-slate-900 tracking-tight leading-tight line-clamp-1">{activeClinicName}</h1>

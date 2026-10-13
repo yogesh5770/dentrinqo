@@ -19,6 +19,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 
+import { ClinicLogo } from '../../components/ClinicLogo';
 export const LoginScreen: React.FC = () => {
   const { login } = useAuth();
   const { clinic } = useTenant();
@@ -59,7 +60,7 @@ export const LoginScreen: React.FC = () => {
         {/* Brand Header */}
         <div className="flex justify-center mb-4">
           <div className="w-24 h-24 p-2 bg-white rounded-3xl border border-slate-200 shadow-md flex items-center justify-center">
-            <img src="/logo.png" alt={`${clinic?.name || "Dental Clinic"} Logo`} className="w-full h-full object-contain" />
+            <ClinicLogo className="w-full h-full object-contain" />
           </div>
         </div>
 

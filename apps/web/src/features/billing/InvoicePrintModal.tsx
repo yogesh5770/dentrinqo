@@ -4,6 +4,7 @@ import { openWhatsApp, generateInvoiceWhatsAppText } from '../../lib/whatsapp';
 import { useAuth } from '../../hooks/useAuth';
 import { useTenant } from '../../hooks/useTenant';
 
+import { ClinicLogo } from '../../components/ClinicLogo';
 interface InvoicePrintModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -121,11 +122,7 @@ export const InvoicePrintModal: React.FC<InvoicePrintModalProps> = ({
           {/* Header */}
           <div className="border-b-2 border-teal-600 pb-5 mb-5 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
             <div className="flex items-start gap-4">
-              <img
-                src="/logo.png"
-                alt={clinic.name || "Dental Clinic"}
-                className="w-16 h-16 object-contain shrink-0"
-              />
+              <ClinicLogo className="w-16 h-16 object-contain shrink-0" />
               <div>
                 <h2 className="text-2xl font-black tracking-tight text-teal-900">
                   {(clinic.name || "DENTAL CLINIC").toUpperCase()}

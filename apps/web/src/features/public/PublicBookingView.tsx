@@ -36,6 +36,7 @@ import { Link } from 'react-router-dom';
 import { usePatientAuth } from '../../hooks/usePatientAuth';
 import { useTenant } from '../../hooks/useTenant';
 
+import { ClinicLogo } from '../../components/ClinicLogo';
 const COMMON_REASONS = [
   { id: 'TOOTH_PAIN', label: 'Severe Toothache / Pain', icon: '⚡' },
   { id: 'CLEANING', label: 'Teeth Cleaning & Polish', icon: '✨' },
@@ -478,7 +479,7 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 p-1 bg-white rounded-2xl border border-slate-200 shadow-sm flex items-center justify-center shrink-0">
-              <img src="/logo.png" alt={`${clinicName} Logo`} className="w-full h-full object-contain" />
+              <ClinicLogo className="w-full h-full object-contain" />
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -578,7 +579,7 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
             <div className="text-center space-y-2.5 max-w-2xl mx-auto">
               <div className="flex justify-center mb-2">
                 <div className="w-20 h-20 p-2 bg-white rounded-3xl border border-slate-200 shadow-md flex items-center justify-center">
-                  <img src="/logo.png" alt={`${clinicName} Logo`} className="w-full h-full object-contain" />
+                  <ClinicLogo className="w-full h-full object-contain" />
                 </div>
               </div>
 

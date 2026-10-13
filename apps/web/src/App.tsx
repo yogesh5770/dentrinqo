@@ -30,6 +30,7 @@ import { MyVisitsView } from './features/patient-portal/MyVisitsView';
 import { MyFamilyView } from './features/patient-portal/MyFamilyView';
 import { PossibleDuplicatesView } from './features/patients/PossibleDuplicatesView';
 
+import { ClinicLogo, TenantDocumentBranding } from './components/ClinicLogo';
 const ProtectedRoutes: React.FC = () => {
   const { user, isLoading, hasPermission } = useAuth();
   const { account, isLoading: isPatientLoading } = usePatientAuth();
@@ -47,7 +48,7 @@ const ProtectedRoutes: React.FC = () => {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center text-teal-600">
         <div className="w-16 h-16 p-2 bg-white rounded-2xl border border-slate-200 shadow-sm flex items-center justify-center mb-4">
-          <img src="/logo.png" alt="Clinic Logo" className="w-full h-full object-contain animate-pulse" />
+          <ClinicLogo className="w-full h-full object-contain animate-pulse" />
         </div>
         <p className="text-sm font-bold text-slate-700">Loading Clinic Portal...</p>
       </div>
@@ -259,6 +260,7 @@ export const App: React.FC = () => {
     <BrowserRouter>
       <AuthProvider>
         <TenantProvider>
+          <TenantDocumentBranding />
           <PatientAuthProvider>
             <Routes>
               <Route path="/book" element={<PublicBookingView />} />

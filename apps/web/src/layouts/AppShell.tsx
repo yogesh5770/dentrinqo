@@ -44,6 +44,7 @@ import {
   GitMerge,
 } from 'lucide-react';
 
+import { ClinicLogo } from '../components/ClinicLogo';
 interface AppShellProps {
   children: React.ReactNode;
   onOpenNewPatient?: () => void;
@@ -366,7 +367,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
         <div className="p-5 border-b border-slate-800">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 p-1 rounded-xl bg-white border border-slate-700 flex items-center justify-center shrink-0 shadow-sm">
-              <img src="/logo.png" alt={`${clinicName} Logo`} className="w-full h-full object-contain" />
+              <ClinicLogo className="w-full h-full object-contain" />
             </div>
             <div>
               <h2 className="text-sm font-extrabold text-white tracking-tight leading-tight">
@@ -543,7 +544,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
             </button>
 
             <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
-              <img src="/logo.png" alt={`${clinicName} Logo`} className="w-7 h-7 sm:w-8 sm:h-8 object-contain shrink-0" />
+              <ClinicLogo className="w-7 h-7 sm:w-8 sm:h-8 object-contain shrink-0" />
               <div className="min-w-0">
                 <span className="font-extrabold text-slate-900 text-xs sm:text-base block truncate">
                   {clinicName}
@@ -702,7 +703,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children, onOpenNewPatient, 
               <div className="p-4 border-b border-slate-800 flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 p-1 rounded-xl bg-white border border-slate-700 flex items-center justify-center shrink-0 shadow-sm">
-                    <img src="/logo.png" alt={`${clinicName} Logo`} className="w-full h-full object-contain" />
+                    <ClinicLogo className="w-full h-full object-contain" />
                   </div>
                   <div>
                     <h2 className="text-xs font-extrabold text-white leading-tight">{clinicName}</h2>

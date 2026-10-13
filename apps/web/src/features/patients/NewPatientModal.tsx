@@ -29,6 +29,7 @@ import { SpeechToTextDictation } from '../../components/SpeechToTextDictation';
 import { useAuth } from '../../hooks/useAuth';
 import { useTenant } from '../../hooks/useTenant';
 
+import { ClinicLogo } from '../../components/ClinicLogo';
 interface NewPatientModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -283,7 +284,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
         <div className="p-5 bg-white border-b border-slate-200 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 p-1 rounded-2xl bg-white border border-slate-200 shadow-2xs flex items-center justify-center shrink-0">
-              <img src="/logo.png" alt="Clinic Logo" className="w-full h-full object-contain" />
+              <ClinicLogo className="w-full h-full object-contain" />
             </div>
             <div>
               <h3 className="font-black text-lg text-slate-900">

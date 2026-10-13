@@ -4,6 +4,7 @@ import { openWhatsApp, generatePrescriptionWhatsAppText } from '../../lib/whatsa
 import { useAuth } from '../../hooks/useAuth';
 import { useTenant } from '../../hooks/useTenant';
 
+import { ClinicLogo } from '../../components/ClinicLogo';
 interface PrescriptionPrintModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -130,11 +131,7 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
           {/* Clinic Header */}
           <div className="border-b-2 border-teal-600 pb-4 mb-5 flex flex-col sm:flex-row sm:items-start justify-between gap-4">
             <div className="flex items-start gap-4">
-              <img
-                src="/logo.png"
-                alt={clinic?.name || "Dental Clinic"}
-                className="w-16 h-16 object-contain shrink-0"
-              />
+              <ClinicLogo className="w-16 h-16 object-contain shrink-0" />
               <div>
                 <span className="text-2xl font-extrabold tracking-tight text-teal-900 block">
                   {clinic?.name ? clinic.name.toUpperCase() : 'DENTAL CLINIC'}

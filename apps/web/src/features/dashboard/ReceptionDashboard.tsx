@@ -43,6 +43,7 @@ import { WalkinConsultModal } from '../../components/WalkinConsultModal';
 import { VerifyFirstVisitModal } from '../../components/VerifyFirstVisitModal';
 import { ClinicHoursClosureModal } from '../../components/ClinicHoursClosureModal';
 
+import { ClinicLogo } from '../../components/ClinicLogo';
 interface Appointment {
   id: string;
   patientId: string;
@@ -2367,7 +2368,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                 {/* Clinic Letterhead */}
                 <div className="flex flex-col items-center border-b border-slate-100 pb-4">
                   <div className="w-14 h-14 rounded-2xl bg-teal-50 border border-teal-200 p-2 shadow-xs mb-2 flex items-center justify-center">
-                    <img src="/logo.png" alt={clinicName} className="w-full h-full object-contain" />
+                    <ClinicLogo className="w-full h-full object-contain" />
                   </div>
                   <h2 className="text-xl font-black text-slate-900 tracking-tight">{clinicName}</h2>
                   <span className="text-xs font-black text-teal-800 uppercase tracking-widest bg-teal-50 px-3 py-0.5 rounded-full border border-teal-200 mt-1">
@@ -2485,7 +2486,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                 {/* Clinic Branding */}
                 <div className="flex flex-col items-center">
                   <div className="w-16 h-16 rounded-2xl bg-teal-50 border border-teal-200 p-2 shadow-xs mb-2 flex items-center justify-center">
-                    <img src="/logo.png" alt={clinicName} className="w-full h-full object-contain" />
+                    <ClinicLogo className="w-full h-full object-contain" />
                   </div>
                   <h2 className="text-lg font-black text-slate-900 tracking-tight">{clinicName}</h2>
                   <span className="text-[11px] font-black text-teal-800 uppercase tracking-widest bg-teal-50 px-2.5 py-0.5 rounded-full border border-teal-200 mt-1">

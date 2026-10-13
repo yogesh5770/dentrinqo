@@ -17,6 +17,7 @@ import { apiRequest } from '../../lib/api';
 import { playPatientTurnBeeper, playClinicAlertChime } from '../../lib/sync';
 import { useTenant } from '../../hooks/useTenant';
 
+import { ClinicLogo } from '../../components/ClinicLogo';
 export const WaitingRoomTvView: React.FC = () => {
   const { clinic: tenantClinic } = useTenant();
   const [searchParams] = useSearchParams();
@@ -200,7 +201,7 @@ export const WaitingRoomTvView: React.FC = () => {
       <header className="flex items-center justify-between border-b border-slate-800 pb-6">
         <div className="flex items-center gap-5">
           <div className="w-16 h-16 p-2 bg-white rounded-2xl shadow-xl flex items-center justify-center shrink-0">
-            <img src="/logo.png" alt={clinicName} className="w-full h-full object-contain" />
+            <ClinicLogo className="w-full h-full object-contain" />
           </div>
           <div>
             <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight uppercase">

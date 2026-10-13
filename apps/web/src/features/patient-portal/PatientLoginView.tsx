@@ -4,6 +4,7 @@ import { usePatientAuth } from '../../hooks/usePatientAuth';
 import { useTenant } from '../../hooks/useTenant';
 import { Phone, Lock, AlertCircle, ArrowRight, Shield, UserPlus } from 'lucide-react';
 
+import { ClinicLogo } from '../../components/ClinicLogo';
 export const PatientLoginView: React.FC = () => {
   const navigate = useNavigate();
   const { login, account } = usePatientAuth();
@@ -44,7 +45,7 @@ export const PatientLoginView: React.FC = () => {
         {/* Clinic Header Branding */}
         <div className="text-center mb-6">
           <div className="w-16 h-16 mx-auto mb-3 bg-white rounded-2xl p-2.5 shadow-sm border border-slate-200/80 flex items-center justify-center">
-            <img src="/logo.png" alt={`${hostClinicName} Logo`} className="w-full h-full object-contain" />
+            <ClinicLogo className="w-full h-full object-contain" />
           </div>
           <h1 className="text-2xl font-black tracking-tight text-slate-900">
             {hostClinicName}

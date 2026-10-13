@@ -16,6 +16,7 @@ import {
   CheckCircle,
 } from 'lucide-react';
 
+import { ClinicLogo } from '../../components/ClinicLogo';
 interface VisitItem {
   id: string;
   patientName: string;
@@ -86,7 +87,7 @@ export const MyVisitsView: React.FC = () => {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center text-teal-600 font-sans">
         <div className="w-12 h-12 p-2 bg-white rounded-xl shadow-sm border border-slate-200 mb-3 animate-pulse">
-          <img src="/logo.png" alt="Clinic Logo" className="w-full h-full object-contain" />
+          <ClinicLogo className="w-full h-full object-contain" />
         </div>
         <p className="text-xs font-bold text-slate-600">Loading your dental health portal...</p>
       </div>
@@ -100,7 +101,7 @@ export const MyVisitsView: React.FC = () => {
         <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 p-1.5 bg-white rounded-xl border border-slate-200 shadow-xs flex items-center justify-center">
-              <img src="/logo.png" alt="Clinic Logo" className="w-full h-full object-contain" />
+              <ClinicLogo className="w-full h-full object-contain" />
             </div>
             <div>
               <h1 className="text-sm font-black text-slate-900 leading-tight">
