@@ -8,6 +8,7 @@ import {
   Res,
   Req,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -35,9 +36,15 @@ export class PatientAuthController {
   @ApiOperation({ summary: 'Register a new patient account with DPDP compliance' })
   async signup(
     @Body() dto: PatientSignupDto,
+    @Req() req: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.patientAuthService.signup(dto);
+    const hostClinicId = req.clinicId || (req.tenantClinic && req.tenantClinic.id);
+    if (dto.clinicCode && req.tenantClinic?.code && dto.clinicCode.toUpperCase() !== req.tenantClinic.code.toUpperCase()) {
+      throw new ForbiddenException('Submitted clinicCode does not match the clinic resolved from host.');
+    }
+
+    const result = await this.patientAuthService.signup(dto, hostClinicId);
 
     // Set dedicated patient session cookie
     res.cookie('aks_patient_session', result.token, {
@@ -56,9 +63,15 @@ export class PatientAuthController {
   @ApiOperation({ summary: 'Login to patient account with lockout protection' })
   async login(
     @Body() dto: PatientLoginDto,
+    @Req() req: any,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.patientAuthService.login(dto);
+    const hostClinicId = req.clinicId || (req.tenantClinic && req.tenantClinic.id);
+    if (dto.clinicCode && req.tenantClinic?.code && dto.clinicCode.toUpperCase() !== req.tenantClinic.code.toUpperCase()) {
+      throw new ForbiddenException('Submitted clinicCode does not match the clinic resolved from host.');
+    }
+
+    const result = await this.patientAuthService.login(dto, hostClinicId);
 
     res.cookie('aks_patient_session', result.token, {
       httpOnly: true,
@@ -81,7 +94,17 @@ export class PatientAuthController {
   @Get('me')
   @UseGuards(PatientAuthGuard)
   @ApiOperation({ summary: 'Get current patient account details and family members' })
-  async getMe(@Req() req: any) {
+  async getMe(@Req() req: any, @Res({ passthrough: true }) res: Response) {
+    // Sliding session cookie refresh
+    if (req.cookies && req.cookies['aks_patient_session']) {
+      res.cookie('aks_patient_session', req.cookies['aks_patient_session'], {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+      });
+    }
     return this.patientAuthService.getMe(req.patientAccount.accountId, req.patientAccount.clinicId);
   }
 

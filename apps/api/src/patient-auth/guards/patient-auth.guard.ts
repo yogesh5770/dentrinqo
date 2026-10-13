@@ -1,4 +1,4 @@
-import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { PatientAuthService } from '../patient-auth.service';
 import { Request } from 'express';
 
@@ -25,6 +25,12 @@ export class PatientAuthGuard implements CanActivate {
     const payload = this.patientAuthService.verifyPatientToken(token);
     if (!payload || payload.role !== 'PATIENT') {
       throw new UnauthorizedException('Patient session expired or invalid. Please log in again.');
+    }
+
+    // Tenant mismatch check: Ensure patient session clinic matches host-resolved clinic
+    const hostClinicId = (request as any).clinicId || ((request as any).tenantClinic && (request as any).tenantClinic.id);
+    if (hostClinicId && payload.clinicId && hostClinicId !== payload.clinicId) {
+      throw new ForbiddenException('Access denied: Authenticated patient session does not match the clinic resolved from host.');
     }
 
     // Attach patient account payload to request

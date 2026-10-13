@@ -88,7 +88,7 @@ export class PatientAuthService {
   }
 
   // Patient Registration
-  async signup(dto: PatientSignupDto) {
+  async signup(dto: PatientSignupDto, hostClinicId?: string) {
     if (dto.password !== dto.confirmPassword) {
       throw new BadRequestException('Password confirmation does not match');
     }
@@ -101,10 +101,15 @@ export class PatientAuthService {
 
     const normPhone = normalizePhone(dto.phone);
 
-    // Resolve clinic
-    const clinic = await this.prisma.clinic.findFirst({
-      where: dto.clinicCode ? { code: dto.clinicCode.toUpperCase() } : { status: 'ACTIVE' },
-    });
+    // Resolve clinic strictly: hostClinicId takes absolute precedence over client input
+    let clinic: any = null;
+    if (hostClinicId) {
+      clinic = await this.prisma.clinic.findUnique({ where: { id: hostClinicId } });
+    } else if (dto.clinicCode) {
+      clinic = await this.prisma.clinic.findFirst({ where: { code: dto.clinicCode.toUpperCase() } });
+    } else {
+      clinic = await this.prisma.clinic.findFirst({ where: { status: 'ACTIVE' } });
+    }
     if (!clinic) {
       throw new NotFoundException('Clinic record could not be identified');
     }
@@ -241,7 +246,7 @@ export class PatientAuthService {
   }
 
   // Patient Login with Lockout Protection
-  async login(dto: PatientLoginDto) {
+  async login(dto: PatientLoginDto, hostClinicId?: string) {
     const normPhone = normalizePhone(dto.phone);
 
     const findAccountInClinic = async (cId: string) => {
@@ -266,7 +271,10 @@ export class PatientAuthService {
     let account: any = null;
     let targetClinicId: string | null = null;
 
-    if (dto.clinicCode) {
+    if (hostClinicId) {
+      account = await findAccountInClinic(hostClinicId);
+      if (account) targetClinicId = hostClinicId;
+    } else if (dto.clinicCode) {
       const clinic = await this.prisma.clinic.findFirst({
         where: { code: dto.clinicCode.toUpperCase() },
       });
@@ -274,9 +282,7 @@ export class PatientAuthService {
         account = await findAccountInClinic(clinic.id);
         if (account) targetClinicId = clinic.id;
       }
-    }
-
-    if (!account) {
+    } else {
       const clinics = await this.prisma.clinic.findMany({ select: { id: true } });
       for (const c of clinics) {
         account = await findAccountInClinic(c.id);

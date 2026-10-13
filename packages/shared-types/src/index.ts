@@ -394,3 +394,55 @@ export interface PaginatedResult<T> {
   limit: number;
   totalPages: number;
 }
+
+// ==========================================
+// Tracking Contract & Live Queue Telemetry
+// ==========================================
+
+export type TrackingDisplayState =
+  | 'UNCONFIRMED_DESK'
+  | 'WAITING'
+  | 'NEXT'
+  | 'CALLED'
+  | 'IN_CHAIR'
+  | 'TREATED'
+  | 'BILLED'
+  | 'PAID'
+  | 'COMPLETED'
+  | 'SKIPPED'
+  | 'STEPPED_OUT'
+  | 'EXPIRED';
+
+export interface ActiveChairTelemetry {
+  chairNumber: number;
+  tokenNumber: number | null;
+  isBusy: boolean;
+  isCalling: boolean;
+}
+
+export interface PublicTrackingResponse {
+  success: boolean;
+  tokenNumber: number | null;
+  status: string;
+  displayState: TrackingDisplayState;
+  chairNumber: number;
+  expectedChairNumber: number | null;
+  isImmediateSeat: boolean;
+  isConfirmedAtDesk: boolean;
+  isLateArrival?: boolean;
+  isEmergency?: boolean;
+  
+  // CRITICAL CONTRACT RULE:
+  // patientsAhead MUST be null for all non-waiting states (TREATED, BILLED, PAID, COMPLETED, CALLED, IN_CHAIR, etc.)
+  // It is a valid number ONLY when displayState === 'WAITING' or 'NEXT'
+  patientsAhead: number | null;
+  
+  approxWaitMinutes?: number | null;
+  activeChairsServing: ActiveChairTelemetry[];
+  clinicName: string;
+  clinicAddress: string;
+  clinicPhone: string;
+  scheduledStart: string | Date;
+  nowServingToken?: number | null;
+}
+

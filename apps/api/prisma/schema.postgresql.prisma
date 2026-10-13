@@ -37,6 +37,10 @@ model Clinic {
   isBillingVerified       Boolean   @default(false)
   isOnLeave               Boolean   @default(false)
   leaveReason             String?
+  autoConfirmWhenCodeValid Boolean  @default(false)
+  codeRotationHours       Int       @default(24)
+  maxLateMinutes          Int       @default(45)
+  waitingWarningMinutes   Int       @default(30)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -236,7 +240,11 @@ model Appointment {
   isConfirmedAtDesk Boolean  @default(false)
   confirmedAtDeskAt DateTime?
   confirmedByStaffId String?
-  checkInSource   String?  @default("DESK") // "SELF_QR", "DESK", "PHONE"
+  checkInSource   String?  @default("DESK") // "SELF_QR", "DESK", "PHONE", "WALK_IN"
+  hasBookedSlot   Boolean  @default(false)
+  isEmergency     Boolean  @default(false)
+  emergencyReason String?
+  isLateArrival   Boolean  @default(false)
   tokenNumber     Int?
   trackingCode    String?   @unique
   expectedChairNumber Int?
