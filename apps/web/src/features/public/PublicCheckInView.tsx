@@ -30,27 +30,29 @@ interface PublicCheckInViewProps {
   clinicName?: string;
   clinicPhone?: string;
   clinicAddress?: string;
+  defaultWalkIn?: boolean;
 }
 
 export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
-  clinicCode = 'AKS',
-  clinicName = "AK's Elite Dental Clinic and Multi-Speciality Dental Hospital",
-  clinicPhone = '+91 95387 23872',
-  clinicAddress = 'Plot No. 162/2A, Alagar Complex, 5th Meenakshi Amman Nagar Main Road, K.Pudur, Madurai',
+  clinicCode,
+  clinicName,
+  clinicPhone,
+  clinicAddress,
+  defaultWalkIn = false,
 }) => {
   const { clinic: tenantClinic } = useTenant();
-  const activeClinicCode = tenantClinic?.code || clinicCode;
-  const activeClinicName = tenantClinic?.name || clinicName;
-  const activeClinicPhone = tenantClinic?.phone || clinicPhone;
+  const activeClinicCode = tenantClinic?.code || clinicCode || (typeof window !== 'undefined' && window.location.hostname.includes('jacob') ? 'JDC' : 'AKS');
+  const activeClinicName = tenantClinic?.name || clinicName || (typeof window !== 'undefined' && window.location.hostname.includes('jacob') ? 'Jacobs Dental Clinic' : "AK's Elite Dental Clinic");
+  const activeClinicPhone = tenantClinic?.phone || clinicPhone || '+91 95387 23872';
   const activeClinicAddress = tenantClinic?.address 
     ? `${tenantClinic.address}, ${tenantClinic.city || ''}` 
-    : clinicAddress;
+    : (clinicAddress || 'Hospital & Multi-Speciality Dental Centre');
 
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
   // Mode: Tab 1 (I Have a Booking) vs Tab 2 (Walk-In)
-  const initialMode = searchParams.get('mode') === 'walkin' ? 'walkin' : 'booked';
+  const initialMode = defaultWalkIn || searchParams.get('mode') === 'walkin' ? 'walkin' : 'booked';
   const [activeTab, setActiveTab] = useState<'booked' | 'walkin'>(initialMode);
 
   // Form State for Booked Patients

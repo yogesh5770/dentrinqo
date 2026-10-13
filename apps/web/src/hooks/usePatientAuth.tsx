@@ -22,7 +22,7 @@ interface PatientAuthContextType {
   familyMembers: FamilyMember[];
   token: string | null;
   isLoading: boolean;
-  login: (phone: string, pass: string) => Promise<any>;
+  login: (phone: string, pass: string, clinicCode?: string) => Promise<any>;
   signup: (payload: any) => Promise<any>;
   logout: () => Promise<void>;
   addFamilyMember: (member: any) => Promise<any>;
@@ -30,27 +30,66 @@ interface PatientAuthContextType {
 }
 
 const PATIENT_TOKEN_KEY = 'dental_patient_token';
+const PATIENT_ACCOUNT_KEY = 'dental_patient_account';
+const PATIENT_FAMILY_KEY = 'dental_patient_family';
+
 function getStoredPatientToken(): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem(PATIENT_TOKEN_KEY) || localStorage.getItem('aks_patient_token');
 }
+
 function setStoredPatientToken(tok: string | null) {
   if (typeof window === 'undefined') return;
   if (tok) {
     localStorage.setItem(PATIENT_TOKEN_KEY, tok);
+    localStorage.setItem('aks_patient_token', tok);
   } else {
     localStorage.removeItem(PATIENT_TOKEN_KEY);
     localStorage.removeItem('aks_patient_token');
   }
 }
 
+function getStoredPatientAccount(): PatientAccount | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const val = localStorage.getItem(PATIENT_ACCOUNT_KEY);
+    return val ? JSON.parse(val) : null;
+  } catch {
+    return null;
+  }
+}
+
+function getStoredFamilyMembers(): FamilyMember[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const val = localStorage.getItem(PATIENT_FAMILY_KEY);
+    return val ? JSON.parse(val) : [];
+  } catch {
+    return [];
+  }
+}
+
+function setStoredPatientData(acc: PatientAccount | null, fam: FamilyMember[] = []) {
+  if (typeof window === 'undefined') return;
+  if (acc) {
+    localStorage.setItem(PATIENT_ACCOUNT_KEY, JSON.stringify(acc));
+    localStorage.setItem(PATIENT_FAMILY_KEY, JSON.stringify(fam));
+  } else {
+    localStorage.removeItem(PATIENT_ACCOUNT_KEY);
+    localStorage.removeItem(PATIENT_FAMILY_KEY);
+  }
+}
+
 const PatientAuthContext = createContext<PatientAuthContextType | undefined>(undefined);
 
 export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [account, setAccount] = useState<PatientAccount | null>(null);
-  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
+  const [account, setAccount] = useState<PatientAccount | null>(() => getStoredPatientAccount());
+  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>(() => getStoredFamilyMembers());
   const [token, setToken] = useState<string | null>(() => getStoredPatientToken());
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return Boolean(getStoredPatientToken() && !getStoredPatientAccount());
+  });
 
   const refresh = async () => {
     try {
@@ -58,6 +97,7 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
       if (!storedToken) {
         setAccount(null);
         setFamilyMembers([]);
+        setStoredPatientData(null, []);
         setIsLoading(false);
         return;
       }
@@ -66,24 +106,30 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
         headers: {
           Authorization: `Bearer ${storedToken}`,
         },
+        credentials: 'include',
       });
 
       if (res.ok) {
         const data = await res.json();
-        setAccount({
+        const acc = {
           id: data.id,
           phone: data.phone,
           lastLoginAt: data.lastLoginAt,
-        });
-        setFamilyMembers(data.familyMembers || []);
-      } else {
+        };
+        const fam = data.familyMembers || [];
+        setAccount(acc);
+        setFamilyMembers(fam);
+        setStoredPatientData(acc, fam);
+      } else if (res.status === 401) {
+        // ONLY clear session if server explicitly returns 401 Unauthorized
         setStoredPatientToken(null);
+        setStoredPatientData(null, []);
         setToken(null);
         setAccount(null);
         setFamilyMembers([]);
       }
     } catch {
-      // offline fallback
+      // offline fallback - retain current cached account
     } finally {
       setIsLoading(false);
     }
@@ -93,11 +139,12 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
     refresh();
   }, []);
 
-  const login = async (phone: string, pass: string) => {
+  const login = async (phone: string, pass: string, clinicCode?: string) => {
     const res = await fetch('/api/patient-auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, password: pass }),
+      credentials: 'include',
+      body: JSON.stringify({ phone, password: pass, clinicCode }),
     });
 
     const data = await res.json();
@@ -108,7 +155,9 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setStoredPatientToken(data.token);
     setToken(data.token);
     setAccount(data.account);
-    setFamilyMembers(data.familyMembers || []);
+    const fam = data.familyMembers || [];
+    setFamilyMembers(fam);
+    setStoredPatientData(data.account, fam);
     return data;
   };
 
@@ -116,6 +165,7 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const res = await fetch('/api/patient-auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify(payload),
     });
 
@@ -127,15 +177,19 @@ export const PatientAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setStoredPatientToken(data.token);
     setToken(data.token);
     setAccount(data.account);
+    const fam = data.familyMembers || [];
+    setFamilyMembers(fam);
+    setStoredPatientData(data.account, fam);
     await refresh();
     return data;
   };
 
   const logout = async () => {
     try {
-      await fetch('/api/patient-auth/logout', { method: 'POST' });
+      await fetch('/api/patient-auth/logout', { method: 'POST', credentials: 'include' });
     } catch {}
     setStoredPatientToken(null);
+    setStoredPatientData(null, []);
     setToken(null);
     setAccount(null);
     setFamilyMembers([]);

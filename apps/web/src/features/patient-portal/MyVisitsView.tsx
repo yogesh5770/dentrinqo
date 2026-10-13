@@ -51,10 +51,12 @@ export const MyVisitsView: React.FC = () => {
   const fetchVisits = async () => {
     setLoadingVisits(true);
     try {
+      const currentToken = token || localStorage.getItem('dental_patient_token') || localStorage.getItem('aks_patient_token');
       const res = await fetch('/api/patient-auth/visits', {
         headers: {
-          Authorization: `Bearer ${localStorage.getItem('aks_patient_token') || token}`,
+          Authorization: `Bearer ${currentToken}`,
         },
+        credentials: 'include',
       });
       if (res.ok) {
         const data = await res.json();

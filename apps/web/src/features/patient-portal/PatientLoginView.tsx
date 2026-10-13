@@ -1,11 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { usePatientAuth } from '../../hooks/usePatientAuth';
+import { useTenant } from '../../hooks/useTenant';
 import { Phone, Lock, AlertCircle, ArrowRight, Shield, UserPlus } from 'lucide-react';
 
 export const PatientLoginView: React.FC = () => {
   const navigate = useNavigate();
-  const { login } = usePatientAuth();
+  const { login, account } = usePatientAuth();
+  const { clinic } = useTenant();
+
+  const hostClinicName = clinic?.name || (typeof window !== 'undefined' && window.location.hostname.includes('jacob') ? 'Jacobs Dental Clinic' : "AK's Elite Dental Clinic");
+  const hostClinicCode = clinic?.code || (typeof window !== 'undefined' && window.location.hostname.includes('jacob') ? 'JDC' : 'AKS');
+
+  useEffect(() => {
+    if (account) {
+      navigate('/my/visits');
+    }
+  }, [account, navigate]);
 
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
@@ -18,7 +29,7 @@ export const PatientLoginView: React.FC = () => {
     setLoading(true);
 
     try {
-      await login(phone.trim(), password);
+      await login(phone.trim(), password, hostClinicCode);
       navigate('/my/visits');
     } catch (err: any) {
       setError(err.message || 'Invalid mobile number or password.');
@@ -33,13 +44,13 @@ export const PatientLoginView: React.FC = () => {
         {/* Clinic Header Branding */}
         <div className="text-center mb-6">
           <div className="w-16 h-16 mx-auto mb-3 bg-white rounded-2xl p-2.5 shadow-sm border border-slate-200/80 flex items-center justify-center">
-            <img src="/logo.png" alt="Clinic Logo" className="w-full h-full object-contain" />
+            <img src="/logo.png" alt={`${hostClinicName} Logo`} className="w-full h-full object-contain" />
           </div>
           <h1 className="text-2xl font-black tracking-tight text-slate-900">
-            Patient Portal Login
+            {hostClinicName}
           </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Access your live queue tokens, visit history & family profiles
+          <p className="text-xs text-slate-500 mt-1 font-bold">
+            Patient Portal Login • Access your queue tokens & family records
           </p>
         </div>
 

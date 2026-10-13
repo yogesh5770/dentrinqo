@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { usePatientAuth } from '../../hooks/usePatientAuth';
 import { Users, UserPlus, ArrowLeft, Plus, Calendar, ShieldCheck, X, AlertCircle } from 'lucide-react';
@@ -6,6 +6,12 @@ import { Users, UserPlus, ArrowLeft, Plus, Calendar, ShieldCheck, X, AlertCircle
 export const MyFamilyView: React.FC = () => {
   const navigate = useNavigate();
   const { account, familyMembers, addFamilyMember, isLoading } = usePatientAuth();
+
+  useEffect(() => {
+    if (!isLoading && !account) {
+      navigate('/patient-login');
+    }
+  }, [isLoading, account, navigate]);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [fullName, setFullName] = useState('');

@@ -23,7 +23,7 @@ import { WaitingRoomTvView } from './features/public/WaitingRoomTvView';
 import { NewPatientModal } from './features/patients/NewPatientModal';
 import { BookingDrawer } from './features/appointments/BookingDrawer';
 import { triggerClinicSync } from './lib/sync';
-import { PatientAuthProvider } from './hooks/usePatientAuth';
+import { PatientAuthProvider, usePatientAuth } from './hooks/usePatientAuth';
 import { PatientSignupView } from './features/patient-portal/PatientSignupView';
 import { PatientLoginView } from './features/patient-portal/PatientLoginView';
 import { MyVisitsView } from './features/patient-portal/MyVisitsView';
@@ -32,6 +32,7 @@ import { PossibleDuplicatesView } from './features/patients/PossibleDuplicatesVi
 
 const ProtectedRoutes: React.FC = () => {
   const { user, isLoading, hasPermission } = useAuth();
+  const { account, isLoading: isPatientLoading } = usePatientAuth();
   const [newPatientOpen, setNewPatientOpen] = useState(false);
   const [newPatientInitialMode, setNewPatientInitialMode] = useState<'STANDARD' | 'LEGACY_ARCHIVE'>('STANDARD');
   const [bookingOpen, setBookingOpen] = useState(false);
@@ -42,7 +43,7 @@ const ProtectedRoutes: React.FC = () => {
     setNewPatientOpen(true);
   };
 
-  if (isLoading) {
+  if (isLoading || isPatientLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center text-teal-600">
         <div className="w-16 h-16 p-2 bg-white rounded-2xl border border-slate-200 shadow-sm flex items-center justify-center mb-4">
@@ -51,6 +52,11 @@ const ProtectedRoutes: React.FC = () => {
         <p className="text-sm font-bold text-slate-700">Loading Clinic Portal...</p>
       </div>
     );
+  }
+
+  // If patient is logged in, automatically take them to Patient Portal!
+  if (!user && account) {
+    return <Navigate to="/my/visits" replace />;
   }
 
   if (!user) {
@@ -235,6 +241,19 @@ const ProtectedRoutes: React.FC = () => {
   );
 };
 
+const LoginGate: React.FC = () => {
+  const { user } = useAuth();
+  const { account } = usePatientAuth();
+
+  if (user) {
+    return <Navigate to="/" replace />;
+  }
+  if (account) {
+    return <Navigate to="/my/visits" replace />;
+  }
+  return <LoginScreen />;
+};
+
 export const App: React.FC = () => {
   return (
     <BrowserRouter>
@@ -245,6 +264,8 @@ export const App: React.FC = () => {
               <Route path="/book" element={<PublicBookingView />} />
               <Route path="/checkin" element={<PublicCheckInView />} />
               <Route path="/check-in" element={<PublicCheckInView />} />
+              <Route path="/walkin" element={<PublicCheckInView defaultWalkIn={true} />} />
+              <Route path="/walk-in" element={<PublicCheckInView defaultWalkIn={true} />} />
               <Route path="/track/:code" element={<PublicTrackView />} />
               <Route path="/tv" element={<WaitingRoomTvView />} />
               <Route path="/queue-tv" element={<WaitingRoomTvView />} />
@@ -252,7 +273,7 @@ export const App: React.FC = () => {
               <Route path="/patient-login" element={<PatientLoginView />} />
               <Route path="/my/visits" element={<MyVisitsView />} />
               <Route path="/my/family" element={<MyFamilyView />} />
-              <Route path="/login" element={<LoginScreen />} />
+              <Route path="/login" element={<LoginGate />} />
               <Route path="/*" element={<ProtectedRoutes />} />
             </Routes>
           </PatientAuthProvider>

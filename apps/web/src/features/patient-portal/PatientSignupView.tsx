@@ -1,11 +1,23 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { usePatientAuth } from '../../hooks/usePatientAuth';
+import { useTenant } from '../../hooks/useTenant';
 import { Shield, Lock, Phone, User, Calendar, CheckCircle, AlertCircle, ArrowRight } from 'lucide-react';
 
 export const PatientSignupView: React.FC = () => {
   const navigate = useNavigate();
-  const { signup } = usePatientAuth();
+  const { signup, account } = usePatientAuth();
+  const { clinic } = useTenant();
+
+  const hostClinicName = clinic?.name || (typeof window !== 'undefined' && window.location.hostname.includes('jacob') ? 'Jacobs Dental Clinic' : "AK's Elite Dental Clinic");
+  const hostClinicCode = clinic?.code || (typeof window !== 'undefined' && window.location.hostname.includes('jacob') ? 'JDC' : 'AKS');
+  const hostClinicCity = clinic?.city || (typeof window !== 'undefined' && window.location.hostname.includes('jacob') ? 'Nagercoil' : 'Madurai');
+
+  useEffect(() => {
+    if (account) {
+      navigate('/my/visits');
+    }
+  }, [account, navigate]);
 
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
@@ -50,7 +62,7 @@ export const PatientSignupView: React.FC = () => {
         confirmPassword,
         consentDataUse,
         consentWhatsapp,
-        clinicCode: 'AKS',
+        clinicCode: hostClinicCode,
       });
       navigate('/my/visits');
     } catch (err: any) {
@@ -66,13 +78,13 @@ export const PatientSignupView: React.FC = () => {
         {/* Clinic Header Branding */}
         <div className="text-center mb-6">
           <div className="w-16 h-16 mx-auto mb-3 bg-white rounded-2xl p-2.5 shadow-sm border border-slate-200/80 flex items-center justify-center">
-            <img src="/logo.png" alt="AKS Logo" className="w-full h-full object-contain" />
+            <img src="/logo.png" alt={`${hostClinicName} Logo`} className="w-full h-full object-contain" />
           </div>
           <h1 className="text-2xl font-black tracking-tight text-slate-900">
             Create Patient Account
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            AK's Elite Dental Clinic & Multi-Speciality Hospital • Madurai
+            {hostClinicName} • {hostClinicCity}
           </p>
         </div>
 
@@ -231,7 +243,7 @@ export const PatientSignupView: React.FC = () => {
                   className="mt-1 w-4 h-4 text-teal-600 rounded border-slate-300 focus:ring-teal-500"
                 />
                 <span className="text-xs text-slate-600 leading-relaxed">
-                  I consent to AK's Elite Dental Clinic securely maintaining my medical and dental records for diagnosis, scheduling, and treatment planning in compliance with the Digital Personal Data Protection (DPDP) Act. *
+                  I consent to {hostClinicName} securely maintaining my medical and dental records for diagnosis, scheduling, and treatment planning in compliance with the Digital Personal Data Protection (DPDP) Act. *
                 </span>
               </label>
 

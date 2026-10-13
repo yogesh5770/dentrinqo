@@ -40,6 +40,10 @@ export async function apiRequest<T>(endpoint: string, options: RequestInit = {})
     headers.set('Content-Type', 'application/json');
   }
 
+  if (!sessionToken && typeof window !== 'undefined') {
+    sessionToken = localStorage.getItem(AUTH_TOKEN_KEY) || localStorage.getItem('aks_auth_token');
+  }
+
   if (sessionToken && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${sessionToken}`);
   }
