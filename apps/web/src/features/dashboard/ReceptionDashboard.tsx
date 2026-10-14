@@ -32,8 +32,6 @@ import {
   FastForward,
   KeyRound,
   Copy,
-  Settings,
-  Edit3,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
@@ -41,7 +39,6 @@ import { useClinicSync, triggerClinicSync, playClinicAlertChime } from '../../li
 import { QuickReconsultModal } from '../../components/QuickReconsultModal';
 import { WalkinConsultModal } from '../../components/WalkinConsultModal';
 import { VerifyFirstVisitModal } from '../../components/VerifyFirstVisitModal';
-import { ClinicHoursClosureModal } from '../../components/ClinicHoursClosureModal';
 
 import { ClinicLogo } from '../../components/ClinicLogo';
 interface Appointment {
@@ -84,7 +81,11 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
   const [activeQueueTab, setActiveQueueTab] = useState<QueueTab>('WAITING_LOBBY');
   const [settledApptIds, setSettledApptIds] = useState<Set<string>>(new Set());
   const [lobbyCode, setLobbyCode] = useState<string>('');
+  const [dailyLobbyCode, setDailyLobbyCode] = useState<string>('');
   const [lobbyCodeExpiresAt, setLobbyCodeExpiresAt] = useState<Date | null>(null);
+  const [copiedDailyCode, setCopiedDailyCode] = useState<boolean>(false);
+  const [copiedCheckinUrl, setCopiedCheckinUrl] = useState<boolean>(false);
+  const [copiedWalkinUrl, setCopiedWalkinUrl] = useState<boolean>(false);
   const [chairStatus, setChairStatus] = useState<Record<number, boolean>>({ 1: true, 2: true });
   const [togglingChair, setTogglingChair] = useState<number | null>(null);
   const [showQrModal, setShowQrModal] = useState<boolean>(false);
@@ -98,66 +99,39 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
   } | null>(null);
   const navigate = useNavigate();
   const { user } = useAuth();
-  const totalChairs = user?.clinic?.chairCount || 2;
+  const [totalChairs, setTotalChairs] = useState<number>(() => user?.clinic?.chairCount || 1);
   const clinicName = user?.clinic?.name || "Dental Clinic";
   const clinicCode = user?.clinic?.code || '';
+
+  const [clinicStatus, setClinicStatus] = useState<{
+    isOpen: boolean;
+    status: string;
+    message: string;
+    nextOpenAt: string | null;
+  } | null>(null);
+
+  const fetchClinicStatus = async () => {
+    try {
+      const data = await apiRequest<any>('/clinic/status');
+      setClinicStatus(data);
+    } catch {}
+  };
+
+  const fetchClinicSettings = async () => {
+    try {
+      const data = await apiRequest<any>('/clinic/settings');
+      if (data && typeof data.chairCount === 'number') {
+        setTotalChairs(data.chairCount);
+      }
+    } catch {}
+  };
   const [standeeType, setStandeeType] = useState<'DUAL' | 'CHECKIN' | 'WALKIN'>('DUAL');
-  const [primaryDomain, setPrimaryDomain] = useState<string>('');
-
-  useEffect(() => {
-    if ((user?.clinic as any)?.primaryDomain) {
-      setPrimaryDomain((user?.clinic as any)?.primaryDomain);
-    } else {
-      apiRequest('/clinic/public-info')
-        .then((data: any) => {
-          if (data?.primaryDomain) setPrimaryDomain(data.primaryDomain);
-        })
-        .catch(() => {});
-    }
-  }, [user]);
-
-  // Priority: primaryDomain from database ClinicDomain -> window.location.origin
-  const baseUrl = primaryDomain
-    ? (primaryDomain.startsWith('http') ? primaryDomain : `https://${primaryDomain}`)
-    : (typeof window !== 'undefined' ? window.location.origin : '');
-
-  // QR & Lobby Code Settings State
-  const [customLobbyCode, setCustomLobbyCode] = useState<string>('');
-  const [customWalkinUrl, setCustomWalkinUrl] = useState<string>('');
-  const [customCheckinUrl, setCustomCheckinUrl] = useState<string>('');
-  const [lobbyCodeDigits, setLobbyCodeDigits] = useState<number>(4);
-  const [lobbyCodeWindowSeconds, setLobbyCodeWindowSeconds] = useState<number>(300);
-  const [requireLobbyCode, setRequireLobbyCode] = useState<boolean>(true);
-  const [isRotatingCode, setIsRotatingCode] = useState<boolean>(false);
-  const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-
-  // Edit Settings Modal Form State
-  const [editLobbyMode, setEditLobbyMode] = useState<'ROTATING' | 'DAILY' | 'CUSTOM'>('ROTATING');
-  const [editCustomCode, setEditCustomCode] = useState<string>('');
-  const [editWindowSeconds, setEditWindowSeconds] = useState<number>(300);
-  const [editDigits, setEditDigits] = useState<number>(4);
-  const [editWalkinUrl, setEditWalkinUrl] = useState<string>('');
-  const [editCheckinUrl, setEditCheckinUrl] = useState<string>('');
-  const [editRequireCode, setEditRequireCode] = useState<boolean>(true);
-  const [isSavingSettings, setIsSavingSettings] = useState<boolean>(false);
-
-  // Clinic Hours & Status State
-  const [clinicStatusInfo, setClinicStatusInfo] = useState<any>(null);
-  const [showHoursModal, setShowHoursModal] = useState<boolean>(false);
-  const [hoursModalTab, setHoursModalTab] = useState<'STATUS_CLOSURES' | 'WORKING_HOURS' | 'HISTORY'>('WORKING_HOURS');
-
-  // Active URLs and QR Code Sources
-  const activeWalkinUrl = customWalkinUrl || `${baseUrl}/check-in?mode=walkin`;
-  const activeCheckinUrl = customCheckinUrl || `${baseUrl}/check-in`;
-  const activeWalkinQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(activeWalkinUrl)}`;
-  const activeCheckinQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(activeCheckinUrl)}`;
-
-  // Standee variables for modal
-  const checkInUrl = activeCheckinUrl;
-  const walkinUrl = activeWalkinUrl;
-  const checkinQrUrl = activeCheckinQrUrl;
-  const walkinQrUrl = activeWalkinQrUrl;
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  // Single permanent laminated reception QR per clinic (no lobby code in URL)
+  const checkInUrl = `${baseUrl}/check-in`;
+  const walkinUrl = `${baseUrl}/check-in?mode=walkin`;
+  const checkinQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(checkInUrl)}`;
+  const walkinQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(walkinUrl)}`;
   const standeeUrl = standeeType === 'CHECKIN' ? checkInUrl : walkinUrl;
   const qrCodeUrl = standeeType === 'CHECKIN' ? checkinQrUrl : walkinQrUrl;
 
@@ -234,143 +208,32 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
     }
   };
 
-  const fetchClinicStatus = async () => {
-    try {
-      const res = await apiRequest<any>('/clinic/status');
-      if (res) setClinicStatusInfo(res);
-    } catch (err) {}
-  };
-
-  const fetchClinicSettings = async () => {
-    try {
-      const res = await apiRequest<any>('/clinic/settings');
-      if (res) {
-        if (res.customLobbyCode) setCustomLobbyCode(res.customLobbyCode);
-        if (res.customWalkinQrUrl) setCustomWalkinUrl(res.customWalkinQrUrl);
-        if (res.customCheckinQrUrl) setCustomCheckinUrl(res.customCheckinQrUrl);
-        if (res.lobbyCodeDigits) setLobbyCodeDigits(res.lobbyCodeDigits);
-        if (res.lobbyCodeWindowSeconds) setLobbyCodeWindowSeconds(res.lobbyCodeWindowSeconds);
-        if (res.requireLobbyCode !== undefined) setRequireLobbyCode(res.requireLobbyCode);
-      }
-    } catch (err) {}
-  };
-
   const fetchLobbyCode = async () => {
     try {
-      const res = await apiRequest<{ code: string; expiresAt: number | string }>('/appointments/live-lobby-code');
+      const res = await apiRequest<{ code: string; dailyCode?: string; rotatingCode?: string; expiresAt: string }>('/appointments/lobby-code');
       if (res && res.code) {
         setLobbyCode(res.code);
         setLobbyCodeExpiresAt(new Date(res.expiresAt));
+        if (res.dailyCode) setDailyLobbyCode(res.dailyCode);
         return;
       }
     } catch (err) {}
 
     try {
-      const res2 = await apiRequest<{ code: string; expiresAt: number | string }>('/appointments/lobby-code');
+      const res2 = await apiRequest<{ code: string; dailyCode?: string; rotatingCode?: string; expiresAt: string }>('/appointments/live-lobby-code');
       if (res2 && res2.code) {
         setLobbyCode(res2.code);
         setLobbyCodeExpiresAt(new Date(res2.expiresAt));
+        if (res2.dailyCode) setDailyLobbyCode(res2.dailyCode);
       }
     } catch (err) {}
   };
 
-  const handleRotateCode = async () => {
-    try {
-      setIsRotatingCode(true);
-      const res = await apiRequest<{ code: string; expiresAt: number; secondsRemaining: number }>('/clinic/rotate-lobby-code', {
-        method: 'POST',
-      });
-      if (res && res.code) {
-        setLobbyCode(res.code);
-        setLobbyCodeExpiresAt(new Date(res.expiresAt));
-        setCustomLobbyCode('');
-        triggerClinicSync('lobby_code_rotated', { code: res.code });
-      }
-    } catch (err: any) {
-      alert(err.message || 'Failed to rotate lobby arrival code');
-    } finally {
-      setIsRotatingCode(false);
-    }
-  };
-
-  const handleOpenSettingsModal = () => {
-    setEditCustomCode(customLobbyCode || '');
-    setEditWalkinUrl(customWalkinUrl || '');
-    setEditCheckinUrl(customCheckinUrl || '');
-    setEditDigits(lobbyCodeDigits || 4);
-    setEditWindowSeconds(lobbyCodeWindowSeconds || 300);
-    setEditRequireCode(requireLobbyCode);
-    if (customLobbyCode) {
-      setEditLobbyMode('CUSTOM');
-    } else if (lobbyCodeWindowSeconds >= 86400) {
-      setEditLobbyMode('DAILY');
-    } else {
-      setEditLobbyMode('ROTATING');
-    }
-    setShowSettingsModal(true);
-  };
-
-  const handleSaveSettings = async () => {
-    try {
-      setIsSavingSettings(true);
-      let windowSec = editWindowSeconds;
-      let finalCustomCode: string | null = null;
-
-      if (editLobbyMode === 'CUSTOM') {
-        if (!editCustomCode.trim()) {
-          alert('Please enter a 4 or 6-digit custom code, or choose Rotating/Daily mode.');
-          return;
-        }
-        finalCustomCode = editCustomCode.trim();
-      } else if (editLobbyMode === 'DAILY') {
-        windowSec = 86400; // 24 hours
-        finalCustomCode = null;
-      } else {
-        windowSec = editWindowSeconds < 86400 ? editWindowSeconds : 300;
-        finalCustomCode = null;
-      }
-
-      const payload = {
-        customLobbyCode: finalCustomCode,
-        customWalkinQrUrl: editWalkinUrl.trim() || null,
-        customCheckinQrUrl: editCheckinUrl.trim() || null,
-        lobbyCodeWindowSeconds: windowSec,
-        lobbyCodeDigits: editDigits,
-        requireLobbyCode: editRequireCode,
-      };
-
-      await apiRequest('/clinic/settings', {
-        method: 'PUT',
-        body: JSON.stringify(payload),
-      });
-
-      setCustomLobbyCode(finalCustomCode || '');
-      setCustomWalkinUrl(editWalkinUrl.trim());
-      setCustomCheckinUrl(editCheckinUrl.trim());
-      setLobbyCodeWindowSeconds(windowSec);
-      setLobbyCodeDigits(editDigits);
-      setRequireLobbyCode(editRequireCode);
-      setShowSettingsModal(false);
-
-      await fetchLobbyCode();
-      await fetchClinicSettings();
-      triggerClinicSync('clinic_settings_updated');
-    } catch (err: any) {
-      alert(err.message || 'Failed to save QR & code settings');
-    } finally {
-      setIsSavingSettings(false);
-    }
-  };
-
-  const handleCopy = (text: string, key: string) => {
-    if (navigator?.clipboard) {
-      navigator.clipboard.writeText(text);
-      setCopiedKey(key);
-      setTimeout(() => setCopiedKey(null), 2000);
-    }
-  };
-
   const handleConfirmPresence = async (apptId: string) => {
+    if (clinicStatus && !clinicStatus.isOpen) {
+      alert(`Cannot confirm presence: Hospital is currently closed.\n${clinicStatus.message || 'Check-in is only allowed during clinic operating hours.'}`);
+      return;
+    }
     try {
       await apiRequest(`/appointments/${apptId}/confirm-presence`, {
         method: 'PATCH',
@@ -383,13 +246,13 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
   };
 
   useEffect(() => {
+    fetchClinicSettings();
+    fetchClinicStatus();
     fetchTodayAppointments(false);
     fetchChairStatus();
     fetchLobbyCode();
-    fetchClinicStatus();
-    fetchClinicSettings();
     const lobbyTimer = setInterval(fetchLobbyCode, 30000);
-    const statusTimer = setInterval(fetchClinicStatus, 60000);
+    const statusTimer = setInterval(fetchClinicStatus, 30000);
     return () => {
       clearInterval(lobbyTimer);
       clearInterval(statusTimer);
@@ -397,6 +260,8 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
   }, []);
 
   useClinicSync((syncEv) => {
+    fetchClinicSettings();
+    fetchClinicStatus();
     fetchTodayAppointments(true);
     fetchChairStatus();
     if (syncEv?.reason === 'doctor_sent_to_reception' && syncEv?.payload) {
@@ -430,6 +295,10 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
   };
 
   const handleUpdateStatus = async (id: string, newStatus: string, targetChair?: number, emergencyReason?: string) => {
+    if (newStatus === 'CHECKED_IN' && clinicStatus && !clinicStatus.isOpen && !emergencyReason) {
+      alert(`Cannot check in patient: Hospital is currently closed.\n${clinicStatus.message || 'Patient check-in is not permitted outside operating hours.'}`);
+      return;
+    }
     try {
       const payload: any = { status: newStatus };
       if (targetChair && targetChair >= 1 && targetChair <= 10) {
@@ -757,6 +626,43 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
         </div>
       )}
 
+      {/* Clinic Closed Alert Banner */}
+      {clinicStatus && !clinicStatus.isOpen && (
+        <div className="p-4 sm:p-5 rounded-3xl bg-rose-50 border-2 border-rose-300 text-rose-950 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm animate-in fade-in">
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-2xl bg-rose-600 text-white flex items-center justify-center font-bold shrink-0 shadow-xs">
+              <AlertTriangle className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] font-black uppercase tracking-wider bg-rose-600 text-white px-2.5 py-0.5 rounded-full shadow-2xs">
+                  ● Hospital Closed
+                </span>
+                <span className="font-black text-sm text-slate-900">
+                  Operating Hours Closed • Check-In & Walk-Ins Disabled
+                </span>
+              </div>
+              <p className="text-xs text-rose-900 font-medium mt-1 leading-relaxed">
+                {clinicStatus.message || 'Reception check-in and walk-in consultation intake are disabled while the clinic is closed.'}
+                {clinicStatus.nextOpenAt && (
+                  <strong className="text-rose-950 block sm:inline sm:ml-1">
+                    Re-opens at {new Date(clinicStatus.nextOpenAt).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })} IST.
+                  </strong>
+                )}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => navigate('/settings')}
+              className="py-2 px-3.5 rounded-xl bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 font-bold text-xs transition cursor-pointer shadow-xs"
+            >
+              Configure Hospital Hours
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Top Banner & Quick Actions */}
       <div className="clinic-card p-5 bg-white border border-slate-200 text-slate-900 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -793,22 +699,6 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
               <span>⚠️ Staff must never give the lobby code over the phone.</span>
             </div>
           </div>
-
-          <button
-            onClick={() => {
-              setHoursModalTab('WORKING_HOURS');
-              setShowHoursModal(true);
-            }}
-            className={`flex items-center gap-1.5 border font-black text-xs py-2.5 px-3.5 rounded-xl shadow-xs transition-all cursor-pointer ${
-              clinicStatusInfo?.isOpen
-                ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border-emerald-300'
-                : 'bg-rose-50 hover:bg-rose-100 text-rose-900 border-rose-300'
-            }`}
-            title="Admin can change hospital timings and weekly schedule"
-          >
-            <Clock className="w-4 h-4 text-emerald-600" />
-            <span>🕒 {clinicStatusInfo?.isOpen ? 'Hours: OPEN' : 'Hours: CLOSED'}</span>
-          </button>
 
           <button
             onClick={() => navigate('/admin/duplicates')}
@@ -863,254 +753,183 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
         </div>
       </div>
 
-      {/* 🏥 Hospital Entrance Standee & Live 4-Digit Verification Terminal */}
-      <div className="clinic-card p-5 sm:p-6 bg-gradient-to-br from-slate-900 via-slate-950 to-teal-950 text-white rounded-3xl shadow-xl border border-teal-500/30 space-y-6">
-        {/* Terminal Top Bar */}
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-white/10 pb-4">
+      {/* Hospital Smart Arrival & Standee QR Desk (Directly on Page) */}
+      <div className="clinic-card p-5 bg-gradient-to-r from-slate-900 via-teal-950 to-slate-900 text-white rounded-3xl shadow-lg border border-teal-500/30 space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-teal-500/20 border border-teal-400/30 flex items-center justify-center shrink-0 shadow-inner">
+            <div className="w-12 h-12 rounded-2xl bg-teal-500/20 border border-teal-400/40 text-teal-300 flex items-center justify-center font-bold shrink-0 shadow-inner">
               <QrCode className="w-6 h-6 text-teal-300" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-full bg-teal-500/20 border border-teal-400/40 text-[10px] font-black uppercase tracking-widest text-teal-300">
-                  Lobby Standee & Self-Service Terminal
-                </span>
-                <span className="px-2 py-0.5 rounded-full bg-amber-400/20 border border-amber-300/40 text-[10px] font-extrabold text-amber-300">
-                  Anti-Ghosting Guard
+                <h3 className="text-base sm:text-lg font-black tracking-tight text-white">
+                  Hospital Smart Arrival & Standee QR Desk
+                </h3>
+                <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-emerald-500 text-slate-950">
+                  Live Front Desk
                 </span>
               </div>
-              <h3 className="text-lg sm:text-xl font-black text-white mt-1">
-                Patient Entrance QRs & Live 4-Digit Verification Code
-              </h3>
-              <p className="text-xs text-slate-300 font-medium">
-                Patients scan either QR code at the hospital entrance and enter the 4-digit code to confirm physical presence inside the hospital.
+              <p className="text-xs text-slate-300 font-medium mt-0.5">
+                Two dedicated QRs for patient self-arrival + Daily 4-digit verification code.
               </p>
             </div>
           </div>
 
-          {/* Right Controls: Hospital Timing & QR Settings */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2">
             <button
-              type="button"
-              onClick={() => {
-                setHoursModalTab('WORKING_HOURS');
-                setShowHoursModal(true);
-              }}
-              className={`px-3 py-2 rounded-xl text-xs font-black flex items-center gap-2 border transition-all cursor-pointer shadow-sm active:scale-95 ${
-                clinicStatusInfo?.isOpen
-                  ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-400/40'
-                  : 'bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border-rose-400/40'
-              }`}
-              title="Admin can change hospital timings and working hours"
-            >
-              <Clock className="w-3.5 h-3.5" />
-              <span>
-                {clinicStatusInfo?.isOpen ? '● OPEN' : '● CLOSED'}
-                {clinicStatusInfo?.todaySchedule?.openTime ? ` (${clinicStatusInfo.todaySchedule.openTime} - ${clinicStatusInfo.todaySchedule.closeTime})` : ''}
-              </span>
-              <span className="text-[10px] uppercase tracking-wider text-teal-200 bg-teal-900/60 px-1.5 py-0.5 rounded ml-1">
-                Change Timings
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleOpenSettingsModal}
-              className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs flex items-center gap-1.5 border border-white/20 transition-all cursor-pointer shadow-sm active:scale-95"
-              title="Change QR URLs, Code Mode, or Digits"
-            >
-              <Settings className="w-3.5 h-3.5 text-teal-300" />
-              <span>⚙️ Code & QR Settings</span>
-            </button>
-
-            <button
-              type="button"
               onClick={() => setShowQrModal(true)}
-              className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-600 hover:to-emerald-600 text-slate-950 font-black text-xs flex items-center gap-1.5 shadow-md transition-all cursor-pointer active:scale-95"
-              title="Print laminated A4 counter placard"
+              className="py-2.5 px-4 rounded-xl bg-white hover:bg-slate-100 text-slate-950 font-black text-xs shadow-md flex items-center gap-2 transition cursor-pointer active:scale-95"
             >
-              <Printer className="w-3.5 h-3.5" />
-              <span>🖨️ Print Standee Poster</span>
+              <Printer className="w-4 h-4 text-teal-700" />
+              <span>🖨️ Print Full Standee (A4)</span>
             </button>
           </div>
         </div>
 
-        {/* Main 3-Column Display */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {/* QR 1: Walk-In Users */}
-          <div className="p-4 sm:p-5 rounded-2xl bg-white/5 border border-teal-500/30 hover:border-teal-400/50 transition-all flex flex-col items-center text-center space-y-3 relative group">
-            <div className="flex items-center justify-between w-full">
-              <span className="px-2.5 py-1 rounded-full bg-teal-500/20 text-teal-300 text-[10px] font-black uppercase tracking-wider border border-teal-400/30">
-                QR 1 • Hospital Walk-In
-              </span>
-              <span className="text-[10px] text-teal-300/80 font-bold">Unscheduled</span>
-            </div>
-
-            <div className="p-3 bg-white rounded-2xl shadow-lg border-2 border-teal-400 inline-block">
-              <img
-                src={activeWalkinQrUrl}
-                alt="Walk-in Registration QR"
-                className="w-36 h-36 sm:w-40 sm:h-40 mx-auto rounded-lg object-contain"
-              />
-            </div>
-
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">
+          {/* Card 1: Daily 4-Digit In-Hospital Passcode */}
+          <div className="p-4 rounded-2xl bg-white/10 border border-white/15 backdrop-blur-md flex flex-col justify-between space-y-3">
             <div>
-              <h4 className="text-sm font-black text-white flex items-center justify-center gap-1.5">
-                <span>🏥 Walk-In Consultation</span>
-              </h4>
-              <p className="text-[11px] text-slate-300 font-medium leading-snug mt-1">
-                Patients arriving without booking scan this QR to register, enter complaint, and join the active queue.
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-black uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+                  <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Daily 4-Digit Passcode</span>
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                  Valid All Day (IST)
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-300 font-medium mt-1">
+                Patients scan QR 2 (Walk-In) and enter this 4-digit code to prove physical presence at the hospital lobby:
               </p>
             </div>
 
-            <div className="w-full pt-1 flex items-center justify-center gap-2 text-xs">
-              <a
-                href={activeWalkinUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-2.5 py-1.5 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 text-teal-200 font-bold text-[11px] flex items-center gap-1 transition"
-              >
-                <ExternalLink className="w-3 h-3" />
-                <span>Test URL</span>
-              </a>
+            <div className="p-3 rounded-xl bg-slate-950/70 border border-amber-400/40 text-center space-y-1">
+              <span className="text-[10px] uppercase font-bold text-amber-300/80 tracking-widest block">
+                Today's Hospital Passcode
+              </span>
+              <div className="font-mono text-3xl sm:text-4xl font-black text-amber-400 tracking-widest">
+                {dailyLobbyCode || lobbyCode || '••••'}
+              </div>
+              <div className="text-[10px] text-slate-400 font-mono">
+                TV Screen Rotating Code: <strong className="text-white">{lobbyCode || '••••'}</strong>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
               <button
-                type="button"
-                onClick={() => handleCopy(activeWalkinUrl, 'walkin')}
-                className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
+                onClick={() => {
+                  navigator.clipboard.writeText(dailyLobbyCode || lobbyCode || '');
+                  setCopiedDailyCode(true);
+                  setTimeout(() => setCopiedDailyCode(false), 2500);
+                }}
+                className="w-full py-2 px-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95 shadow-xs"
               >
-                {copiedKey === 'walkin' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                <span>{copiedKey === 'walkin' ? 'Copied!' : 'Copy Link'}</span>
+                {copiedDailyCode ? <Check className="w-3.5 h-3.5 text-slate-950" /> : <Copy className="w-3.5 h-3.5 text-slate-950" />}
+                <span>{copiedDailyCode ? 'Copied to Clipboard!' : 'Copy Daily Passcode'}</span>
               </button>
             </div>
           </div>
 
-          {/* Center Console: Live 4-Digit Hospital Code */}
-          <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-b from-amber-500/15 via-amber-500/10 to-orange-500/15 border-2 border-amber-400/50 flex flex-col items-center text-center justify-between space-y-4 shadow-lg">
-            <div className="flex items-center justify-between w-full">
-              <span className="px-2.5 py-1 rounded-full bg-amber-400/20 text-amber-300 text-[10px] font-black uppercase tracking-wider border border-amber-300/40 flex items-center gap-1">
-                <KeyRound className="w-3 h-3" />
-                <span>Presence Verification</span>
-              </span>
-              <span className="text-[10px] text-amber-200 font-bold">
-                {customLobbyCode ? 'Static PIN' : (lobbyCodeWindowSeconds >= 86400 ? 'Daily Code' : 'Rotating TOTP')}
-              </span>
-            </div>
-
-            <div className="space-y-2">
-              <span className="text-[11px] uppercase tracking-wider text-amber-200 font-black block">
-                Today's 4-Digit Hospital Code
-              </span>
-              <div className="inline-flex items-center gap-1.5 p-3 rounded-2xl bg-slate-950/90 border-2 border-amber-400 shadow-2xl">
-                {(lobbyCode || '••••').split('').map((char, idx) => (
-                  <span
-                    key={idx}
-                    className="w-10 h-12 rounded-xl bg-amber-400/15 border border-amber-400/40 text-amber-300 font-mono text-2xl font-black flex items-center justify-center shadow-inner tracking-tight"
-                  >
-                    {char}
-                  </span>
-                ))}
+          {/* Card 2: QR 1 (Online Advance Booking & Check-In) */}
+          <div className="p-4 rounded-2xl bg-white/10 border border-white/15 backdrop-blur-md flex flex-col justify-between space-y-3">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-black uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>QR 1 • Advance Booking & Check-In</span>
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  Online Patients
+                </span>
               </div>
-
-              <div className="flex items-center justify-center gap-2 pt-1 text-xs">
-                {customLobbyCode ? (
-                  <span className="text-[11px] text-amber-200/90 font-bold">
-                    🔒 Custom PIN active (Valid anytime)
-                  </span>
-                ) : lobbyCodeExpiresAt ? (
-                  <span className="text-[11px] text-amber-200/90 font-semibold flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    <span>
-                      Rotates in {Math.max(0, Math.floor((lobbyCodeExpiresAt.getTime() - Date.now()) / 60000))}m {Math.max(0, Math.floor(((lobbyCodeExpiresAt.getTime() - Date.now()) % 60000) / 1000))}s
-                    </span>
-                  </span>
-                ) : (
-                  <span className="text-[11px] text-amber-200/90 font-semibold">Active & Verified</span>
-                )}
-              </div>
-            </div>
-
-            {/* Security explanation note */}
-            <div className="w-full bg-slate-950/60 rounded-xl p-2.5 border border-amber-400/30 text-left text-[11px] space-y-1">
-              <div className="flex items-start gap-1.5 text-amber-300 font-bold">
-                <span>🛡️ Why this code exists:</span>
-              </div>
-              <p className="text-slate-300 text-[10px] leading-relaxed">
-                Patients who scan either QR must type this code into their phone to confirm physical presence inside the clinic.
+              <p className="text-[11px] text-slate-300 font-medium mt-1">
+                Patients with advance bookings scan here to self check-in and claim their queue token.
               </p>
-              <div className="text-[10px] text-rose-300 font-bold flex items-center gap-1 border-t border-white/10 pt-1">
-                <span>⚠️ Staff must never give the code over phone.</span>
+            </div>
+
+            <div className="flex items-center justify-center py-1">
+              <div className="p-2 bg-white rounded-xl shadow-md inline-block">
+                <img
+                  src={checkinQrUrl}
+                  alt="QR 1: Advance Booking & Check-In"
+                  className="w-28 h-28 object-contain rounded-md"
+                />
               </div>
             </div>
 
-            {/* Instant Action: Rotate Code Now */}
-            <div className="w-full flex items-center gap-2">
+            <div className="flex items-center gap-2 pt-1 border-t border-white/10">
               <button
-                type="button"
-                onClick={handleRotateCode}
-                disabled={isRotatingCode}
-                className="flex-1 py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shadow-md transition-all cursor-pointer active:scale-95"
-                title="Instantly generate a brand new live arrival code"
+                onClick={() => {
+                  navigator.clipboard.writeText(checkInUrl);
+                  setCopiedCheckinUrl(true);
+                  setTimeout(() => setCopiedCheckinUrl(false), 2500);
+                }}
+                className="flex-1 py-1.5 px-2 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold text-[11px] transition cursor-pointer flex items-center justify-center gap-1"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${isRotatingCode ? 'animate-spin' : ''}`} />
-                <span>{isRotatingCode ? 'Rotating...' : '🔄 Rotate Code Now'}</span>
+                {copiedCheckinUrl ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                <span>{copiedCheckinUrl ? 'Copied' : 'Copy URL'}</span>
               </button>
-
-              <button
-                type="button"
-                onClick={handleOpenSettingsModal}
-                className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-amber-200 border border-amber-400/30 transition cursor-pointer"
-                title="Set custom static code or change rotation duration"
+              <a
+                href={checkInUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="py-1.5 px-3 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/30 font-bold text-[11px] transition flex items-center gap-1"
               >
-                <Edit3 className="w-4 h-4" />
-              </button>
+                <ExternalLink className="w-3 h-3" />
+                <span>Test</span>
+              </a>
             </div>
           </div>
 
-          {/* QR 2: Booked Patients Self Check-In */}
-          <div className="p-4 sm:p-5 rounded-2xl bg-white/5 border border-emerald-500/30 hover:border-emerald-400/50 transition-all flex flex-col items-center text-center space-y-3 relative group">
-            <div className="flex items-center justify-between w-full">
-              <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase tracking-wider border border-emerald-400/30">
-                QR 2 • Booked Check-In
-              </span>
-              <span className="text-[10px] text-emerald-300/80 font-bold">Advance Slots</span>
-            </div>
-
-            <div className="p-3 bg-white rounded-2xl shadow-lg border-2 border-emerald-400 inline-block">
-              <img
-                src={activeCheckinQrUrl}
-                alt="Self Check-in QR"
-                className="w-36 h-36 sm:w-40 sm:h-40 mx-auto rounded-lg object-contain"
-              />
-            </div>
-
+          {/* Card 3: QR 2 (Hospital Lobby Walk-In Queue) */}
+          <div className="p-4 rounded-2xl bg-white/10 border border-white/15 backdrop-blur-md flex flex-col justify-between space-y-3">
             <div>
-              <h4 className="text-sm font-black text-white flex items-center justify-center gap-1.5">
-                <span>📱 Advance Booking Check-In</span>
-              </h4>
-              <p className="text-[11px] text-slate-300 font-medium leading-snug mt-1">
-                Patients who booked in advance scan this QR, enter mobile # & hospital code to claim token and check in.
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-black uppercase tracking-wider text-teal-300 flex items-center gap-1.5">
+                  <Zap className="w-3.5 h-3.5 text-teal-400" />
+                  <span>QR 2 • Hospital Walk-In Standee</span>
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                  Walk-In Counter
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-300 font-medium mt-1">
+                Patients who walked in without booking scan here to join the active doctor queue.
               </p>
             </div>
 
-            <div className="w-full pt-1 flex items-center justify-center gap-2 text-xs">
+            <div className="flex items-center justify-center py-1">
+              <div className="p-2 bg-white rounded-xl shadow-md inline-block">
+                <img
+                  src={walkinQrUrl}
+                  alt="QR 2: Hospital Lobby Walk-In"
+                  className="w-28 h-28 object-contain rounded-md"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1 border-t border-white/10">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(walkinUrl);
+                  setCopiedWalkinUrl(true);
+                  setTimeout(() => setCopiedWalkinUrl(false), 2500);
+                }}
+                className="flex-1 py-1.5 px-2 rounded-lg bg-white/10 hover:bg-white/20 text-white font-bold text-[11px] transition cursor-pointer flex items-center justify-center gap-1"
+              >
+                {copiedWalkinUrl ? <Check className="w-3 h-3 text-teal-400" /> : <Copy className="w-3 h-3" />}
+                <span>{copiedWalkinUrl ? 'Copied' : 'Copy URL'}</span>
+              </button>
               <a
-                href={activeCheckinUrl}
+                href={walkinUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 font-bold text-[11px] flex items-center gap-1 transition"
+                className="py-1.5 px-3 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/30 font-bold text-[11px] transition flex items-center gap-1"
               >
                 <ExternalLink className="w-3 h-3" />
-                <span>Test URL</span>
+                <span>Test</span>
               </a>
-              <button
-                type="button"
-                onClick={() => handleCopy(activeCheckinUrl, 'checkin')}
-                className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 font-bold text-[11px] flex items-center gap-1 transition cursor-pointer"
-              >
-                {copiedKey === 'checkin' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                <span>{copiedKey === 'checkin' ? 'Copied!' : 'Copy Link'}</span>
-              </button>
             </div>
           </div>
         </div>
@@ -1131,7 +950,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500 font-medium">
-                Live operatory room occupancy. Seat next waiting lobby patient with 1 click to any free chair.
+                Live operatory room occupancy. Receptionist & Admin can close any chair if doctor is absent.
               </p>
             </div>
           </div>
@@ -1139,28 +958,32 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
           <div className="flex items-center gap-2 text-xs font-bold text-slate-600">
             <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Free</span>
             <span className="flex items-center gap-1.5 ml-2"><span className="w-2.5 h-2.5 rounded-full bg-rose-500" /> In Treatment</span>
-            <span className="flex items-center gap-1.5 ml-2"><span className="w-2.5 h-2.5 rounded-full bg-slate-300" /> Off Duty</span>
+            <span className="flex items-center gap-1.5 ml-2"><span className="w-2.5 h-2.5 rounded-full bg-slate-300" /> Doctor Absent</span>
           </div>
         </div>
 
         {/* Chair Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className={`grid grid-cols-1 ${totalChairs === 1 ? 'max-w-md' : totalChairs === 2 ? 'md:grid-cols-2' : 'md:grid-cols-2 lg:grid-cols-3'} gap-4`}>
           {Array.from({ length: totalChairs }, (_, i) => i + 1).map(num => {
             const isActive = chairStatus[num] ?? true;
             const isToggling = togglingChair === num;
-            const currentPatient = appointments.find(a => a.status === 'IN_CHAIR' && a.chairNumber === num);
-            const calledPatient = appointments.find(a => a.status === 'CALLED' && a.chairNumber === num);
-            const currentTokenIdx = currentPatient ? sortedFiltered.findIndex(a => a.id === currentPatient.id) + 1 : null;
-            const calledTokenIdx = calledPatient ? sortedFiltered.findIndex(a => a.id === calledPatient.id) + 1 : null;
-            const nextWaiting = sortedFiltered.find(a => a.status === 'CHECKED_IN');
-            const nextWaitingToken = nextWaiting ? sortedFiltered.findIndex(a => a.id === nextWaiting.id) + 1 : null;
+            const currentPatient = appointments.find(a => a.status === 'IN_CHAIR' && (totalChairs === 1 || a.chairNumber === num));
+            const calledPatient = appointments.find(a => a.status === 'CALLED' && (totalChairs === 1 || a.chairNumber === num));
+            const currentTokenIdx = currentPatient?.tokenNumber || (currentPatient ? sortedFiltered.findIndex(a => a.id === currentPatient.id) + 1 : null);
+            const calledTokenIdx = calledPatient?.tokenNumber || (calledPatient ? sortedFiltered.findIndex(a => a.id === calledPatient.id) + 1 : null);
+            const waitingLobby = appointments
+              .filter(a => a.status === 'CHECKED_IN' && (totalChairs === 1 || a.chairNumber === num || !a.chairNumber))
+              .sort((a, b) => (a.tokenNumber || 0) - (b.tokenNumber || 0));
+            const nextWaiting = waitingLobby[0];
+            const nextWaitingToken = nextWaiting?.tokenNumber;
+            const chairActiveQueue = appointments.filter(a => (totalChairs === 1 || a.chairNumber === num) && ['CHECKED_IN', 'CALLED', 'IN_CHAIR'].includes(a.status)).length;
 
             // Check if next waiting patient requested a specific doctor
             const requestedDoctor = nextWaiting?.dentistName;
             const hasDoctorMismatch = requestedDoctor && !requestedDoctor.toLowerCase().includes('duty') && num !== nextWaiting?.chairNumber;
 
-            let docLabel = 'Specialist Room';
-            if (num === 1) docLabel = 'Chief Dental Surgeon';
+            let docLabel = totalChairs === 1 ? 'Main Operatory Clinic' : 'Specialist Room';
+            if (num === 1) docLabel = totalChairs === 1 ? 'Main Operatory Unit' : 'Chief Dental Surgeon';
             else if (num === 2) docLabel = 'Associate Dental Surgeon';
             else if (num === 3) docLabel = 'Specialist & Orthodontist';
 
@@ -1169,7 +992,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                 key={num}
                 className={`rounded-2xl border p-4 transition-all flex flex-col justify-between space-y-3 shadow-2xs ${
                   !isActive
-                    ? 'bg-slate-50/80 border-slate-200 text-slate-500 opacity-80'
+                    ? 'bg-rose-50/40 border-rose-200 text-slate-700'
                     : calledPatient
                     ? 'bg-amber-50/70 border-amber-400 text-slate-900 ring-2 ring-amber-300'
                     : currentPatient
@@ -1183,7 +1006,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                     <span
                       className={`w-3 h-3 rounded-full ${
                         !isActive
-                          ? 'bg-slate-400'
+                          ? 'bg-rose-400'
                           : calledPatient
                           ? 'bg-amber-500 animate-ping'
                           : currentPatient
@@ -1201,26 +1024,21 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                   </div>
 
                   <div className="flex items-center gap-1.5">
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                        !isActive
-                          ? 'bg-slate-200 text-slate-700'
-                          : calledPatient
-                          ? 'bg-amber-100 text-amber-950 border border-amber-400 font-black animate-pulse'
-                          : currentPatient
-                          ? 'bg-rose-100 text-rose-900 border border-rose-300'
-                          : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
-                      }`}
-                    >
-                      {!isActive ? 'Off Duty' : calledPatient ? 'Paging Patient' : currentPatient ? 'In Treatment' : 'Free & Ready'}
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                      Queue: {chairActiveQueue}
                     </span>
                     <button
                       onClick={() => handleToggleChair(num, isActive)}
                       disabled={isToggling}
-                      title={isActive ? 'Set Doctor Off-Duty' : 'Set Doctor On-Duty'}
-                      className="p-1 rounded-lg hover:bg-slate-200 text-slate-500 transition cursor-pointer"
+                      title={isActive ? 'Doctor Absent - Close Chair' : 'Doctor Present - Reopen Chair'}
+                      className={`px-2.5 py-1 rounded-lg font-black text-[10px] transition cursor-pointer flex items-center gap-1 shadow-2xs active:scale-95 ${
+                        isActive
+                          ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300'
+                          : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                      }`}
                     >
-                      <Power className="w-3.5 h-3.5" />
+                      <Power className="w-3 h-3" />
+                      <span>{isActive ? 'Close (Absent)' : 'Open (Present)'}</span>
                     </button>
                   </div>
                 </div>
@@ -1228,14 +1046,13 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                 {/* Body Content */}
                 <div className="min-h-[70px] flex flex-col justify-center text-xs">
                   {!isActive ? (
-                    <div className="text-center py-2 text-slate-400 font-medium">
-                      <p>Room temporarily closed or doctor off duty.</p>
-                      <button
-                        onClick={() => handleToggleChair(num, false)}
-                        className="mt-1 text-[11px] text-teal-700 font-bold hover:underline cursor-pointer"
-                      >
-                        Activate Room
-                      </button>
+                    <div className="text-center py-2 bg-rose-50/80 p-2.5 rounded-xl border border-rose-200 text-rose-900 space-y-1">
+                      <p className="font-black text-xs flex items-center justify-center gap-1 text-rose-800">
+                        <span>🔴 Doctor Absent • Chair Closed</span>
+                      </p>
+                      <p className="text-[10px] text-rose-700 font-medium">
+                        System automatically excludes this chair from all bookings and walk-ins.
+                      </p>
                     </div>
                   ) : calledPatient ? (
                     <div className="space-y-1.5 bg-white p-2.5 rounded-xl border border-amber-300 shadow-2xs">
@@ -1395,6 +1212,101 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
 
       {/* Main Table: Today's Patient Queue with E-Commerce 5-Stage Funnel Tabs */}
       <div className="clinic-card bg-white border border-slate-200 overflow-hidden shadow-xs">
+        {/* LIVE QUEUE DISPATCH BANNER: NOW IN CHAIR & UP NEXT TOKEN */}
+        {(() => {
+          const inChairAppt = appointments.find(a => a.status === 'IN_CHAIR');
+          const calledAppt = appointments.find(a => a.status === 'CALLED');
+          const waitingQueue = appointments
+            .filter(a => a.status === 'CHECKED_IN')
+            .sort((a, b) => (a.tokenNumber || 0) - (b.tokenNumber || 0));
+          const nextUp = waitingQueue[0];
+
+          return (
+            <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-teal-950 text-white p-4 border-b border-white/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex flex-wrap items-center gap-4 sm:gap-6">
+                {/* Now in Chair */}
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black shrink-0 ${
+                    inChairAppt
+                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30 ring-2 ring-rose-400/30'
+                      : calledAppt
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse'
+                      : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                  }`}>
+                    <Armchair className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                      Currently In Chair
+                    </span>
+                    <div className="text-sm font-black text-white flex items-center gap-1.5 flex-wrap">
+                      {inChairAppt ? (
+                        <>
+                          <span className="text-amber-400 font-mono">TOKEN #{inChairAppt.tokenNumber || '—'}</span>
+                          <span>• {inChairAppt.patientName}</span>
+                          <span className="text-xs text-slate-400 font-medium">(Chair #{inChairAppt.chairNumber})</span>
+                        </>
+                      ) : calledAppt ? (
+                        <>
+                          <span className="text-amber-400 font-mono animate-pulse">CALLING TOKEN #{calledAppt.tokenNumber || '—'}</span>
+                          <span>• {calledAppt.patientName}</span>
+                        </>
+                      ) : (
+                        <span className="text-emerald-400">🟢 Operatory Chair Free & Sanitized</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="hidden sm:block w-px h-8 bg-white/10" />
+
+                {/* Up Next in Queue */}
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center justify-center font-black shrink-0">
+                    <Clock className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-300 block">
+                      Up Next In Line (Token)
+                    </span>
+                    <div className="text-sm font-black text-white flex items-center gap-1.5 flex-wrap">
+                      {nextUp ? (
+                        <>
+                          <span className="bg-amber-400 text-slate-950 font-mono font-black text-xs px-2 py-0.5 rounded">
+                            TOKEN #{nextUp.tokenNumber || '—'}
+                          </span>
+                          <span className="text-white">{nextUp.patientName}</span>
+                          <span className="text-xs text-emerald-400 font-bold bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                            #1 in Queue
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-slate-400 text-xs">No patients waiting in lobby</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action */}
+              <div className="flex items-center gap-2 shrink-0">
+                {nextUp && !inChairAppt && !calledAppt && (
+                  <button
+                    onClick={() => handleUpdateStatus(nextUp.id, 'CALLED', nextUp.chairNumber || 1)}
+                    className="px-4 py-2 bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-slate-950 font-black text-xs rounded-xl shadow-md transition cursor-pointer flex items-center gap-1.5 active:scale-95"
+                  >
+                    <Armchair className="w-4 h-4" />
+                    <span>📢 Call Token #{nextUp.tokenNumber} to Chair</span>
+                  </button>
+                )}
+                <span className="text-xs font-bold text-slate-300 bg-white/5 border border-white/10 px-3 py-1.5 rounded-xl">
+                  Lobby: <strong className="text-white">{waitingQueue.length} waiting</strong>
+                </span>
+              </div>
+            </div>
+          );
+        })()}
+
         <div className="p-4 sm:p-5 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white">
           <div>
             <div className="flex items-center gap-2">
@@ -1408,20 +1320,22 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
             </p>
           </div>
 
-          {/* Operatory Room Filter */}
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-slate-500 font-bold text-xs hidden sm:inline">Room:</span>
-            <select
-              value={filterChair}
-              onChange={e => setFilterChair(e.target.value ? Number(e.target.value) : '')}
-              className="bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-slate-900 font-bold focus:outline-none focus:border-teal-600 shadow-2xs"
-            >
-              <option value="">All Rooms (Chairs 1-{totalChairs})</option>
-              {Array.from({ length: totalChairs }, (_, i) => i + 1).map(c => (
-                <option key={c} value={c}>Chair #{c} (Operatory #{c})</option>
-              ))}
-            </select>
-          </div>
+          {/* Operatory Room Filter (Only for multi-chair clinics) */}
+          {totalChairs > 1 && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-slate-500 font-bold text-xs hidden sm:inline">Room:</span>
+              <select
+                value={filterChair}
+                onChange={e => setFilterChair(e.target.value ? Number(e.target.value) : '')}
+                className="bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-slate-900 font-bold focus:outline-none focus:border-teal-600 shadow-2xs"
+              >
+                <option value="">All Rooms (Chairs 1-{totalChairs})</option>
+                {Array.from({ length: totalChairs }, (_, i) => i + 1).map(c => (
+                  <option key={c} value={c}>Chair #{c} (Operatory #{c})</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         {/* E-Commerce Funnel Tabs */}
@@ -1578,6 +1492,21 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                           <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-900 text-white font-mono font-black text-[11px] shadow-2xs">
                             TOKEN #{appt.tokenNumber || (idx + 1)}
                           </span>
+                          {appt.status === 'CHECKED_IN' && (() => {
+                            const waitingList = appointments
+                              .filter(a => a.status === 'CHECKED_IN')
+                              .sort((a, b) => (a.tokenNumber || 0) - (b.tokenNumber || 0));
+                            const queuePos = waitingList.findIndex(p => p.id === appt.id) + 1;
+                            return queuePos === 1 ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 text-[10px] font-black animate-pulse">
+                                🟢 #1 (NEXT UP)
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-bold">
+                                #{queuePos} in Queue
+                              </span>
+                            );
+                          })()}
                           <span className="font-mono font-extrabold text-teal-800 text-xs">
                             {startTime}
                           </span>
@@ -1653,9 +1582,19 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                         <>
                           <button
                             onClick={() => handleUpdateStatus(appt.id, 'CHECKED_IN')}
-                            className="flex-1 py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs transition-colors cursor-pointer shadow-xs text-center"
+                            disabled={clinicStatus ? !clinicStatus.isOpen : false}
+                            className={`flex-1 py-2 px-3 rounded-xl font-black text-xs transition-colors shadow-xs text-center ${
+                              clinicStatus && !clinicStatus.isOpen
+                                ? 'bg-slate-200 text-slate-500 cursor-not-allowed border border-slate-300'
+                                : 'bg-amber-500 hover:bg-amber-600 text-slate-950 cursor-pointer'
+                            }`}
+                            title={
+                              clinicStatus && !clinicStatus.isOpen
+                                ? `Hospital is closed (${clinicStatus.message || 'Outside hours'}). Check-in is disabled.`
+                                : 'Check in patient at front desk'
+                            }
                           >
-                            Check In
+                            {clinicStatus && !clinicStatus.isOpen ? '🚫 Closed' : 'Check In'}
                           </button>
                           <a
                             href={`https://wa.me/${appt.patientPhone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(`Hello ${appt.patientName}, your appointment at ${clinicName} was scheduled for today at ${startTime}. Are you arriving soon? Please reply so we can keep your room ready.`)}`}
@@ -1816,6 +1755,21 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                             <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-900 text-white font-mono font-black text-xs shadow-2xs">
                               TOKEN #{appt.tokenNumber || (idx + 1)}
                             </span>
+                            {appt.status === 'CHECKED_IN' && (() => {
+                              const waitingList = appointments
+                                .filter(a => a.status === 'CHECKED_IN')
+                                .sort((a, b) => (a.tokenNumber || 0) - (b.tokenNumber || 0));
+                              const queuePos = waitingList.findIndex(p => p.id === appt.id) + 1;
+                              return queuePos === 1 ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 text-[10px] font-black animate-pulse">
+                                  🟢 #1 (NEXT UP)
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-bold">
+                                  #{queuePos} in Queue
+                                </span>
+                              );
+                            })()}
                             <span className="text-slate-900 font-extrabold">{startTime}</span>
                           </div>
                           <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
@@ -1878,9 +1832,19 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                               <>
                                 <button
                                   onClick={() => handleUpdateStatus(appt.id, 'CHECKED_IN')}
-                                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs transition-colors cursor-pointer shadow-xs"
+                                  disabled={clinicStatus ? !clinicStatus.isOpen : false}
+                                  className={`px-3 py-1.5 rounded-lg font-black text-xs transition-colors shadow-xs ${
+                                    clinicStatus && !clinicStatus.isOpen
+                                      ? 'bg-slate-200 text-slate-500 cursor-not-allowed border border-slate-300'
+                                      : 'bg-amber-500 hover:bg-amber-600 text-slate-950 cursor-pointer'
+                                  }`}
+                                  title={
+                                    clinicStatus && !clinicStatus.isOpen
+                                      ? `Hospital is closed (${clinicStatus.message || 'Outside hours'}). Check-in is disabled.`
+                                      : 'Check in patient at front desk'
+                                  }
                                 >
-                                  Check In
+                                  {clinicStatus && !clinicStatus.isOpen ? '🚫 Closed' : 'Check In'}
                                 </button>
                                 <a
                                   href={`https://wa.me/${appt.patientPhone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(`Hello ${appt.patientName}, your appointment at ${clinicName} was scheduled for today at ${startTime}. Are you arriving soon? Please reply so we can keep your room ready.`)}`}
@@ -2612,202 +2576,6 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
         onVerified={() => {
           fetchTodayAppointments(true);
         }}
-      />
-
-      {/* Configure Code & QR Settings Modal */}
-      {showSettingsModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4 animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-5 text-slate-900 animate-in zoom-in-95">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-xl bg-teal-50 border border-teal-200 flex items-center justify-center">
-                  <Settings className="w-5 h-5 text-teal-700" />
-                </div>
-                <div>
-                  <h3 className="font-black text-lg text-slate-900">Customize Code & QR Settings</h3>
-                  <p className="text-xs text-slate-500 font-medium">Update daily hospital code rules and standee QR destinations</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowSettingsModal(false)}
-                className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4 text-xs">
-              {/* Section 1: 4-Digit Code Mode */}
-              <div className="space-y-2">
-                <label className="font-black text-slate-800 uppercase tracking-wider text-[11px] block">
-                  🔑 Hospital Lobby Verification Code Mode
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setEditLobbyMode('ROTATING')}
-                    className={`p-2.5 rounded-xl border text-center transition font-bold text-xs cursor-pointer ${
-                      editLobbyMode === 'ROTATING'
-                        ? 'bg-teal-700 text-white border-teal-800 shadow-sm'
-                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    🔄 Rotating (5-Min)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditLobbyMode('DAILY')}
-                    className={`p-2.5 rounded-xl border text-center transition font-bold text-xs cursor-pointer ${
-                      editLobbyMode === 'DAILY'
-                        ? 'bg-teal-700 text-white border-teal-800 shadow-sm'
-                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    📅 Daily Code (24h)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditLobbyMode('CUSTOM')}
-                    className={`p-2.5 rounded-xl border text-center transition font-bold text-xs cursor-pointer ${
-                      editLobbyMode === 'CUSTOM'
-                        ? 'bg-teal-700 text-white border-teal-800 shadow-sm'
-                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    ✏️ Custom PIN
-                  </button>
-                </div>
-              </div>
-
-              {/* If Custom PIN selected */}
-              {editLobbyMode === 'CUSTOM' && (
-                <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 space-y-2 animate-in fade-in">
-                  <label className="font-black text-amber-900 block">
-                    Set Your Custom Hospital PIN (4 or 6 Digits)
-                  </label>
-                  <input
-                    type="text"
-                    maxLength={6}
-                    value={editCustomCode}
-                    onChange={(e) => setEditCustomCode(e.target.value.replace(/\D/g, ''))}
-                    placeholder="e.g. 2026 or 1538"
-                    className="w-full font-mono text-lg font-black tracking-widest text-center px-4 py-2.5 rounded-xl bg-white border border-amber-300 text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
-                  />
-                  <p className="text-[10px] text-amber-800">
-                    This code will stay active continuously until you change it or click "Rotate Code Now".
-                  </p>
-                </div>
-              )}
-
-              {/* Digit Length & Enforcement */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Code Digits</label>
-                  <select
-                    value={editDigits}
-                    onChange={(e) => setEditDigits(Number(e.target.value))}
-                    className="w-full p-2 rounded-xl bg-slate-50 border border-slate-300 text-slate-900 font-bold"
-                  >
-                    <option value={4}>4 Digits (Standard e.g. 1538)</option>
-                    <option value={6}>6 Digits (High Security e.g. 492015)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Enforce Code at Check-In</label>
-                  <label className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 border border-slate-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={editRequireCode}
-                      onChange={(e) => setEditRequireCode(e.target.checked)}
-                      className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500"
-                    />
-                    <span className="font-bold text-xs text-slate-800">Require Code</span>
-                  </label>
-                </div>
-              </div>
-
-              {/* Section 2: Custom QR Destination URLs */}
-              <div className="space-y-3 pt-2 border-t border-slate-100">
-                <label className="font-black text-slate-800 uppercase tracking-wider text-[11px] block">
-                  🔗 Standee QR Destination URLs
-                </label>
-
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">
-                    QR 1: Walk-In Consultation URL
-                  </label>
-                  <input
-                    type="text"
-                    value={editWalkinUrl}
-                    onChange={(e) => setEditWalkinUrl(e.target.value)}
-                    placeholder={`${baseUrl}/check-in?mode=walkin`}
-                    className="w-full font-mono text-xs px-3 py-2 rounded-xl bg-slate-50 border border-slate-300 text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">
-                    QR 2: Booked Patient Check-In URL
-                  </label>
-                  <input
-                    type="text"
-                    value={editCheckinUrl}
-                    onChange={(e) => setEditCheckinUrl(e.target.value)}
-                    placeholder={`${baseUrl}/check-in`}
-                    className="w-full font-mono text-xs px-3 py-2 rounded-xl bg-slate-50 border border-slate-300 text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
-                  />
-                </div>
-
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditWalkinUrl('');
-                      setEditCheckinUrl('');
-                    }}
-                    className="text-[11px] text-teal-700 hover:text-teal-900 font-bold underline cursor-pointer"
-                  >
-                    Reset to Default URLs
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Action Footer */}
-            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setShowSettingsModal(false)}
-                className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold text-xs hover:bg-slate-50 transition cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveSettings}
-                disabled={isSavingSettings}
-                className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-black text-xs transition shadow-md cursor-pointer"
-              >
-                {isSavingSettings ? 'Saving...' : 'Save Settings'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Hospital Timings, Weekly Hours & Closures Modal */}
-      <ClinicHoursClosureModal
-        isOpen={showHoursModal}
-        onClose={() => {
-          setShowHoursModal(false);
-          fetchClinicStatus();
-        }}
-        onStatusChanged={() => {
-          fetchClinicStatus();
-        }}
-        initialTab={hoursModalTab}
       />
     </div>
   );

@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { apiRequest } from '../../lib/api';
-import { useTenant } from '../../hooks/useTenant';
 import {
   Armchair,
   Bell,
@@ -26,17 +25,28 @@ interface TrackingData {
   chairNumber: number;
   expectedChairNumber: number;
   patientsAhead: number;
+  currentlyAhead?: number;
+  queuePosition?: number | null;
+  nextTokenNumber?: number | null;
+  totalWaitingInLobby?: number;
   isImmediateSeat: boolean;
   chairBanner: string;
   isConfirmedAtDesk: boolean;
   clinicName: string;
   clinicAddress?: string;
   clinicPhone?: string;
+  servingInThisChairToken?: number | null;
+  servingInThisChairStatus?: string;
+  activeChairsServing?: {
+    chairNumber: number;
+    tokenNumber: number;
+    isBusy: boolean;
+    isCalling: boolean;
+  }[];
 }
 
 export const PublicTrackView: React.FC = () => {
   const { code } = useParams<{ code: string }>();
-  const { clinic } = useTenant();
   const [data, setData] = useState<TrackingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -125,7 +135,7 @@ export const PublicTrackView: React.FC = () => {
             </span>
           </div>
           <h1 className="text-base sm:text-lg font-black tracking-tight text-white mt-0.5">
-            {data?.clinicName || clinic?.name || 'Dental Clinic'}
+            {data?.clinicName || 'Dental Clinic'}
           </h1>
         </div>
 
@@ -241,36 +251,249 @@ export const PublicTrackView: React.FC = () => {
                 #{data.tokenNumber}
               </div>
 
-              {/* Patients Ahead Counter */}
-              {!isInChair && !isPostTreatment && (
-                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-teal-500/10 border border-teal-500/30 text-teal-200 text-xs font-black">
-                  <Clock className="w-4 h-4 text-teal-400" />
-                  <span>
-                    {data.patientsAhead === 0
-                      ? 'You are next in line!'
-                      : `${data.patientsAhead} patient${data.patientsAhead > 1 ? 's' : ''} ahead in waiting lounge`}
-                  </span>
-                </div>
-              )}
+              {/* Dynamic Queue Position & Reduction Badge */}
+              {/* Dynamic Queue Position & Reduction Badge */}
+              {!isInChair && !isPostTreatment && (() => {
+                const isScheduled = data.status === 'SCHEDULED' || data.status === 'CONFIRMED';
+                const ahead = typeof data.patientsAhead === 'number'
+                  ? data.patientsAhead
+                  : (typeof data.currentlyAhead === 'number' ? data.currentlyAhead : 0);
+                const pos = typeof data.queuePosition === 'number' ? data.queuePosition : (ahead + 1);
+                const isNext = !isScheduled && (pos === 1 || ahead === 0);
+
+                if (isScheduled) {
+                  return (
+                    <div className="space-y-3 pt-1">
+                      <div className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-amber-500/20 border border-amber-400/50 text-amber-200 text-sm sm:text-base font-black shadow-lg animate-in fade-in zoom-in-95">
+                        <Clock className="w-4 h-4 text-amber-400 animate-pulse" />
+                        <span>⏳ Scheduled • Awaiting Check-In at Front Desk</span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-center gap-2 text-xs">
+                        <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-teal-500/10 border border-teal-500/30 text-teal-200 font-bold">
+                          <Clock className="w-3.5 h-3.5" />
+                          <span>
+                            {ahead === 0
+                              ? '0 patients waiting (Next in line)'
+                              : `${ahead} patient${ahead > 1 ? 's' : ''} ahead in queue`}
+                          </span>
+                        </div>
+
+                        {data.nextTokenNumber && (
+                          <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-200 font-bold">
+                            <span>Next Token:</span>
+                            <strong className="font-mono text-amber-300">
+                              #{data.nextTokenNumber}
+                            </strong>
+                          </div>
+                        )}
+
+                        <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-slate-300 font-bold">
+                          <span>Est. Turn:</span>
+                          <strong className="text-amber-300 font-mono">
+                            {ahead === 0 ? '~Immediate on Arrival' : `~${Math.max(5, ahead * 15)} mins`}
+                          </strong>
+                        </div>
+                      </div>
+
+                      <p className="text-[11px] text-amber-200/80 font-medium">
+                        Please confirm your presence with the front desk receptionist upon arrival to activate your consultation token.
+                      </p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-3 pt-1">
+                    <div className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-gradient-to-r from-teal-500/20 via-emerald-500/20 to-teal-500/20 border border-teal-400/50 text-teal-200 text-sm sm:text-base font-black shadow-lg animate-in fade-in zoom-in-95">
+                      <Sparkles className="w-4 h-4 text-emerald-400 animate-pulse" />
+                      <span>
+                        {isNext
+                          ? "🎉 You are #1 in Line (You're Next!)"
+                          : `Queue Position: #${pos} in Line`}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-center gap-2 text-xs">
+                      <div className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border font-bold ${
+                        isNext
+                          ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                          : 'bg-teal-500/10 border-teal-500/30 text-teal-200'
+                      }`}>
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>
+                          {ahead === 0
+                            ? '0 patients ahead (Next to enter)'
+                            : `${ahead} patient${ahead > 1 ? 's' : ''} ahead of you`}
+                        </span>
+                      </div>
+
+                      {data.nextTokenNumber && (
+                        <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-200 font-bold">
+                          <span>Next Token:</span>
+                          <strong className="font-mono text-amber-300">
+                            #{data.nextTokenNumber} {data.nextTokenNumber === data.tokenNumber ? '(You)' : ''}
+                          </strong>
+                        </div>
+                      )}
+
+                      <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-slate-300 font-bold">
+                        <span>Est. Turn:</span>
+                        <strong className="text-amber-300 font-mono">
+                          {isNext ? '~Immediate' : `~${Math.max(5, ahead * 15)} mins`}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-teal-200/80 font-medium">
+                      {isNext
+                        ? "✨ When the doctor's chair is ready, you will be paged immediately to enter."
+                        : "As each patient completes treatment, your queue position automatically advances (e.g. 2nd becomes 1st)."}
+                    </p>
+                  </div>
+                );
+              })()}
 
               {/* Operatory Chair Status */}
-              <div className="pt-3 border-t border-white/10">
+              <div className="pt-3 border-t border-white/10 space-y-2">
                 <div className="flex items-center justify-between text-xs font-bold text-slate-300">
                   <span className="flex items-center gap-1.5">
                     <Armchair className="w-4 h-4 text-teal-400" />
                     <span>Assigned Operatory:</span>
                   </span>
                   <span className="text-white font-black text-sm">
-                    {data.isImmediateSeat || isCalled || isInChair
-                      ? `Chair #${data.chairNumber} (Immediate)`
-                      : `Chair #${data.expectedChairNumber || data.chairNumber} (Expected)`}
+                    {isInChair
+                      ? `Chair #${data.chairNumber || 1} (Currently Seated)`
+                      : isCalled
+                      ? `Chair #${data.chairNumber || 1} (Please Enter)`
+                      : data.isImmediateSeat
+                      ? `Chair #${data.chairNumber || 1} (Immediate)`
+                      : `Chair #${data.expectedChairNumber || data.chairNumber || 1} (Auto-Balanced)`}
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-400 font-medium text-left mt-1">
-                  {data.chairBanner}
-                </p>
+                {data.chairBanner && (
+                  <p className="text-[11px] text-slate-400 font-medium text-left">
+                    {isInChair
+                      ? `You are currently seated in Operatory Chair #${data.chairNumber || 1}. Consultation & procedure in progress.`
+                      : data.chairBanner}
+                  </p>
+                )}
               </div>
             </div>
+
+            {/* Who is Currently in Your Operatory Chair */}
+            {!isPostTreatment && (() => {
+              const targetChair = data.expectedChairNumber || data.chairNumber || 1;
+              const activeChairEntry = data.activeChairsServing?.find(
+                c => (c.chairNumber === targetChair || (data.activeChairsServing && data.activeChairsServing.length === 1)) && (c.isBusy || c.isCalling)
+              );
+              const servingToken = data.servingInThisChairToken || activeChairEntry?.tokenNumber;
+              const servingStatus = data.servingInThisChairStatus || (activeChairEntry?.isBusy ? 'IN_CHAIR' : activeChairEntry?.isCalling ? 'CALLED' : null);
+              const isOccupied = !!servingToken;
+              const isSelfInChair = isInChair || servingToken === data.tokenNumber;
+
+              return (
+                <div className="p-4 rounded-3xl bg-white/5 border border-white/10 backdrop-blur-md text-left space-y-2.5 shadow-lg">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[11px] font-black uppercase tracking-wider text-teal-300 flex items-center gap-1.5">
+                      <Armchair className="w-3.5 h-3.5 text-teal-400" />
+                      <span>Chair #{targetChair} Live Status</span>
+                    </span>
+                    {isSelfInChair ? (
+                      <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 animate-pulse">
+                        💺 You are in Chair
+                      </span>
+                    ) : isOccupied ? (
+                      <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 animate-pulse">
+                        {servingStatus === 'IN_CHAIR' ? 'In Treatment' : 'Paging to Chair'}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        🟢 Free & Ready
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between text-sm font-black text-white bg-slate-950/40 p-3 rounded-2xl border border-white/5">
+                    <span className="text-xs text-slate-300">
+                      {isSelfInChair ? 'Your Current Seat:' : 'Currently in Your Chair:'}
+                    </span>
+                    <span className="font-mono text-amber-300 text-sm sm:text-base">
+                      {isSelfInChair
+                        ? `TOKEN #${data.tokenNumber} (You - In Treatment)`
+                        : isOccupied
+                        ? `TOKEN #${servingToken}`
+                        : 'None (Room Sanitized)'}
+                    </span>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400 font-medium leading-relaxed">
+                    {isSelfInChair
+                      ? `You are currently seated in Operatory Chair #${targetChair}. Your consultation and dental procedure are actively in progress.`
+                      : isOccupied
+                      ? `Patient with Token #${servingToken} is currently seated in Chair #${targetChair}. You will be paged as soon as the doctor finishes.`
+                      : `Operatory Chair #${targetChair} is sanitized and preparing for you. Keep this phone screen open.`}
+                  </p>
+                </div>
+              );
+            })()}
+
+            {/* Parallel Operatory Rooms Concurrency */}
+            {data.activeChairsServing && data.activeChairsServing.length > 0 && !isPostTreatment && (
+              <div className="p-4 rounded-3xl bg-white/5 border border-white/10 backdrop-blur-md text-left space-y-2.5 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    Hospital Live Operatory Desk
+                  </span>
+                  <span className="text-[10px] font-mono text-teal-400 font-bold">
+                    Parallel Rooms
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  {data.activeChairsServing.map((ac) => {
+                    const isMyChair = ac.chairNumber === (data.expectedChairNumber || data.chairNumber || 1);
+                    const isSelfHere = isMyChair && (isInChair || ac.tokenNumber === data.tokenNumber);
+                    return (
+                      <div
+                        key={ac.chairNumber}
+                        className={`p-3 rounded-2xl border transition flex flex-col justify-between ${
+                          isSelfHere
+                            ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-200 ring-1 ring-emerald-400/40 shadow-sm'
+                            : isMyChair
+                            ? 'bg-teal-500/15 border-teal-400/40 text-teal-200 ring-1 ring-teal-400/30'
+                            : 'bg-white/5 border-white/10 text-slate-300'
+                        }`}
+                      >
+                        <div className="font-bold flex items-center justify-between text-[11px]">
+                          <span className={isSelfHere ? 'text-emerald-300' : ''}>Chair #{ac.chairNumber}</span>
+                          {isSelfHere ? (
+                            <span className="text-[9px] bg-emerald-500 text-slate-950 font-black px-1.5 py-0.2 rounded-full uppercase">
+                              Your Seat (Active)
+                            </span>
+                          ) : isMyChair ? (
+                            <span className="text-[9px] bg-teal-400 text-slate-950 font-black px-1.5 py-0.2 rounded-full">
+                              Your Room
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="font-mono font-black text-sm text-white mt-1.5">
+                          {ac.isBusy ? (
+                            <span className={isSelfHere ? 'text-emerald-300' : 'text-amber-300'}>
+                              {isSelfHere ? `In Chair: #${ac.tokenNumber} (You)` : `In Chair: #${ac.tokenNumber}`}
+                            </span>
+                          ) : ac.isCalling ? (
+                            <span className="text-amber-400 animate-pulse">Calling: #{ac.tokenNumber}</span>
+                          ) : (
+                            <span className="text-emerald-400 font-sans text-xs">Sanitized & Open</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Privacy & Clinic Guidance */}
             <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-2 text-xs text-slate-400">

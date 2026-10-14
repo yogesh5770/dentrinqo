@@ -45,7 +45,7 @@ interface DoctorDeskProps {
 
 export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examination' }) => {
   const { user } = useAuth();
-  const doctorDisplayName = user?.fullName || 'Doctor';
+  const doctorDisplayName = user?.fullName || 'Attending Doctor';
   const [todayPatients, setTodayPatients] = useState<any[]>([]);
   const [selectedAppt, setSelectedAppt] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
@@ -111,6 +111,62 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
 
   const [queueTab, setQueueTab] = useState<'WAITING_IN_CLINIC' | 'ALL_TODAY'>('WAITING_IN_CLINIC');
   const [submittingSendToReception, setSubmittingSendToReception] = useState(false);
+  const [totalChairs, setTotalChairs] = useState<number>(() => user?.clinic?.chairCount || 1);
+  const [selectedChair, setSelectedChair] = useState<number | 'ALL'>(() => {
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('doctor_selected_chair') : null;
+    return saved ? (saved === 'ALL' ? 'ALL' : Number(saved)) : (user?.clinic?.chairCount === 1 ? 1 : 'ALL');
+  });
+
+  const fetchClinicSettings = async () => {
+    try {
+      const data = await apiRequest<any>('/clinic/settings');
+      if (data && data.chairCount) {
+        setTotalChairs(data.chairCount);
+        if (data.chairCount === 1) {
+          setSelectedChair(1);
+          if (typeof window !== 'undefined') localStorage.setItem('doctor_selected_chair', '1');
+        }
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    fetchClinicSettings();
+  }, []);
+
+  const handleSelectChair = (chair: number | 'ALL') => {
+    const finalChair = totalChairs === 1 ? 1 : chair;
+    setSelectedChair(finalChair);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('doctor_selected_chair', String(finalChair));
+    }
+  };
+
+  const handleCallNextPatient = async (targetAppt?: any) => {
+    const waitingList = todayPatients.filter((a: any) =>
+      ['CHECKED_IN', 'CALLED'].includes(a.status) &&
+      (selectedChair !== 'ALL' ? a.chairNumber === selectedChair : true)
+    );
+    const apptToCall = targetAppt || waitingList[0];
+    if (!apptToCall) {
+      alert('No patients currently waiting in the lobby for this operatory chair.');
+      return;
+    }
+
+    try {
+      const chairNum = selectedChair !== 'ALL' ? Number(selectedChair) : (apptToCall.chairNumber || 1);
+      await apiRequest(`/appointments/${apptToCall.id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'IN_CHAIR', chairNumber: chairNum }),
+      });
+      triggerClinicSync('appt_IN_CHAIR', { appointmentId: apptToCall.id, chairNumber: chairNum });
+      const updated = { ...apptToCall, status: 'IN_CHAIR', chairNumber: chairNum };
+      selectPatient(updated);
+      fetchDoctorQueue(true);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to call patient to chair');
+    }
+  };
 
   const fetchDoctorQueue = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -118,10 +174,29 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
       const todayStr = new Date().toISOString().split('T')[0];
       const data = await apiRequest<any[]>(`/appointments?date=${todayStr}`);
       setTodayPatients(data || []);
+
       if (data && data.length > 0 && !selectedAppt) {
-        // Priority: Auto-select patient physically checked-in by reception desk first
-        const waiting = data.find((a: any) => a.status === 'CHECKED_IN' || a.status === 'IN_CHAIR');
-        selectPatient(waiting || data[0]);
+        // Priority 1: Patient currently IN_CHAIR for this chair
+        const chairInChair = data.find((a: any) =>
+          a.status === 'IN_CHAIR' && (totalChairs === 1 || selectedChair === 'ALL' || a.chairNumber === selectedChair)
+        );
+        // Priority 2: Next waiting patient in lobby (CHECKED_IN / CALLED) for this chair
+        const chairWaiting = data.find((a: any) =>
+          ['CHECKED_IN', 'CALLED'].includes(a.status) && (totalChairs === 1 || selectedChair === 'ALL' || a.chairNumber === selectedChair)
+        );
+        // Priority 3: Any in-chair or waiting patient across clinic
+        const anyInClinic = data.find((a: any) => ['IN_CHAIR', 'CALLED', 'CHECKED_IN'].includes(a.status));
+
+        if (chairInChair) {
+          selectPatient(chairInChair);
+        } else if (chairWaiting) {
+          selectPatient(chairWaiting);
+        } else if (anyInClinic) {
+          selectPatient(anyInClinic);
+        } else {
+          // CRITICAL ARCHITECTURAL FIX: NEVER auto-select absent/scheduled patients!
+          setSelectedAppt(null);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -137,7 +212,12 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
       .catch(console.error);
   }, []);
 
-  useClinicSync(() => fetchDoctorQueue(true));
+  useClinicSync((ev) => {
+    fetchDoctorQueue(true);
+    if (!ev || ev.reason === 'clinic_settings_updated') {
+      fetchClinicSettings();
+    }
+  });
 
   const selectPatient = async (appt: any) => {
     setSelectedAppt(appt);
@@ -172,6 +252,17 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
     } finally {
       setLoading(false);
     }
+  };
+
+  const clearChairScreen = () => {
+    setSelectedAppt(null);
+    setConsultationId(null);
+    setChiefComplaint('');
+    setClinicalExamination('');
+    setDiagnosis('');
+    setClinicalNotes('');
+    setIsFinalized(false);
+    setMessage(null);
   };
 
   const handleSaveConsultation = async () => {
@@ -256,7 +347,12 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
   };
 
   const handleDoctorCompleteVisit = async () => {
-    if (!selectedAppt) return;
+    if (!selectedAppt || submittingCheckout || saving) return;
+    if (selectedAppt.status === 'COMPLETED') {
+      alert('This patient visit is already completed and sent to the Billing Desk.');
+      return;
+    }
+    setSubmittingCheckout(true);
     try {
       // 1. Auto-save consultation examination notes if doctor typed anything
       if (chiefComplaint || diagnosis || clinicalNotes) {
@@ -315,7 +411,7 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
         // Auto-advance queue to next waiting patient in lobby
         const updatedQueue = todayPatients.map(a => a.id === selectedAppt.id ? { ...a, status: 'COMPLETED' } : a);
         setTodayPatients(updatedQueue);
-        const nextWaiting = updatedQueue.find(a => (a.status === 'CHECKED_IN' || a.status === 'IN_CHAIR') && a.id !== selectedAppt.id);
+        const nextWaiting = updatedQueue.find(a => ['CHECKED_IN', 'CALLED'].includes(a.status) && a.id !== selectedAppt.id);
         if (nextWaiting) {
           selectPatient(nextWaiting);
         } else {
@@ -344,11 +440,18 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
       setQuickCompleteOpen(true);
     } catch (err: any) {
       alert(err?.message || 'Failed to update status');
+    } finally {
+      setSubmittingCheckout(false);
     }
   };
 
   const handleConfirmQuickComplete = async (withProcedure: boolean) => {
-    if (!selectedAppt) return;
+    if (!selectedAppt || submittingCheckout) return;
+    if (selectedAppt.status === 'COMPLETED') {
+      setQuickCompleteOpen(false);
+      alert('This patient visit is already completed and sent to the Billing Desk.');
+      return;
+    }
     setSubmittingCheckout(true);
     try {
       // 1. Auto-save consultation examination notes if filled
@@ -423,7 +526,7 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
       // 5. Auto-advance to next waiting patient in lobby
       const updatedQueue = todayPatients.map(a => a.id === selectedAppt.id ? { ...a, status: 'COMPLETED' } : a);
       setTodayPatients(updatedQueue);
-      const nextWaiting = updatedQueue.find(a => (a.status === 'CHECKED_IN' || a.status === 'IN_CHAIR') && a.id !== selectedAppt.id);
+      const nextWaiting = updatedQueue.find(a => ['CHECKED_IN', 'CALLED'].includes(a.status) && a.id !== selectedAppt.id);
       if (nextWaiting) {
         selectPatient(nextWaiting);
       } else {
@@ -438,7 +541,11 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
   };
 
   const handleSendPatientToReception = async () => {
-    if (!selectedAppt) return;
+    if (!selectedAppt || submittingSendToReception) return;
+    if (selectedAppt.status === 'COMPLETED') {
+      alert('This patient visit is already completed and sent to the Billing Desk.');
+      return;
+    }
     setSubmittingSendToReception(true);
     try {
       // 1. Auto-save consultation examination if filled
@@ -483,7 +590,7 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
       const updatedQueue = todayPatients.map(a => a.id === selectedAppt.id ? { ...a, status: 'COMPLETED' } : a);
       setTodayPatients(updatedQueue);
 
-      const nextWaiting = updatedQueue.find(a => (a.status === 'CHECKED_IN' || a.status === 'IN_CHAIR') && a.id !== selectedAppt.id);
+      const nextWaiting = updatedQueue.find(a => ['CHECKED_IN', 'CALLED'].includes(a.status) && a.id !== selectedAppt.id);
       if (nextWaiting) {
         selectPatient(nextWaiting);
       } else {
@@ -538,34 +645,82 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
   return (
     <div className="space-y-6">
       {/* Top Header */}
-      <div className="clinic-card p-5 bg-white border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="clinic-card p-5 bg-white border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl sm:text-2xl font-black text-slate-900 flex items-center gap-2.5">
-            <Stethoscope className="w-6 h-6 text-teal-600" />
-            Doctor Consultation Desk
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl sm:text-2xl font-black text-slate-900 flex items-center gap-2.5">
+              <Stethoscope className="w-6 h-6 text-teal-600" />
+              Doctor Consultation Desk
+            </h2>
+            <span className="text-[10px] font-black uppercase tracking-wider bg-teal-50 text-teal-900 border border-teal-200 px-2 py-0.5 rounded-full">
+              Live Operatory
+            </span>
+          </div>
           <p className="text-xs font-semibold text-slate-500 mt-0.5">
-            {doctorDisplayName} • Patient Consultations & Procedures
+            {doctorDisplayName} • Clinical examination, treatment & electronic billing
           </p>
         </div>
 
-        {selectedAppt && (
-          <div className="flex items-center gap-2">
+        {/* Operatory Room / Chair Selector */}
+        <div className="flex flex-wrap items-center gap-2">
+          {totalChairs === 1 ? (
+            <div className="flex items-center gap-2 bg-teal-50 border border-teal-200 text-teal-900 px-3.5 py-1.5 rounded-xl text-xs font-black shadow-2xs">
+              <span className="w-2.5 h-2.5 rounded-full bg-teal-600 animate-pulse"></span>
+              Operatory Chair 1 (Active Unit)
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs">
+              <button
+                type="button"
+                onClick={() => handleSelectChair('ALL')}
+                className={`px-3 py-1.5 rounded-lg font-black transition cursor-pointer ${
+                  selectedChair === 'ALL'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                All Operatories
+              </button>
+              {Array.from({ length: totalChairs }, (_, i) => i + 1).map((chairNum) => (
+                <button
+                  key={chairNum}
+                  type="button"
+                  onClick={() => handleSelectChair(chairNum)}
+                  className={`px-3 py-1.5 rounded-lg font-black transition cursor-pointer ${
+                    selectedChair === chairNum
+                      ? 'bg-teal-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Chair {chairNum}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {selectedAppt && (
             <button
               onClick={() => setInvoiceModalOpen(true)}
-              className="flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-xs py-2 px-4 rounded-xl shadow-xs transition-all cursor-pointer"
+              className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs py-2 px-3.5 rounded-xl shadow-xs transition-all cursor-pointer"
             >
               <Receipt className="w-3.5 h-3.5" />
-              Generate Invoice
+              Invoice
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Mobile Operatory Patient Switcher Bar (< lg) */}
       {(() => {
-        const waitingPatients = todayPatients.filter(a => a.status === 'CHECKED_IN' || a.status === 'IN_CHAIR');
-        const displayedPatients = queueTab === 'WAITING_IN_CLINIC' ? waitingPatients : todayPatients;
+        const inClinicPatients = todayPatients.filter(a =>
+          ['CHECKED_IN', 'CALLED', 'IN_CHAIR'].includes(a.status) &&
+          (totalChairs === 1 || selectedChair === 'ALL' || a.chairNumber === selectedChair)
+        );
+        const upcomingPatients = todayPatients.filter(a =>
+          ['SCHEDULED', 'CONFIRMED'].includes(a.status) &&
+          (totalChairs === 1 || selectedChair === 'ALL' || a.chairNumber === selectedChair)
+        );
+        const displayedPatients = queueTab === 'WAITING_IN_CLINIC' ? inClinicPatients : upcomingPatients;
 
         return (
           <>
@@ -573,14 +728,14 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
               <div className="min-w-0">
                 <div className="text-[10px] font-black uppercase tracking-wider text-teal-800 flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  Active Consultation • {waitingPatients.length} waiting in clinic
+                  Active Consultation • {inClinicPatients.length} in clinic
                 </div>
                 <div className="text-sm font-black text-slate-900 truncate mt-0.5">
-                  {selectedAppt ? selectedAppt.patientName : 'No patient selected'}
+                  {selectedAppt ? selectedAppt.patientName : 'No patient in chair'}
                 </div>
                 {selectedAppt && (
                   <div className="text-xs text-slate-500 font-mono font-semibold">
-                    Chair {selectedAppt.chairNumber} • {selectedAppt.patientUhid}
+                    TOKEN #{selectedAppt.tokenNumber || '—'} • Chair {totalChairs === 1 ? 1 : (selectedAppt.chairNumber || 1)} • {selectedAppt.patientUhid}
                   </div>
                 )}
               </div>
@@ -615,14 +770,14 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                       onClick={() => setQueueTab('WAITING_IN_CLINIC')}
                       className={`px-2 py-0.5 rounded font-black cursor-pointer ${queueTab === 'WAITING_IN_CLINIC' ? 'bg-white text-teal-900 shadow-2xs' : 'text-slate-600'}`}
                     >
-                      In Clinic ({waitingPatients.length})
+                      In Clinic ({inClinicPatients.length})
                     </button>
                     <button
                       type="button"
                       onClick={() => setQueueTab('ALL_TODAY')}
                       className={`px-2 py-0.5 rounded font-black cursor-pointer ${queueTab === 'ALL_TODAY' ? 'bg-white text-teal-900 shadow-2xs' : 'text-slate-600'}`}
                     >
-                      All ({todayPatients.length})
+                      Upcoming ({upcomingPatients.length})
                     </button>
                   </div>
                 </div>
@@ -631,7 +786,7 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                   <div className="py-6 text-center text-xs text-slate-500 font-medium">
                     {queueTab === 'WAITING_IN_CLINIC'
                       ? 'No patients waiting in clinic right now. Patients checked in at Reception will appear here.'
-                      : 'No appointments scheduled today.'}
+                      : 'No scheduled upcoming appointments remaining today.'}
                   </div>
                 ) : (
                   <div className="space-y-2 max-h-[380px] overflow-y-auto touch-scroll">
@@ -652,15 +807,15 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                         >
                           <div className="flex items-center justify-between">
                             <span className="font-black text-slate-900 text-sm">{appt.patientName}</span>
-                            <span className="font-mono text-xs text-teal-900 bg-teal-100 px-2 py-0.5 rounded font-black">
-                              Chair {appt.chairNumber}
+                            <span className="font-mono text-xs text-amber-950 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-md font-black">
+                              TOKEN #{appt.tokenNumber || '—'}
                             </span>
                           </div>
                           <div className="text-xs text-slate-600 font-mono font-bold mt-1">
-                            {appt.patientUhid}
+                            Chair {totalChairs === 1 ? 1 : (appt.chairNumber || 1)} • {appt.patientUhid}
                           </div>
                           <div className="text-xs text-slate-700 font-medium mt-1 line-clamp-1">
-                            {appt.reason}
+                            {appt.reason || 'General Dental Consultation'}
                           </div>
                           <div className="mt-2 pt-2 border-t border-slate-200 flex items-center justify-between text-xs">
                             <span className="font-extrabold text-teal-700">{appt.status}</span>
@@ -682,8 +837,16 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Side: Today's Patient Queue (Desktop >= lg) */}
         {(() => {
-          const waitingPatients = todayPatients.filter(a => a.status === 'CHECKED_IN' || a.status === 'IN_CHAIR');
-          const displayedPatients = queueTab === 'WAITING_IN_CLINIC' ? waitingPatients : todayPatients;
+          const inClinicPatients = todayPatients.filter(a =>
+            ['CHECKED_IN', 'CALLED', 'IN_CHAIR'].includes(a.status) &&
+            (totalChairs === 1 || selectedChair === 'ALL' || a.chairNumber === selectedChair)
+          );
+          const upcomingPatients = todayPatients.filter(a =>
+            ['SCHEDULED', 'CONFIRMED'].includes(a.status) &&
+            (totalChairs === 1 || selectedChair === 'ALL' || a.chairNumber === selectedChair)
+          );
+          const displayedPatients = queueTab === 'WAITING_IN_CLINIC' ? inClinicPatients : upcomingPatients;
+          const nextWaitingPatient = inClinicPatients.find(a => ['CHECKED_IN', 'CALLED'].includes(a.status));
 
           return (
             <div className="hidden lg:block lg:col-span-4 space-y-4">
@@ -729,16 +892,34 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                 </div>
               </div>
 
-              <div className="clinic-card p-4 bg-white border border-slate-200 shadow-xs">
+              {/* Patient Queue Card */}
+              <div className="clinic-card p-4 bg-white border border-slate-200 shadow-xs space-y-3">
                 {/* Header & Tabs */}
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-black text-sm text-slate-900">Patient Queue</h3>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-black text-sm text-slate-900">Operatory Queue</h3>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      {totalChairs === 1 ? 'Operatory Chair 1 queue' : (selectedChair !== 'ALL' ? `Chair #${selectedChair} queue` : 'All clinic chairs')}
+                    </p>
+                  </div>
                   <span className="text-[10px] font-black uppercase text-teal-800 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full">
-                    Live Operatory
+                    Live Queue
                   </span>
                 </div>
 
-                <div className="flex p-1 bg-slate-100 rounded-xl mb-3 gap-1">
+                {/* Big Action: Call Next Patient to Chair */}
+                {nextWaitingPatient && (
+                  <button
+                    type="button"
+                    onClick={() => handleCallNextPatient(nextWaitingPatient)}
+                    className="w-full py-2.5 px-3 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white font-black text-xs rounded-xl shadow-xs transition active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <Armchair className="w-4 h-4" />
+                    <span>📢 Call Token #{nextWaitingPatient.tokenNumber || '—'} ({nextWaitingPatient.patientName}) to Chair</span>
+                  </button>
+                )}
+
+                <div className="flex p-1 bg-slate-100 rounded-xl gap-1">
                   <button
                     type="button"
                     onClick={() => setQueueTab('WAITING_IN_CLINIC')}
@@ -750,9 +931,9 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                   >
                     <span>🏥 In Clinic</span>
                     <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
-                      waitingPatients.length > 0 ? 'bg-amber-100 text-amber-900' : 'bg-slate-200 text-slate-700'
+                      inClinicPatients.length > 0 ? 'bg-amber-100 text-amber-900' : 'bg-slate-200 text-slate-700'
                     }`}>
-                      {waitingPatients.length}
+                      {inClinicPatients.length}
                     </span>
                   </button>
                   <button
@@ -764,9 +945,9 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    <span>📅 All Today</span>
+                    <span>📅 Upcoming (Not Arrived)</span>
                     <span className="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded-full font-bold">
-                      {todayPatients.length}
+                      {upcomingPatients.length}
                     </span>
                   </button>
                 </div>
@@ -777,27 +958,36 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                       <User className="w-5 h-5" />
                     </div>
                     <p className="text-xs font-bold text-slate-800">
-                      {queueTab === 'WAITING_IN_CLINIC' ? 'No Patients in Waiting Lobby' : 'No Appointments Today'}
+                      {queueTab === 'WAITING_IN_CLINIC' ? 'No Patients in Waiting Lobby' : 'No Upcoming Bookings Today'}
                     </p>
                     <p className="text-[11px] text-slate-500 mt-1 leading-snug">
                       {queueTab === 'WAITING_IN_CLINIC'
-                        ? 'Patients physically checked in at Reception will appear here instantly for chair consultation.'
-                        : 'No appointments have been recorded for today.'}
+                        ? 'Patients physically checked in at Front Desk will appear here with Token numbers.'
+                        : 'No additional scheduled visits booked for today.'}
                     </p>
-                    {queueTab === 'WAITING_IN_CLINIC' && todayPatients.length > 0 && (
+                    {queueTab === 'WAITING_IN_CLINIC' && upcomingPatients.length > 0 && (
                       <button
                         type="button"
                         onClick={() => setQueueTab('ALL_TODAY')}
                         className="mt-3 text-xs font-bold text-teal-700 hover:text-teal-800 underline cursor-pointer"
                       >
-                        View all {todayPatients.length} scheduled visits
+                        View {upcomingPatients.length} scheduled visits (Not arrived yet)
                       </button>
                     )}
                   </div>
                 ) : (
                   <div className="space-y-2.5 max-h-[620px] overflow-y-auto">
+                    {queueTab === 'ALL_TODAY' && (
+                      <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-900 font-medium">
+                        ⚠️ These patients have booked appointments, but have <strong>not arrived</strong> at the clinic yet.
+                      </div>
+                    )}
                     {displayedPatients.map(appt => {
                       const isSelected = selectedAppt?.id === appt.id;
+                      const isInChair = appt.status === 'IN_CHAIR';
+                      const isCheckedIn = appt.status === 'CHECKED_IN';
+                      const isCalled = appt.status === 'CALLED';
+
                       return (
                         <div
                           key={appt.id}
@@ -809,19 +999,31 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                           }`}
                         >
                           <div className="flex items-center justify-between">
-                            <span className="font-black text-slate-900 text-sm">{appt.patientName}</span>
-                            <span className="font-mono text-xs text-teal-900 bg-teal-100 px-2 py-0.5 rounded font-black">
-                              Chair {appt.chairNumber}
+                            <span className="font-black text-slate-900 text-sm truncate mr-2">{appt.patientName}</span>
+                            <span className={`font-mono text-xs px-2 py-0.5 rounded-md font-black shrink-0 ${
+                              isInChair
+                                ? 'bg-teal-600 text-white shadow-2xs'
+                                : isCheckedIn
+                                ? 'bg-amber-400 text-slate-950 shadow-2xs'
+                                : isCalled
+                                ? 'bg-cyan-500 text-slate-950'
+                                : 'bg-slate-100 text-slate-700 border border-slate-300'
+                            }`}>
+                              TOKEN #{appt.tokenNumber || '—'}
                             </span>
                           </div>
                           <div className="text-xs text-slate-600 font-mono font-bold mt-1">
-                            {appt.patientUhid}
+                            Chair {totalChairs === 1 ? 1 : (appt.chairNumber || 1)} • {appt.patientUhid}
                           </div>
                           <div className="text-xs text-slate-700 font-medium mt-1 line-clamp-1">
-                            {appt.reason}
+                            {appt.reason || 'General Dental Consultation'}
                           </div>
                           <div className="mt-2.5 pt-2 border-t border-slate-200 flex items-center justify-between text-xs">
-                            <span className="font-extrabold text-teal-700">{appt.status}</span>
+                            <span className={`font-extrabold ${
+                              isInChair ? 'text-teal-700 font-black' : isCheckedIn ? 'text-amber-800' : 'text-slate-600'
+                            }`}>
+                              {isInChair ? '🟢 IN CHAIR' : isCheckedIn ? '🟡 IN LOBBY' : appt.status}
+                            </span>
                             <span className="font-mono text-slate-600 font-semibold">
                               {new Date(appt.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </span>
@@ -841,23 +1043,74 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
         <div className="lg:col-span-8">
           {selectedAppt ? (
             <div className="space-y-4">
+              {/* Un-Arrived Scheduled Patient Warning */}
+              {['SCHEDULED', 'CONFIRMED'].includes(selectedAppt.status) && (
+                <div className="p-4 bg-amber-50 border-2 border-amber-400 rounded-2xl flex items-start gap-3 text-amber-950 font-semibold text-xs shadow-xs animate-fadeIn">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="font-black text-amber-900 text-sm">PATIENT HAS NOT ARRIVED AT CLINIC YET</h4>
+                    <p className="mt-0.5 text-amber-800">
+                      This patient has an advance booking scheduled for {new Date(selectedAppt.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}, but has <strong>not checked in</strong> at the Front Desk.
+                    </p>
+                    <p className="mt-1 text-[11px] text-amber-700 font-bold">
+                      Clinical procedures and checkout billing are locked until the patient physically arrives at reception.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Patient Banner */}
               <div className="clinic-card p-5 bg-white border border-slate-200 shadow-xs text-slate-900">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2.5">
-                      <h3 className="font-black text-lg text-slate-900">{selectedAppt.patientName}</h3>
-                      <span className="font-mono text-xs font-black text-teal-900 bg-teal-100 border border-teal-300 px-2.5 py-0.5 rounded-md">
-                        {selectedAppt.patientUhid}
-                      </span>
+                  <div className="flex items-start gap-3">
+                    {/* Big Token Number Pill */}
+                    <div className="px-3 py-1.5 rounded-xl font-mono text-center border shadow-xs bg-linear-to-r from-amber-400 to-amber-500 text-slate-950 border-amber-500">
+                      <div className="text-[9px] uppercase tracking-wider font-extrabold opacity-80">Token</div>
+                      <div className="text-base font-black leading-tight">#{selectedAppt.tokenNumber || '—'}</div>
                     </div>
-                    <p className="text-xs text-slate-600 font-semibold mt-1">
-                      Phone: <a href={`tel:${selectedAppt.patientPhone}`} className="font-mono text-teal-700 hover:underline font-bold">{selectedAppt.patientPhone}</a> • Chair {selectedAppt.chairNumber} • Time: {new Date(selectedAppt.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </p>
+
+                    <div>
+                      <div className="flex items-center gap-2.5">
+                        <h3 className="font-black text-lg text-slate-900">{selectedAppt.patientName}</h3>
+                        <span className="font-mono text-xs font-black text-teal-900 bg-teal-100 border border-teal-300 px-2.5 py-0.5 rounded-md">
+                          {selectedAppt.patientUhid}
+                        </span>
+                        {selectedAppt.status === 'IN_CHAIR' && (
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-teal-100 text-teal-900 border border-teal-300 animate-pulse">
+                            🟢 In Chair #{totalChairs === 1 ? 1 : (selectedAppt.chairNumber || 1)}
+                          </span>
+                        )}
+                        {selectedAppt.status === 'CHECKED_IN' && (
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                            🟡 Waiting in Lobby
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-600 font-semibold mt-1">
+                        Phone: <a href={`tel:${selectedAppt.patientPhone}`} className="font-mono text-teal-700 hover:underline font-bold">{selectedAppt.patientPhone}</a> • Operatory Chair #{totalChairs === 1 ? 1 : (selectedAppt.chairNumber || 1)} • Time: {new Date(selectedAppt.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    {selectedAppt.status !== 'COMPLETED' ? (
+                    {selectedAppt.status === 'CHECKED_IN' && (
+                      <button
+                        type="button"
+                        onClick={() => handleCallNextPatient(selectedAppt)}
+                        className="flex items-center gap-1.5 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white font-black text-xs sm:text-sm rounded-xl shadow-md cursor-pointer transition-all active:scale-95"
+                      >
+                        <Armchair className="w-4 h-4" />
+                        <span>💺 Seat in Chair Now</span>
+                      </button>
+                    )}
+
+                    {['SCHEDULED', 'CONFIRMED'].includes(selectedAppt.status) && (
+                      <span className="text-xs font-bold text-amber-900 bg-amber-100 border border-amber-300 px-3 py-1.5 rounded-xl">
+                        ⏳ Awaiting Reception Check-In
+                      </span>
+                    )}
+
+                    {selectedAppt.status === 'IN_CHAIR' && (
                       <button
                         type="button"
                         disabled={submittingCheckout || submittingSendToReception}
@@ -868,11 +1121,24 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                         <Send className="w-4 h-4" />
                         <span>{submittingCheckout ? 'Processing...' : '📤 Complete & Send to Billing Desk'}</span>
                       </button>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-black bg-emerald-100 text-emerald-900 border border-emerald-300">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-700" />
-                        <span>Consultation Completed & Sent to Billing</span>
-                      </span>
+                    )}
+
+                    {selectedAppt.status === 'COMPLETED' && (
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-black bg-emerald-100 text-emerald-900 border border-emerald-300">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                          <span>Consultation Completed & Sent to Billing</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={clearChairScreen}
+                          className="px-3 py-1.5 rounded-xl text-xs font-black bg-slate-900 hover:bg-slate-800 text-white transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                          title="Free screen for next patient"
+                        >
+                          <Armchair className="w-3.5 h-3.5" />
+                          <span>Clear Chair Screen</span>
+                        </button>
+                      </div>
                     )}
 
                     {isFinalized ? (
@@ -888,6 +1154,63 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                   </div>
                 </div>
               </div>
+
+              {/* Completed & Sent to Billing Hero Banner */}
+              {selectedAppt.status === 'COMPLETED' && (
+                <div className="clinic-card p-5 bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border-2 border-emerald-400 rounded-3xl text-emerald-950 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm animate-in fade-in duration-200">
+                  <div className="flex items-center gap-3.5">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-bold shrink-0 shadow-md">
+                      <CheckCircle2 className="w-7 h-7" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-black uppercase tracking-wider bg-emerald-200 text-emerald-900 px-2.5 py-0.5 rounded-md">
+                          Treatment Finalized
+                        </span>
+                        <span className="text-xs font-bold text-emerald-800">
+                          Operatory Chair #{selectedAppt.chairNumber} is Free
+                        </span>
+                      </div>
+                      <h4 className="text-base font-black text-slate-900 mt-0.5">
+                        {selectedAppt.patientName} (Token #{selectedAppt.tokenNumber || '—'}) Dispatched to Billing Desk
+                      </h4>
+                      <p className="text-xs text-slate-600 font-medium">
+                        Consultation record finalized. Reception checkout desk has received the invoice and can now collect payment.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {(() => {
+                      const nextWaiting = todayPatients.find(a =>
+                        ['CHECKED_IN', 'CALLED'].includes(a.status) && a.id !== selectedAppt.id
+                      );
+                      if (nextWaiting) {
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => handleCallNextPatient(nextWaiting)}
+                            className="px-4 py-2.5 rounded-xl text-xs font-black bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white transition flex items-center gap-2 shadow-md cursor-pointer active:scale-95"
+                          >
+                            <Armchair className="w-4 h-4" />
+                            <span>📢 Call Next: Token #{nextWaiting.tokenNumber || '—'} ({nextWaiting.patientName})</span>
+                          </button>
+                        );
+                      }
+                      return null;
+                    })()}
+
+                    <button
+                      type="button"
+                      onClick={clearChairScreen}
+                      className="px-4 py-2.5 rounded-xl text-xs font-black bg-slate-900 hover:bg-slate-800 text-white transition flex items-center gap-2 shadow-sm cursor-pointer"
+                    >
+                      <Armchair className="w-4 h-4" />
+                      <span>Ready Chair for Next Patient</span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Operatory Chairside Treatment Plan Action Bar */}
               {patientPlans && patientPlans.length > 0 && (() => {
@@ -1168,10 +1491,20 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                         <span>{submittingCheckout ? 'Processing...' : '📤 Complete & Send to Billing Desk'}</span>
                       </button>
                     ) : (
-                      <span className="text-xs font-black text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                        Sent to Billing Desk
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-black text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          Sent to Billing Desk
+                        </span>
+                        <button
+                          type="button"
+                          onClick={clearChairScreen}
+                          className="px-3.5 py-2 rounded-xl text-xs font-black bg-slate-900 hover:bg-slate-800 text-white transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <Armchair className="w-3.5 h-3.5" />
+                          <span>Close & Ready Chair</span>
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -1235,12 +1568,57 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
               )}
             </div>
           ) : (
-            <div className="clinic-card p-12 text-center text-slate-500 bg-white border border-slate-200 shadow-xs">
-              <Stethoscope className="w-10 h-10 text-slate-400 mx-auto mb-2" />
-              <p className="text-sm font-extrabold text-slate-800">No Patient Selected</p>
-              <p className="text-xs text-slate-500 font-medium mt-1">
-                Select a patient from today's queue on the left to view clinical notes.
-              </p>
+            <div className="clinic-card p-8 sm:p-12 text-center text-slate-500 bg-white border border-slate-200 shadow-xs rounded-3xl space-y-4">
+              <div className="w-16 h-16 rounded-2xl bg-teal-50 border border-teal-200 text-teal-600 mx-auto flex items-center justify-center shadow-inner">
+                <Armchair className="w-8 h-8" />
+              </div>
+              <div className="max-w-md mx-auto">
+                <h3 className="text-xl font-black text-slate-900">Operatory Room & Chair Ready</h3>
+                <p className="text-xs text-slate-500 font-medium mt-1">
+                  {selectedChair !== 'ALL' ? `Operatory Chair #${selectedChair}` : 'All Operatories'} • Cleaned, sanitized, and ready for treatment.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 max-w-sm mx-auto pt-2">
+                <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-center">
+                  <span className="text-[10px] font-black uppercase text-amber-800 block">In Waiting Lobby</span>
+                  <span className="text-2xl font-black text-amber-950">
+                    {todayPatients.filter(a => ['CHECKED_IN', 'CALLED'].includes(a.status)).length}
+                  </span>
+                </div>
+                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-center">
+                  <span className="text-[10px] font-black uppercase text-slate-600 block">Upcoming Bookings</span>
+                  <span className="text-2xl font-black text-slate-900">
+                    {todayPatients.filter(a => ['SCHEDULED', 'CONFIRMED'].includes(a.status)).length}
+                  </span>
+                </div>
+              </div>
+
+              {(() => {
+                const nextWaiting = todayPatients.find(a =>
+                  ['CHECKED_IN', 'CALLED'].includes(a.status) &&
+                  (selectedChair !== 'ALL' ? a.chairNumber === selectedChair : true)
+                );
+                if (nextWaiting) {
+                  return (
+                    <div className="pt-2">
+                      <button
+                        type="button"
+                        onClick={() => handleCallNextPatient(nextWaiting)}
+                        className="px-6 py-3 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white font-black text-sm rounded-2xl shadow-md transition cursor-pointer active:scale-95 flex items-center gap-2 mx-auto"
+                      >
+                        <Armchair className="w-4 h-4" />
+                        <span>📢 Call Token #{nextWaiting.tokenNumber || '—'} ({nextWaiting.patientName}) to Chair</span>
+                      </button>
+                    </div>
+                  );
+                }
+                return (
+                  <p className="text-xs text-slate-400 font-medium pt-2">
+                    No patients currently waiting in the lounge. Patients checked in at Reception will appear here automatically.
+                  </p>
+                );
+              })()}
             </div>
           )}
         </div>

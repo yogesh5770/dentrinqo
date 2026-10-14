@@ -28,16 +28,20 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { TreatmentCatalogManager } from '../admin/TreatmentCatalogManager';
+import { ClinicHoursClosureModal } from '../../components/ClinicHoursClosureModal';
 import { useAuth } from '../../hooks/useAuth';
 
 export const ClinicSettingsView: React.FC = () => {
   const { user, refreshProfile } = useAuth();
   const isAdmin = user?.role === 'CLINIC_ADMIN';
   const [activeTab, setActiveTab] = useState<'profile' | 'chairs' | 'arrival_displays' | 'services'>('profile');
+  const [showHoursModal, setShowHoursModal] = useState(false);
 
   // Form states
   const [clinicName, setClinicName] = useState('');
   const [tagline, setTagline] = useState('');
+  const [logoUrl, setLogoUrl] = useState('');
+  const [brandColor, setBrandColor] = useState('#0d9488');
   const [address, setAddress] = useState('');
   const [city, setCity] = useState('');
   const [stateName, setStateName] = useState('Tamil Nadu');
@@ -114,10 +118,12 @@ export const ClinicSettingsView: React.FC = () => {
       if (data) {
         setClinicName(data.name || '');
         setTagline(data.tagline || '');
+        setLogoUrl(data.logoUrl || '');
+        setBrandColor(data.brandColor || '#0d9488');
         setAddress(data.address || '');
-        setCity(data.city || 'Madurai');
+        setCity(data.city || 'Vellore');
         setStateName(data.state || 'Tamil Nadu');
-        setPostalCode(data.postalCode || '625007');
+        setPostalCode(data.postalCode || '632006');
         setPhone(data.phone || '');
         setEmail(data.email || '');
         setGstin(data.gstin || '');
@@ -165,6 +171,8 @@ export const ClinicSettingsView: React.FC = () => {
         body: JSON.stringify({
           name: clinicName.trim(),
           tagline: tagline.trim(),
+          logoUrl: logoUrl.trim() || null,
+          brandColor: brandColor.trim() || null,
           address: address.trim(),
           city: city.trim(),
           state: stateName.trim(),
@@ -346,7 +354,7 @@ export const ClinicSettingsView: React.FC = () => {
                     required
                     value={clinicName}
                     onChange={e => setClinicName(e.target.value)}
-                    placeholder="e.g. My Dental Clinic"
+                    placeholder="Jacobs Dental Clinic"
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 focus:bg-white focus:border-teal-600 focus:outline-none"
                   />
                 </div>
@@ -362,13 +370,60 @@ export const ClinicSettingsView: React.FC = () => {
                   />
                 </div>
 
+                <div>
+                  <label className="block text-slate-700 mb-1">
+                    Clinic Logo URL or Path
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="text"
+                      value={logoUrl}
+                      onChange={e => setLogoUrl(e.target.value)}
+                      placeholder="e.g. /brand/jdc.png or https://.../logo.png"
+                      className="flex-1 p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 focus:bg-white focus:border-teal-600 focus:outline-none text-xs"
+                    />
+                    {logoUrl && (
+                      <div className="w-10 h-10 p-1 bg-white border border-slate-200 rounded-xl flex items-center justify-center shrink-0 overflow-hidden shadow-xs">
+                        <img
+                          src={logoUrl}
+                          alt="Logo Preview"
+                          className="w-full h-full object-contain"
+                          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Bundled presets: <code className="font-mono text-teal-700">/brand/jdc.png</code> (Jacobs) or <code className="font-mono text-teal-700">/brand/aks.png</code> (AKS).
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 mb-1">Brand Accent Color</label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="color"
+                      value={brandColor || '#0d9488'}
+                      onChange={e => setBrandColor(e.target.value)}
+                      className="w-10 h-10 p-1 bg-white border border-slate-300 rounded-xl cursor-pointer shrink-0"
+                    />
+                    <input
+                      type="text"
+                      value={brandColor}
+                      onChange={e => setBrandColor(e.target.value)}
+                      placeholder="#0d9488"
+                      className="flex-1 p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 focus:bg-white focus:border-teal-600 focus:outline-none font-mono text-xs uppercase"
+                    />
+                  </div>
+                </div>
+
                 <div className="sm:col-span-2">
                   <label className="block text-slate-700 mb-1">Street Address</label>
                   <input
                     type="text"
                     value={address}
                     onChange={e => setAddress(e.target.value)}
-                    placeholder="Plot No. 162/2A, Alagar Complex, 5th Meenakshi Amman Nagar Main Road"
+                    placeholder="14th East Cross Main Road, Gandhi Nagar East"
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 focus:bg-white focus:border-teal-600 focus:outline-none"
                   />
                 </div>
@@ -379,7 +434,7 @@ export const ClinicSettingsView: React.FC = () => {
                     type="text"
                     value={city}
                     onChange={e => setCity(e.target.value)}
-                    placeholder="K.Pudur, Madurai"
+                    placeholder="Gandhi Nagar, Vellore"
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 focus:bg-white focus:border-teal-600 focus:outline-none"
                   />
                 </div>
@@ -413,7 +468,7 @@ export const ClinicSettingsView: React.FC = () => {
                     required
                     value={phone}
                     onChange={e => setPhone(e.target.value)}
-                    placeholder="+91 95387 23872"
+                    placeholder="+91 97500 31330"
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 focus:bg-white focus:border-teal-600 focus:outline-none"
                   />
                 </div>
@@ -424,7 +479,7 @@ export const ClinicSettingsView: React.FC = () => {
                     type="email"
                     value={email}
                     onChange={e => setEmail(e.target.value)}
-                    placeholder="contact@clinic.com"
+                    placeholder="info@jacobsdental.in"
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 focus:bg-white focus:border-teal-600 focus:outline-none"
                   />
                 </div>
@@ -441,7 +496,17 @@ export const ClinicSettingsView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-slate-700 mb-1">Clinic Operating Hours</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-slate-700 font-bold">Clinic Operating Hours</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowHoursModal(true)}
+                      className="text-xs font-black text-teal-700 hover:text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-200 px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition cursor-pointer shadow-2xs"
+                    >
+                      <Clock className="w-3.5 h-3.5 text-teal-600" />
+                      <span>Configure Weekly Schedule & Breaks</span>
+                    </button>
+                  </div>
                   <input
                     type="text"
                     value={workingHours}
@@ -449,6 +514,9 @@ export const ClinicSettingsView: React.FC = () => {
                     placeholder="Mon - Sat: 9:00 AM – 8:30 PM | Sun: 10:00 AM – 2:00 PM"
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 focus:bg-white focus:border-teal-600 focus:outline-none"
                   />
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Display string used for invoices and messaging. Click "Configure Weekly Schedule & Breaks" above to customize day-by-day open/close hours and lunch breaks.
+                  </p>
                 </div>
               </div>
 
@@ -599,13 +667,13 @@ export const ClinicSettingsView: React.FC = () => {
                 {/* UPI VPA Input */}
                 <div className="sm:col-span-2">
                   <label className="block font-black text-slate-900 mb-1">
-                    Official Clinic UPI VPA (e.g. clinic@icici or 9538723872@okaxis)
+                    Official Clinic UPI VPA (e.g. clinic@icici or 9750031330@okaxis)
                   </label>
                   <input
                     type="text"
                     value={upiVpa}
                     onChange={(e) => setUpiVpa(e.target.value.trim())}
-                    placeholder="e.g. myclinic@icici"
+                    placeholder="e.g. jacobsdental@icici"
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 font-mono text-xs focus:bg-white focus:border-teal-600 outline-none"
                   />
                   <p className="text-[11px] text-slate-500 mt-1">
@@ -839,6 +907,12 @@ export const ClinicSettingsView: React.FC = () => {
       {activeTab === 'services' && (
         <TreatmentCatalogManager />
       )}
+
+      {/* Weekly Schedule & Operating Hours Modal */}
+      <ClinicHoursClosureModal
+        isOpen={showHoursModal}
+        onClose={() => setShowHoursModal(false)}
+      />
     </div>
   );
 };

@@ -269,7 +269,7 @@ export const ClinicHoursClosureModal: React.FC<{
     try {
       await apiRequest('/clinic/hours', {
         method: 'PUT',
-        body: JSON.stringify({ hours: workingHours }),
+        body: JSON.stringify({ hours: workingHours, schedules: workingHours }),
       });
       setHoursSuccess('Standard weekly working hours updated successfully!');
       await loadStatus();

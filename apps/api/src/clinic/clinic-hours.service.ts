@@ -344,13 +344,16 @@ export class ClinicHoursService {
     }>,
     actor: any,
     txClient?: any,
+    workingHoursString?: string,
   ) {
     const role = actor?.role || '';
     if (role !== 'CLINIC_ADMIN' && role !== 'ADMIN') {
       throw new ForbiddenException('Only CLINIC_ADMIN can configure or edit clinic operating hours.');
     }
 
-    for (const s of schedules) {
+    const list = Array.isArray(schedules) ? schedules : [];
+
+    for (const s of list) {
       if (s.isOpen) {
         if (!s.openTime || !s.closeTime || s.openTime >= s.closeTime) {
           throw new BadRequestException(
@@ -373,7 +376,7 @@ export class ClinicHoursService {
     }
 
     return this.runInTenant(clinicId, txClient, async (tx) => {
-      for (const s of schedules) {
+      for (const s of list) {
         await tx.clinicWorkingHour.upsert({
           where: { clinicId_dayOfWeek: { clinicId, dayOfWeek: s.dayOfWeek } },
           update: {
@@ -397,13 +400,18 @@ export class ClinicHoursService {
         });
       }
 
-      // Mark clinic hours as configured and enforcement active
+      // Mark clinic hours as configured and enforcement active, plus save text string if provided
+      const updateData: any = {
+        workingHoursConfigured: true,
+        hoursEnforced: true,
+      };
+      if (workingHoursString) {
+        updateData.workingHours = workingHoursString;
+      }
+
       await tx.clinic.update({
         where: { id: clinicId },
-        data: {
-          workingHoursConfigured: true,
-          hoursEnforced: true,
-        },
+        data: updateData,
       });
 
       // Immediately invalidate in-memory clinic cache!
@@ -416,7 +424,7 @@ export class ClinicHoursService {
         action: 'CLINIC_WORKING_HOURS_UPDATED',
         entityType: 'ClinicWorkingHour',
         entityId: clinicId,
-        details: { daysUpdated: schedules.length },
+        details: { daysUpdated: list.length },
       }, tx);
 
       return await this.getWorkingHours(clinicId, tx);
@@ -439,7 +447,8 @@ export class ClinicHoursService {
       | 'SELF_CHECKIN'
       | 'RECEPTION_BOOKING'
       | 'RECEPTION_WALKIN'
-      | 'RESCHEDULE',
+      | 'RESCHEDULE'
+      | 'RECEPTION_CHECKIN',
     overrideReason?: string,
     actor?: any,
     durationMinutes: number = 30,
@@ -622,6 +631,33 @@ export class ClinicHoursService {
             closedUntil: schedule.openTime,
           });
         }
+      } else if (source === 'RECEPTION_CHECKIN') {
+        // Front desk receptionist check-in: strictly prohibited outside operating hours or during breaks unless overridden
+        const nowStr = istTarget.timeStr;
+        if (nowStr < schedule.openTime || nowStr >= schedule.closeTime) {
+          if (this.canOverride(actor, overrideReason)) {
+            await this.logOverride(clinicId, instant, source, overrideReason!, actor, `Check-in outside hours (${nowStr} vs ${schedule.openTime}-${schedule.closeTime})`, tx);
+            return { isOpen: true, overridden: true };
+          }
+          throw new BadRequestException({
+            code: 'CLINIC_OUTSIDE_HOURS',
+            message: `Patient check-in is not permitted while the hospital is closed. Operating hours are ${schedule.openTime} - ${schedule.closeTime} IST.`,
+            closedUntil: schedule.openTime,
+          });
+        }
+
+        if (schedule.hasBreak && schedule.breakStart && schedule.breakEnd && nowStr >= schedule.breakStart && nowStr < schedule.breakEnd) {
+          if (this.canOverride(actor, overrideReason)) {
+            await this.logOverride(clinicId, instant, source, overrideReason!, actor, `Check-in during break (${nowStr})`, tx);
+            return { isOpen: true, overridden: true };
+          }
+          throw new BadRequestException({
+            code: 'CLINIC_ON_BREAK',
+            message: `Clinic is currently on intermission / break until ${schedule.breakEnd} IST. Check-in will resume at ${schedule.breakEnd} IST.`,
+            closedUntil: schedule.breakEnd,
+            nextOpenAt: `${istTarget.dateStr}T${schedule.breakEnd}:00+05:30`,
+          });
+        }
       } else if (source === 'SELF_CHECKIN') {
         const nowStr = istTarget.timeStr;
         if (nowStr < schedule.openTime || nowStr >= schedule.closeTime) {
@@ -648,8 +684,8 @@ export class ClinicHoursService {
   private canOverride(actor: any, overrideReason?: string): boolean {
     if (!actor || !overrideReason) return false;
     const role = actor.role || '';
-    const hasRole = ['CLINIC_ADMIN', 'ADMIN', 'DENTIST'].includes(role);
-    const hasValidReason = overrideReason.trim().length >= 10;
+    const hasRole = ['CLINIC_ADMIN', 'ADMIN', 'DENTIST', 'RECEPTIONIST'].includes(role);
+    const hasValidReason = overrideReason.trim().length >= 5;
     return hasRole && hasValidReason;
   }
 

@@ -56,8 +56,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [reconsultModalOpen, setReconsultModalOpen] = useState<boolean>(false);
   const [lobbyCode, setLobbyCode] = useState<string>('');
   const { user } = useAuth();
-  const totalChairs = user?.clinic?.chairCount || 3;
+  const [totalChairs, setTotalChairs] = useState<number>(() => user?.clinic?.chairCount || 1);
   const clinicName = user?.clinic?.name || 'Clinic';
+
+  const fetchClinicSettings = async () => {
+    try {
+      const data = await apiRequest<any>('/clinic/settings');
+      if (data && typeof data.chairCount === 'number') {
+        setTotalChairs(data.chairCount);
+      }
+    } catch {}
+  };
 
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
   const checkInUrl = `${baseUrl}/check-in`;
@@ -142,6 +151,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   useEffect(() => {
+    fetchClinicSettings();
     fetchDashboardData(false);
     fetchChairStatus();
     fetchLiveLobbyCode();
@@ -150,16 +160,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   }, []);
 
   useClinicSync(() => {
+    fetchClinicSettings();
     fetchDashboardData(true);
     fetchChairStatus();
     fetchLiveLobbyCode();
   });
 
-  const handleUpdateStatus = async (id: string, newStatus: string) => {
+  const [queueTab, setQueueTab] = useState<'WAITING_LOBBY' | 'IN_CHAIR' | 'UPCOMING' | 'COMPLETED' | 'ALL'>('WAITING_LOBBY');
+  const [reassigningApptId, setReassigningApptId] = useState<string | null>(null);
+
+  const handleUpdateStatus = async (id: string, newStatus: string, targetChair?: number) => {
     try {
       await apiRequest(`/appointments/${id}/status`, {
         method: 'PATCH',
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ status: newStatus, ...(targetChair ? { chairNumber: targetChair } : {}) }),
       });
       fetchDashboardData(true);
       triggerClinicSync(`appt_${newStatus}`);
@@ -168,9 +182,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
+  const handleReassignChair = async (id: string, currentStatus: string, newChair: number) => {
+    try {
+      await apiRequest(`/appointments/${id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: currentStatus, chairNumber: newChair }),
+      });
+      setReassigningApptId(null);
+      fetchDashboardData(true);
+      triggerClinicSync('chair_reassigned', { appointmentId: id, chairNumber: newChair });
+    } catch (err: any) {
+      alert(err.message || 'Failed to reassign chair');
+    }
+  };
+
   // KPIs
   const totalToday = appointments.length;
-  const waitingCount = appointments.filter(a => a.status === 'CHECKED_IN').length;
+  const waitingCount = appointments.filter(a => ['CHECKED_IN', 'CALLED'].includes(a.status)).length;
   const inChairCount = appointments.filter(a => a.status === 'IN_CHAIR').length;
   const completedCount = appointments.filter(a => a.status === 'COMPLETED').length;
   const upcomingCount = appointments.filter(a => ['SCHEDULED', 'CONFIRMED'].includes(a.status)).length;
@@ -180,7 +208,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const filteredAppts = appointments.filter(a => {
     if (filterChair && a.chairNumber !== filterChair) return false;
-    return true;
+    if (queueTab === 'WAITING_LOBBY') return ['CHECKED_IN', 'CALLED'].includes(a.status);
+    if (queueTab === 'IN_CHAIR') return a.status === 'IN_CHAIR';
+    if (queueTab === 'UPCOMING') return ['SCHEDULED', 'CONFIRMED'].includes(a.status);
+    if (queueTab === 'COMPLETED') return a.status === 'COMPLETED';
+    return true; // 'ALL'
   });
 
   return (
@@ -256,57 +288,217 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
       </div>
 
-      {/* Operatory Chairs Real-Time Active / Off-Duty Control Bar */}
-      <div className="clinic-card p-4 bg-white border border-slate-200 shadow-xs">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+      {/* Operatory Chairs Real-Time Multi-Room Live Commander Board */}
+      <div className="clinic-card p-5 bg-white border border-slate-200 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center font-bold shrink-0">
               <Armchair className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h4 className="text-sm font-black text-slate-900">Operatory Rooms & Doctor Duty Status</h4>
+                <h3 className="text-base font-black text-slate-900">Operatory Rooms Live Telemetry & Chair Occupancy</h3>
                 <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-teal-100 text-teal-900">
                   Live Concurrency
                 </span>
               </div>
               <p className="text-xs text-slate-500 font-medium">
-                Switch chair off when doctor is away. Online booking slots will grey out immediately.
+                Live view of which chair has which token number, doctor duty state, and quick chair seating.
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
-            {Array.from({ length: totalChairs }, (_, i) => i + 1).map(num => {
-              const isActive = chairStatus[num] ?? true;
-              const isToggling = togglingChair === num;
-              let roomLabel = 'Specialist Room';
-              if (num === 1) roomLabel = 'Chief Room';
-              else if (num === 2) roomLabel = 'Associate Room';
-              else if (num === 3) roomLabel = 'Specialist / Ortho';
-              return (
-                <button
-                  key={num}
-                  type="button"
-                  disabled={isToggling}
-                  onClick={() => handleToggleChair(num, isActive)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black border transition-all cursor-pointer ${
-                    isActive
-                      ? 'bg-emerald-50 text-emerald-900 border-emerald-300 hover:bg-emerald-100'
-                      : 'bg-rose-50 text-rose-900 border-rose-300 hover:bg-rose-100'
-                  }`}
-                >
-                  <Power className={`w-3.5 h-3.5 ${isActive ? 'text-emerald-600' : 'text-rose-600'}`} />
-                  <span>
-                    Chair {num} ({roomLabel}): {isActive ? '🟢 Active' : '🔴 Off Duty'}
-                  </span>
-                </button>
-              );
-            })}
+          <div className="flex items-center gap-3 text-xs font-bold text-slate-600">
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Sanitized & Ready</span>
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" /> In Treatment</span>
+            <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-slate-300" /> Doctor Absent</span>
           </div>
         </div>
-      </div>
 
+        {/* Operatory Room Cards */}
+        <div className={`grid grid-cols-1 ${totalChairs === 1 ? 'max-w-md' : totalChairs === 2 ? 'md:grid-cols-2' : 'md:grid-cols-2 lg:grid-cols-3'} gap-4`}>
+          {Array.from({ length: totalChairs }, (_, i) => i + 1).map(num => {
+            const isActive = chairStatus[num] ?? true;
+            const isToggling = togglingChair === num;
+            const currentPatient = appointments.find(a => a.status === 'IN_CHAIR' && (totalChairs === 1 || a.chairNumber === num));
+            const calledPatient = appointments.find(a => a.status === 'CALLED' && (totalChairs === 1 || a.chairNumber === num));
+            const nextWaiting = appointments.find(a => a.status === 'CHECKED_IN' && (totalChairs === 1 || a.chairNumber === num)) ||
+                                appointments.find(a => a.status === 'CHECKED_IN');
+            const chairActiveQueue = appointments.filter(a => (totalChairs === 1 || a.chairNumber === num) && ['CHECKED_IN', 'CALLED', 'IN_CHAIR'].includes(a.status)).length;
+
+            let docLabel = totalChairs === 1 ? 'Main Operatory Clinic' : 'Specialist Room';
+            if (num === 1) docLabel = totalChairs === 1 ? 'Main Operatory Unit' : 'Chief Dental Surgeon';
+            else if (num === 2) docLabel = 'Associate Dental Surgeon';
+            else if (num === 3) docLabel = 'Specialist & Orthodontist';
+
+            return (
+              <div
+                key={num}
+                className={`rounded-2xl border p-4 transition-all flex flex-col justify-between space-y-3 shadow-2xs ${
+                  !isActive
+                    ? 'bg-rose-50/40 border-rose-200 text-slate-700'
+                    : calledPatient
+                    ? 'bg-amber-50/70 border-amber-400 text-slate-900 ring-2 ring-amber-300'
+                    : currentPatient
+                    ? 'bg-rose-50/40 border-rose-300 text-slate-900 ring-1 ring-rose-200'
+                    : 'bg-emerald-50/40 border-emerald-300 text-slate-900 ring-1 ring-emerald-200'
+                }`}
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between border-b pb-2.5 border-slate-200/60">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`w-3 h-3 rounded-full ${
+                        !isActive
+                          ? 'bg-rose-400'
+                          : calledPatient
+                          ? 'bg-amber-500 animate-ping'
+                          : currentPatient
+                          ? 'bg-rose-500 animate-pulse'
+                          : 'bg-emerald-500 animate-pulse'
+                      }`}
+                    />
+                    <div>
+                      <div className="font-black text-sm text-slate-900 flex items-center gap-1.5">
+                        <span>Chair #{num}</span>
+                        <span className="text-[10px] text-slate-500 font-semibold">(Operatory #{num})</span>
+                      </div>
+                      <div className="text-[10px] font-bold text-teal-800">{docLabel}</div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                      Queue: {chairActiveQueue}
+                    </span>
+                    <button
+                      onClick={() => handleToggleChair(num, isActive)}
+                      disabled={isToggling}
+                      title={isActive ? 'Doctor Absent - Close Chair' : 'Doctor Present - Reopen Chair'}
+                      className={`px-2.5 py-1 rounded-lg font-black text-[10px] transition cursor-pointer flex items-center gap-1 shadow-2xs active:scale-95 ${
+                        isActive
+                          ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300'
+                          : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                      }`}
+                    >
+                      <Power className="w-3 h-3" />
+                      <span>{isActive ? 'Close' : 'Open'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Body Content */}
+                <div className="min-h-[85px] flex flex-col justify-center text-xs">
+                  {!isActive ? (
+                    <div className="text-center py-2 bg-rose-50/80 p-2.5 rounded-xl border border-rose-200 text-rose-900 space-y-1">
+                      <p className="font-black text-xs text-rose-800">
+                        🔴 Doctor Absent • Chair Closed
+                      </p>
+                      <p className="text-[10px] text-rose-700 font-medium">
+                        System excludes this chair from all online bookings and walk-ins.
+                      </p>
+                    </div>
+                  ) : calledPatient ? (
+                    <div className="space-y-1.5 bg-white p-2.5 rounded-xl border border-amber-300 shadow-2xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono font-black text-[11px] bg-amber-500 text-slate-950 px-2 py-0.5 rounded animate-pulse">
+                          PAGED TOKEN #{calledPatient.tokenNumber || '—'}
+                        </span>
+                        <span className="text-[10px] font-bold text-amber-900">
+                          Walking in from lobby
+                        </span>
+                      </div>
+                      <div
+                        onClick={() => navigate(`/patients/${calledPatient.patientId}`)}
+                        className="font-black text-slate-900 hover:text-teal-700 cursor-pointer text-sm truncate"
+                      >
+                        {calledPatient.patientName}
+                      </div>
+                      <p className="text-[11px] text-slate-600 line-clamp-1">
+                        <strong>Reason:</strong> {calledPatient.reason || 'General Checkup'}
+                      </p>
+                    </div>
+                  ) : currentPatient ? (
+                    <div className="space-y-1.5 bg-white p-2.5 rounded-xl border border-rose-200/80 shadow-2xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono font-black text-[11px] bg-slate-900 text-white px-2 py-0.5 rounded shadow-2xs">
+                          TOKEN #{currentPatient.tokenNumber || '—'}
+                        </span>
+                        <span className="text-[10px] font-bold text-teal-800">
+                          Dr. {currentPatient.dentistName || 'Attending Doctor'}
+                        </span>
+                      </div>
+                      <div
+                        onClick={() => navigate(`/patients/${currentPatient.patientId}`)}
+                        className="font-black text-slate-900 hover:text-teal-700 cursor-pointer text-sm truncate"
+                      >
+                        {currentPatient.patientName}
+                      </div>
+                      <p className="text-[11px] text-slate-600 line-clamp-1">
+                        <strong>Reason:</strong> {currentPatient.reason || 'Dental Consultation'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="text-center py-2 bg-white/70 p-2.5 rounded-xl border border-emerald-200/80">
+                      <p className="text-xs font-bold text-emerald-950 flex items-center justify-center gap-1">
+                        <Check className="w-4 h-4 text-emerald-600" />
+                        <span>Room Sanitized & Ready</span>
+                      </p>
+                      <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                        {nextWaiting
+                          ? `Next in lobby: ${nextWaiting.patientName} (Token #${nextWaiting.tokenNumber || '—'})`
+                          : 'No patients waiting in lobby right now.'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer Action */}
+                <div>
+                  {calledPatient ? (
+                    <button
+                      onClick={() => handleUpdateStatus(calledPatient.id, 'IN_CHAIR', num)}
+                      className="w-full py-2 px-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow-xs transition active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <Armchair className="w-4 h-4" />
+                      <span>💺 Seat in Chair #{num}</span>
+                    </button>
+                  ) : currentPatient ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => navigate(`/billing?tab=ready_to_bill&patientId=${currentPatient.patientId}&appointmentId=${currentPatient.id}`)}
+                        className="flex-1 py-2 px-3 rounded-xl bg-linear-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-xs shadow-xs transition active:scale-95 cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        <Receipt className="w-3.5 h-3.5" />
+                        <span>⚡ Bill & Discharge</span>
+                      </button>
+                      <button
+                        onClick={() => handleUpdateStatus(currentPatient.id, 'COMPLETED')}
+                        className="py-2 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-xs cursor-pointer"
+                        title="Mark Treatment Complete (Free Chair)"
+                      >
+                        Free Chair
+                      </button>
+                    </div>
+                  ) : nextWaiting ? (
+                    <button
+                      onClick={() => handleUpdateStatus(nextWaiting.id, 'IN_CHAIR', num)}
+                      className="w-full py-2 px-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-black text-xs shadow-xs transition active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <Armchair className="w-4 h-4" />
+                      <span>💺 Seat Token #{nextWaiting.tokenNumber || '—'} in Chair #{num}</span>
+                    </button>
+                  ) : (
+                    <div className="py-2 text-center text-[10px] text-slate-400 font-semibold bg-slate-50 rounded-xl">
+                      Operatory Idle • Ready for Patient
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
       {/* 6 Key Operational & Financial Metrics */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -384,39 +576,119 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <Calendar className="w-5 h-5 text-teal-600" />
                   Today's Patient Schedule & Queue
                 </h2>
-                <p className="text-xs text-slate-500 font-medium">Real-time status tracking across chairs</p>
+                <p className="text-xs text-slate-500 font-medium">Real-time token & chair tracking</p>
               </div>
 
-              {/* Filter by Chair */}
-              <div className="flex items-center gap-1.5 overflow-x-auto text-xs">
-                <button
-                  onClick={() => setFilterChair('')}
-                  className={`px-3 py-1.5 rounded-xl font-bold cursor-pointer transition-all ${
-                    filterChair === '' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  All Chairs
-                </button>
-                {Array.from({ length: totalChairs }, (_, i) => i + 1).map(chair => (
+              {/* Filter by Chair (Multi-chair clinics only) */}
+              {totalChairs > 1 && (
+                <div className="flex items-center gap-1.5 overflow-x-auto text-xs">
                   <button
-                    key={chair}
-                    onClick={() => setFilterChair(chair)}
+                    onClick={() => setFilterChair('')}
                     className={`px-3 py-1.5 rounded-xl font-bold cursor-pointer transition-all ${
-                      filterChair === chair ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      filterChair === '' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                     }`}
                   >
-                    Chair {chair}
+                    All Chairs
                   </button>
-                ))}
-              </div>
+                  {Array.from({ length: totalChairs }, (_, i) => i + 1).map(chair => (
+                    <button
+                      key={chair}
+                      onClick={() => setFilterChair(chair)}
+                      className={`px-3 py-1.5 rounded-xl font-bold cursor-pointer transition-all ${
+                        filterChair === chair ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      Chair {chair}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Queue Stage Tabs */}
+            <div className="flex items-center gap-1 overflow-x-auto py-2.5 border-b border-slate-100 text-xs">
+              <button
+                onClick={() => setQueueTab('WAITING_LOBBY')}
+                className={`px-3 py-1.5 rounded-xl font-black transition-all flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                  queueTab === 'WAITING_LOBBY'
+                    ? 'bg-amber-500 text-slate-950 shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <span>🏥 Waiting in Lobby</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${queueTab === 'WAITING_LOBBY' ? 'bg-white text-slate-950' : 'bg-slate-200 text-slate-700'}`}>
+                  {waitingCount}
+                </span>
+              </button>
+
+              <button
+                onClick={() => setQueueTab('IN_CHAIR')}
+                className={`px-3 py-1.5 rounded-xl font-black transition-all flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                  queueTab === 'IN_CHAIR'
+                    ? 'bg-teal-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <span>💺 In Chair</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${queueTab === 'IN_CHAIR' ? 'bg-white text-teal-900' : 'bg-slate-200 text-slate-700'}`}>
+                  {inChairCount}
+                </span>
+              </button>
+
+              <button
+                onClick={() => setQueueTab('UPCOMING')}
+                className={`px-3 py-1.5 rounded-xl font-black transition-all flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                  queueTab === 'UPCOMING'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <span>📅 Upcoming / Not Arrived</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${queueTab === 'UPCOMING' ? 'bg-white text-slate-900' : 'bg-slate-200 text-slate-700'}`}>
+                  {upcomingCount}
+                </span>
+              </button>
+
+              <button
+                onClick={() => setQueueTab('COMPLETED')}
+                className={`px-3 py-1.5 rounded-xl font-black transition-all flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                  queueTab === 'COMPLETED'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <span>✓ Completed</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${queueTab === 'COMPLETED' ? 'bg-white text-emerald-900' : 'bg-slate-200 text-slate-700'}`}>
+                  {completedCount}
+                </span>
+              </button>
+
+              <button
+                onClick={() => setQueueTab('ALL')}
+                className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer shrink-0 ${
+                  queueTab === 'ALL'
+                    ? 'bg-slate-700 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                All Today ({totalToday})
+              </button>
             </div>
 
             {/* List */}
             {filteredAppts.length === 0 ? (
               <div className="py-12 text-center text-slate-400">
                 <Armchair className="w-10 h-10 mx-auto text-slate-300 mb-2 stroke-[1.5]" />
-                <p className="text-sm font-bold text-slate-600">No appointments scheduled for this selection</p>
-                <p className="text-xs text-slate-400 mt-1">Click "+ Appointment" above to book a new visit</p>
+                <p className="text-sm font-bold text-slate-600">
+                  {queueTab === 'WAITING_LOBBY' ? 'No patients currently waiting in lobby' :
+                   queueTab === 'IN_CHAIR' ? 'No patients currently seated in chairs' :
+                   queueTab === 'UPCOMING' ? 'No advance scheduled appointments pending arrival' :
+                   'No appointments found for this filter'}
+                </p>
+                <p className="text-xs text-slate-400 mt-1">
+                  {queueTab === 'WAITING_LOBBY' ? 'Patients who scan the Standee QR or check in will appear here with Token numbers.' :
+                   'Click "+ Appointment" or "+ Patient" above to register visits.'}
+                </p>
               </div>
             ) : (
               <div className="divide-y divide-slate-100 mt-2">
@@ -427,15 +699,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     hour12: true,
                   });
 
+                  const isCheckedIn = appt.status === 'CHECKED_IN';
+                  const isInChair = appt.status === 'IN_CHAIR';
+                  const isCalled = appt.status === 'CALLED';
+                  const isUpcoming = ['SCHEDULED', 'CONFIRMED'].includes(appt.status);
+
                   return (
                     <div
                       key={appt.id}
                       className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50 px-2 rounded-xl transition-colors"
                     >
                       <div className="flex items-start gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-teal-50 border border-teal-200 flex flex-col items-center justify-center shrink-0">
-                          <span className="text-[10px] font-bold text-teal-800 uppercase">Chair</span>
-                          <span className="text-sm font-black text-teal-900 leading-none">{appt.chairNumber}</span>
+                        {/* High-visibility Token Badge */}
+                        <div className="flex flex-col items-center shrink-0">
+                          <div className={`px-2.5 py-1 rounded-xl font-mono font-black text-xs text-center border shadow-2xs ${
+                            isInChair
+                              ? 'bg-teal-600 text-white border-teal-700 animate-pulse'
+                              : isCheckedIn
+                              ? 'bg-amber-400 text-slate-950 border-amber-500'
+                              : isCalled
+                              ? 'bg-cyan-500 text-slate-950 border-cyan-600'
+                              : 'bg-slate-100 text-slate-700 border-slate-300'
+                          }`}>
+                            <div className="text-[9px] uppercase tracking-wider -mb-0.5 opacity-80">Token</div>
+                            <div className="text-sm font-black leading-tight">#{appt.tokenNumber || '—'}</div>
+                          </div>
+                          <span className="text-[10px] font-bold text-teal-800 mt-1">
+                            Chair {totalChairs === 1 ? 1 : (appt.chairNumber || 1)}
+                          </span>
                         </div>
 
                         <div>
@@ -444,27 +735,39 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             <span className="text-[10px] font-mono font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">
                               {appt.patientUhid}
                             </span>
+                            {/* In-Lounge / Presence Indicator */}
+                            {isCheckedIn && (
+                              <span className="text-[10px] font-extrabold px-2 py-0.2 rounded-full bg-emerald-100 text-emerald-900 border border-emerald-300 flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                In Lobby
+                              </span>
+                            )}
+                            {isUpcoming && (
+                              <span className="text-[10px] font-bold px-2 py-0.2 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+                                ⏳ Not Arrived Yet
+                              </span>
+                            )}
                           </div>
-                          <div className="flex items-center gap-3 text-xs text-slate-500 mt-0.5">
+                          <div className="flex flex-wrap items-center gap-2.5 text-xs text-slate-500 mt-0.5">
                             <span className="flex items-center gap-1 font-semibold text-slate-700">
                               <Clock className="w-3.5 h-3.5 text-teal-600" />
                               {startTime}
                             </span>
                             <span>•</span>
-                            <span className="text-slate-600 font-medium">{appt.reason || 'General Checkup'}</span>
+                            <span className="text-slate-600 font-medium">{appt.reason || 'General Consultation'}</span>
                             <span>•</span>
                             <span className="text-teal-700 font-semibold">{appt.dentistName || 'Dr. Admin'}</span>
                           </div>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 self-end sm:self-center">
+                      <div className="flex flex-wrap items-center gap-2 self-end sm:self-center">
                         {/* Status label */}
                         <span
                           className={`text-xs font-black px-2.5 py-1 rounded-full ${
-                            appt.status === 'IN_CHAIR'
+                            isInChair
                               ? 'bg-teal-100 text-teal-900 border border-teal-300 animate-pulse'
-                              : appt.status === 'CHECKED_IN'
+                              : isCheckedIn
                               ? 'bg-amber-100 text-amber-900 border border-amber-300'
                               : appt.status === 'COMPLETED'
                               ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
@@ -474,16 +777,58 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           {appt.status.replace('_', ' ')}
                         </span>
 
+                        {/* Reassign Chair Dropdown/Button */}
+                        {totalChairs > 1 && ['CHECKED_IN', 'CALLED', 'SCHEDULED', 'CONFIRMED'].includes(appt.status) && (
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setReassigningApptId(reassigningApptId === appt.id ? null : appt.id)}
+                              className="text-[11px] font-bold px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg cursor-pointer border border-slate-200"
+                              title="Move patient to another operatory chair"
+                            >
+                              ⇄ Chair {appt.chairNumber}
+                            </button>
+                            {reassigningApptId === appt.id && (
+                              <div className="absolute right-0 mt-1 w-36 bg-white border border-slate-200 rounded-xl shadow-lg z-20 p-1.5 space-y-1">
+                                <span className="text-[10px] font-black uppercase text-slate-400 block px-2 py-0.5">
+                                  Select Operatory
+                                </span>
+                                {Array.from({ length: totalChairs }, (_, i) => i + 1).map(cNum => (
+                                  <button
+                                    key={cNum}
+                                    type="button"
+                                    onClick={() => handleReassignChair(appt.id, appt.status, cNum)}
+                                    className={`w-full text-left px-2 py-1 rounded-lg text-xs font-bold cursor-pointer transition ${
+                                      cNum === appt.chairNumber ? 'bg-teal-50 text-teal-900 font-black' : 'hover:bg-slate-100 text-slate-800'
+                                    }`}
+                                  >
+                                    Move to Chair {cNum}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         {/* Status update actions */}
-                        {appt.status === 'CHECKED_IN' && (
+                        {isUpcoming && (
                           <button
-                            onClick={() => handleUpdateStatus(appt.id, 'IN_CHAIR')}
-                            className="text-xs font-extrabold px-3 py-1 bg-teal-600 hover:bg-teal-700 text-white rounded-lg cursor-pointer"
+                            onClick={() => handleUpdateStatus(appt.id, 'CHECKED_IN')}
+                            className="text-xs font-black px-3 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg cursor-pointer shadow-2xs active:scale-95 transition"
+                            title="Patient arrived at Front Desk: issue token and mark ready for doctor"
                           >
-                            Seat in Chair
+                            ✓ Mark Arrived (Check-In)
                           </button>
                         )}
-                        {appt.status === 'IN_CHAIR' && (
+                        {isCheckedIn && (
+                          <button
+                            onClick={() => handleUpdateStatus(appt.id, 'IN_CHAIR', totalChairs === 1 ? 1 : appt.chairNumber)}
+                            className="text-xs font-extrabold px-3 py-1 bg-teal-600 hover:bg-teal-700 text-white rounded-lg cursor-pointer shadow-2xs active:scale-95 transition"
+                          >
+                            Seat in Chair #{totalChairs === 1 ? 1 : (appt.chairNumber || 1)}
+                          </button>
+                        )}
+                        {isInChair && (
                           <button
                             onClick={() => handleUpdateStatus(appt.id, 'COMPLETED')}
                             className="text-xs font-extrabold px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
@@ -499,14 +844,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           >
                             <Receipt className="w-3 h-3" />
                             Bill
-                          </button>
-                        )}
-                        {['SCHEDULED', 'CONFIRMED'].includes(appt.status) && (
-                          <button
-                            onClick={() => handleUpdateStatus(appt.id, 'CHECKED_IN')}
-                            className="text-xs font-extrabold px-3 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg cursor-pointer"
-                          >
-                            Check In
                           </button>
                         )}
 

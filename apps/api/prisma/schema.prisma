@@ -15,6 +15,8 @@ model Clinic {
   status          String   @default("ACTIVE") // ACTIVE, SUSPENDED, TRIAL
   planTier        String   @default("PROFESSIONAL") // STARTER, PROFESSIONAL, ENTERPRISE
   tagline         String?
+  logoUrl         String?  // Absolute https URL or /brand/<file> path; falls back to /brand/<code>.png
+  brandColor      String?  // Hex color (#RRGGBB) used for tenant accents
   phone           String
   email           String?
   address         String
@@ -38,15 +40,15 @@ model Clinic {
   isOnLeave               Boolean   @default(false)
   leaveReason             String?
   autoConfirmWhenCodeValid Boolean  @default(false)
-  codeRotationHours       Int       @default(24)
-  maxLateMinutes          Int       @default(45)
-  waitingWarningMinutes   Int       @default(30)
-  hoursEnforced           Boolean   @default(false)
-  workingHoursConfigured  Boolean   @default(false)
+  codeRotationHours        Int      @default(24)
+  maxLateMinutes           Int      @default(45)
+  waitingWarningMinutes    Int      @default(30)
+  hoursEnforced            Boolean  @default(false)
+  workingHoursConfigured   Boolean  @default(false)
   lastWalkinMinutesBeforeClose Int  @default(30)
-  lastWalkinTime          String?   @default("20:00")
-  minVisitsForWaitEstimate Int      @default(20)
-  emergencyPhone          String?
+  lastWalkinTime           String?
+  minVisitsForWaitEstimate Int      @default(5)
+  emergencyPhone           String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -250,11 +252,7 @@ model Appointment {
   isConfirmedAtDesk Boolean  @default(false)
   confirmedAtDeskAt DateTime?
   confirmedByStaffId String?
-  checkInSource   String?  @default("DESK") // "SELF_QR", "DESK", "PHONE", "WALK_IN"
-  hasBookedSlot   Boolean  @default(false)
-  isEmergency     Boolean  @default(false)
-  emergencyReason String?
-  isLateArrival   Boolean  @default(false)
+  checkInSource   String?  @default("DESK") // "SELF_QR", "DESK", "PHONE"
   tokenNumber     Int?
   trackingCode    String?   @unique
   expectedChairNumber Int?
@@ -767,8 +765,6 @@ model ClinicClosure {
   endedAt     DateTime?
   endedById   String?
   endedBy     User?     @relation("EndedClosures", fields: [endedById], references: [id])
-  isStaffDeclared     Boolean   @default(false)
-  adminAcknowledged   Boolean   @default(false)
 
   @@index([clinicId, startAt, endAt])
 }

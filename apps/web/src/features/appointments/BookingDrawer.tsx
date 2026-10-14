@@ -35,9 +35,12 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
   if (!isOpen) return null;
 
   const { user } = useAuth();
-  const totalChairs = user?.clinic?.chairCount || 3;
+  const [totalChairs, setTotalChairs] = useState<number>(() => user?.clinic?.chairCount || 1);
   const isOnLeave = Boolean(user?.clinic?.isOnLeave);
   const leaveReason = user?.clinic?.leaveReason;
+
+  // Mode: Book Now (Walk-In / At Clinic Now) vs Book Later (Advance Schedule)
+  const [bookingMode, setBookingMode] = useState<'BOOK_NOW' | 'BOOK_LATER'>('BOOK_NOW');
 
   const [patients, setPatients] = useState<any[]>([]);
   const [selectedPatientId, setSelectedPatientId] = useState<string>(preSelectedPatient?.id || '');
@@ -52,7 +55,7 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
   const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [time, setTime] = useState<string>(() => getSmartCurrentTime());
   const [duration, setDuration] = useState<number>(30);
-  const [reason, setReason] = useState<string>('Routine Dental Consultation');
+  const [reason, setReason] = useState<string>('General Dental Consultation & Examination');
   const [notes, setNotes] = useState<string>('');
 
   const [conflictError, setConflictError] = useState<string | null>(null);
@@ -66,8 +69,20 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
     doctorName?: string;
     reason?: string;
     lobbyCode?: string;
+    isBookNow?: boolean;
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Fetch live clinic settings for chair count
+  useEffect(() => {
+    apiRequest<any>('/clinic/settings')
+      .then(settings => {
+        if (settings && settings.chairCount) {
+          setTotalChairs(settings.chairCount);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Fetch chair loads and lobby code
   useEffect(() => {
@@ -143,7 +158,10 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
     setSubmitting(true);
 
     try {
-      const scheduledStart = new Date(`${date}T${time}:00.000+05:30`).toISOString();
+      const isBookNow = bookingMode === 'BOOK_NOW';
+      const effectiveDate = isBookNow ? new Date().toISOString().split('T')[0] : date;
+      const effectiveTime = isBookNow ? getSmartCurrentTime() : time;
+      const scheduledStart = new Date(`${effectiveDate}T${effectiveTime}:00.000+05:30`).toISOString();
 
       const res = await apiRequest<any>('/appointments', {
         method: 'POST',
@@ -152,9 +170,11 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
           dentistId: selectedDentistId,
           chairNumber: isAutoAllocate ? 0 : chairNumber, // 0 signals backend auto-allocation
           scheduledStart,
-          durationMinutes: duration,
+          durationMinutes: isBookNow ? 30 : duration,
           reason,
-          notes,
+          notes: notes ? `${notes} [${isBookNow ? 'Book Now / In-Clinic Walk-In' : 'Advance Scheduled'}]` : `[${isBookNow ? 'Book Now / In-Clinic Walk-In' : 'Advance Scheduled'}]`,
+          isWalkin: isBookNow,
+          status: isBookNow ? 'CHECKED_IN' : 'SCHEDULED',
         }),
       });
 
@@ -162,17 +182,18 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
       const dObj = dentists.find(d => d.id === selectedDentistId);
       setBookingSuccessData({
         patient: res?.patient || pObj,
-        date,
-        time,
+        date: effectiveDate,
+        time: effectiveTime,
         chairNumber: res?.chairNumber || chairNumber,
         tokenNumber: res?.tokenNumber,
         trackingCode: res?.trackingCode,
         doctorName: res?.dentist?.fullName || dObj?.fullName,
         reason,
         lobbyCode: lobbyCode || 'Live on TV',
+        isBookNow,
       });
 
-      triggerClinicSync('appointment_booked');
+      triggerClinicSync(isBookNow ? 'appt_CHECKED_IN' : 'appointment_booked');
       onBookingSuccess();
     } catch (err: any) {
       setConflictError(err.message || 'Appointment booking failed');
@@ -347,6 +368,66 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
           </div>
         ) : (
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4 text-xs">
+          {/* Mode Switcher: Book Now (Walk-In / At Desk) vs Book Later (Advance Schedule) */}
+          <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-100 rounded-2xl border border-slate-200">
+            <button
+              type="button"
+              onClick={() => {
+                setBookingMode('BOOK_NOW');
+                setDate(new Date().toISOString().split('T')[0]);
+                setTime(getSmartCurrentTime());
+              }}
+              className={`py-3 px-3 rounded-xl text-center transition-all cursor-pointer ${
+                bookingMode === 'BOOK_NOW'
+                  ? 'bg-gradient-to-r from-teal-600 to-emerald-600 text-white font-black shadow-md ring-2 ring-emerald-400'
+                  : 'text-slate-600 hover:text-slate-900 font-bold hover:bg-white/60'
+              }`}
+            >
+              <div className="flex items-center justify-center gap-1.5 text-xs font-black">
+                <Zap className="w-4 h-4" />
+                <span>⚡ Book Now</span>
+              </div>
+              <div className={`text-[10px] mt-0.5 font-medium ${bookingMode === 'BOOK_NOW' ? 'text-teal-100' : 'text-slate-500'}`}>
+                In-Clinic • Instant Token #
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setBookingMode('BOOK_LATER')}
+              className={`py-3 px-3 rounded-xl text-center transition-all cursor-pointer ${
+                bookingMode === 'BOOK_LATER'
+                  ? 'bg-slate-900 text-white font-black shadow-md ring-2 ring-slate-700'
+                  : 'text-slate-600 hover:text-slate-900 font-bold hover:bg-white/60'
+              }`}
+            >
+              <div className="flex items-center justify-center gap-1.5 text-xs font-black">
+                <Calendar className="w-4 h-4" />
+                <span>📅 Book Later</span>
+              </div>
+              <div className={`text-[10px] mt-0.5 font-medium ${bookingMode === 'BOOK_LATER' ? 'text-slate-300' : 'text-slate-500'}`}>
+                Advance Schedule (No Token)
+              </div>
+            </button>
+          </div>
+
+          {/* Mode Explanatory Notice */}
+          {bookingMode === 'BOOK_NOW' ? (
+            <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-2xl text-emerald-950 text-xs flex items-center gap-2.5 font-medium">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>
+                Patient is at the clinic now. Submitting will <strong>instantly issue daily Token #</strong> and place them in the waiting lobby queue.
+              </span>
+            </div>
+          ) : (
+            <div className="p-3 bg-amber-50 border border-amber-300 rounded-2xl text-amber-950 text-xs flex items-center gap-2.5 font-medium">
+              <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                Advance booking. <strong>No Token #</strong> is issued now. When patient arrives at the clinic, reception marks them arrived to give their queue token.
+              </span>
+            </div>
+          )}
+
           {/* Patient Selection */}
           <div>
             <label className="block font-black text-slate-800 mb-1">
@@ -396,154 +477,139 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
             </select>
           </div>
 
-          {/* Dental Chair */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <div>
-                <label className="block font-black text-slate-800">Operatory Dental Chair</label>
-                <span className="text-[11px] text-slate-500 font-medium">Smart balance & free chair allocation</span>
+          {/* ADVANCE FIELDS ONLY SHOWN IN BOOK LATER MODE */}
+          {bookingMode === 'BOOK_LATER' && (
+            <>
+              {/* Date and Time */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-black text-slate-800 mb-1">Appointment Date</label>
+                  <input
+                    type="date"
+                    required
+                    value={date}
+                    onChange={e => setDate(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-mono font-bold text-slate-900 focus:border-teal-600 focus:bg-white"
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block font-black text-slate-800">Start Time (IST)</label>
+                    <button
+                      type="button"
+                      onClick={() => setTime(getSmartCurrentTime())}
+                      className="text-[11px] font-bold text-teal-700 hover:text-teal-900 cursor-pointer flex items-center gap-1"
+                    >
+                      <Clock className="w-3 h-3" />
+                      Set to Now
+                    </button>
+                  </div>
+                  <input
+                    type="time"
+                    required
+                    value={time}
+                    onChange={e => setTime(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-mono font-bold text-slate-900 focus:border-teal-600 focus:bg-white"
+                  />
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {[
+                      { label: '+15m', offset: 15 },
+                      { label: '+30m', offset: 30 },
+                      { label: '+1h', offset: 60 },
+                      { label: '10:00 AM', timeVal: '10:00' },
+                      { label: '04:00 PM', timeVal: '16:00' },
+                      { label: '06:00 PM', timeVal: '18:00' },
+                    ].map(chip => (
+                      <button
+                        key={chip.label}
+                        type="button"
+                        onClick={() => {
+                          if (chip.timeVal) {
+                            setTime(chip.timeVal);
+                          } else {
+                            setTime(getSmartCurrentTime(chip.offset));
+                          }
+                        }}
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 hover:bg-teal-50 hover:text-teal-900 hover:border-teal-300 border border-slate-200 text-slate-700 cursor-pointer transition-colors"
+                      >
+                        {chip.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const next = !isAutoAllocate;
-                  setIsAutoAllocate(next);
-                  if (next && recommendedChair) setChairNumber(recommendedChair);
-                }}
-                className={`px-2.5 py-1 rounded-xl text-xs font-black flex items-center gap-1 transition-all cursor-pointer ${
-                  isAutoAllocate
-                    ? 'bg-amber-400 text-slate-950 shadow-xs ring-2 ring-amber-300'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                <Zap className="w-3.5 h-3.5" />
-                <span>{isAutoAllocate ? '⚡ Auto-Allocate: ON' : 'Manual Pick'}</span>
-              </button>
-            </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {Array.from({ length: totalChairs }, (_, i) => i + 1).map(c => {
-                const load = chairLoads[c];
-                const patientCount = load?.total ?? 0;
-                const isRec = c === recommendedChair;
-                const isSelected = chairNumber === c;
-
-                return (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => {
-                      setChairNumber(c);
-                      setIsAutoAllocate(false);
-                    }}
-                    className={`p-3 rounded-xl border text-center transition-all cursor-pointer relative ${
-                      isSelected
-                        ? 'bg-teal-50 border-2 border-teal-600 text-teal-900 font-black shadow-xs ring-2 ring-teal-500/20'
-                        : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 font-bold'
-                    }`}
-                  >
-                    {isRec && (
-                      <span className="absolute -top-2 left-1/2 -translate-x-1/2 bg-amber-400 text-slate-950 text-[9px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-wider shadow-2xs whitespace-nowrap">
-                        ⭐ Best Fit
-                      </span>
-                    )}
-                    <Armchair className={`w-4 h-4 mx-auto mb-1 ${isSelected ? 'text-teal-700' : 'text-slate-500'}`} />
-                    <div className="text-xs font-black">Chair {c}</div>
-                    <div className="text-[10px] font-bold mt-1">
-                      {patientCount === 0 ? (
-                        <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">🟢 Free (0 appts)</span>
-                      ) : (
-                        <span className="text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">{patientCount} booked</span>
-                      )}
+              {/* Operatory Dental Chair (Only show picker if more than 1 chair configured in settings) */}
+              {totalChairs > 1 && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <label className="block font-black text-slate-800">Operatory Dental Chair</label>
+                      <span className="text-[11px] text-slate-500 font-medium">Auto balance or pick chair</span>
                     </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !isAutoAllocate;
+                        setIsAutoAllocate(next);
+                        if (next && recommendedChair) setChairNumber(recommendedChair);
+                      }}
+                      className={`px-2.5 py-1 rounded-xl text-xs font-black flex items-center gap-1 transition-all cursor-pointer ${
+                        isAutoAllocate
+                          ? 'bg-amber-400 text-slate-950 shadow-xs ring-2 ring-amber-300'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                      }`}
+                    >
+                      <Zap className="w-3.5 h-3.5" />
+                      <span>{isAutoAllocate ? '⚡ Auto-Allocate: ON' : 'Manual Pick'}</span>
+                    </button>
+                  </div>
 
-          {/* Date and Time */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block font-black text-slate-800 mb-1">Appointment Date</label>
-              <input
-                type="date"
-                required
-                value={date}
-                onChange={e => setDate(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-mono font-bold text-slate-900 focus:border-teal-600 focus:bg-white"
-              />
-            </div>
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block font-black text-slate-800">Start Time (IST)</label>
-                <button
-                  type="button"
-                  onClick={() => setTime(getSmartCurrentTime())}
-                  className="text-[11px] font-bold text-teal-700 hover:text-teal-900 cursor-pointer flex items-center gap-1"
-                >
-                  <Clock className="w-3 h-3" />
-                  Set to Now
-                </button>
-              </div>
-              <input
-                type="time"
-                required
-                value={time}
-                onChange={e => setTime(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-mono font-bold text-slate-900 focus:border-teal-600 focus:bg-white"
-              />
-              <div className="flex flex-wrap gap-1 mt-2">
-                {[
-                  { label: 'Now', offset: 0 },
-                  { label: '+15m', offset: 15 },
-                  { label: '+30m', offset: 30 },
-                  { label: '+1h', offset: 60 },
-                  { label: '10:00 AM', timeVal: '10:00' },
-                  { label: '04:00 PM', timeVal: '16:00' },
-                  { label: '06:00 PM', timeVal: '18:00' },
-                ].map(chip => (
-                  <button
-                    key={chip.label}
-                    type="button"
-                    onClick={() => {
-                      if (chip.timeVal) {
-                        setTime(chip.timeVal);
-                      } else {
-                        setTime(getSmartCurrentTime(chip.offset));
-                      }
-                    }}
-                    className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 hover:bg-teal-50 hover:text-teal-900 hover:border-teal-300 border border-slate-200 text-slate-700 cursor-pointer transition-colors"
-                  >
-                    {chip.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {Array.from({ length: totalChairs }, (_, i) => i + 1).map(c => {
+                      const load = chairLoads[c];
+                      const patientCount = load?.total ?? 0;
+                      const isRec = c === recommendedChair;
+                      const isSelected = chairNumber === c;
 
-          {/* Duration */}
-          <div>
-            <label className="block font-black text-slate-800 mb-1">Expected Duration</label>
-            <div className="flex gap-2">
-              {[15, 30, 45, 60].map(mins => (
-                <button
-                  key={mins}
-                  type="button"
-                  onClick={() => setDuration(mins)}
-                  className={`flex-1 py-2 rounded-xl border text-center transition-colors cursor-pointer font-black ${
-                    duration === mins
-                      ? 'bg-teal-600 text-white border-teal-700 shadow-xs'
-                      : 'bg-slate-50 border-slate-300 text-slate-800 hover:bg-slate-100'
-                  }`}
-                >
-                  {mins}m
-                </button>
-              ))}
-            </div>
-          </div>
+                      return (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => {
+                            setChairNumber(c);
+                            setIsAutoAllocate(false);
+                          }}
+                          className={`p-3 rounded-xl border text-center transition-all cursor-pointer relative ${
+                            isSelected
+                              ? 'bg-teal-50 border-2 border-teal-600 text-teal-900 font-black shadow-xs ring-2 ring-teal-500/20'
+                              : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100 font-bold'
+                          }`}
+                        >
+                          {isRec && (
+                            <span className="absolute -top-2 left-1/2 -translate-x-1/2 bg-amber-400 text-slate-950 text-[9px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-wider shadow-2xs whitespace-nowrap">
+                              ⭐ Best Fit
+                            </span>
+                          )}
+                          <Armchair className={`w-4 h-4 mx-auto mb-1 ${isSelected ? 'text-teal-700' : 'text-slate-500'}`} />
+                          <div className="text-xs font-black">Chair {c}</div>
+                          <div className="text-[10px] font-bold mt-1">
+                            {patientCount === 0 ? (
+                              <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">🟢 Free</span>
+                            ) : (
+                              <span className="text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">{patientCount} booked</span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
 
-          {/* Reason */}
+          {/* Reason for Visit */}
           <div>
             <label className="block font-black text-slate-800 mb-1">
               Reason for Visit / Complaint <span className="text-rose-500">*</span>
@@ -553,14 +619,14 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
               required
               value={reason}
               onChange={e => setReason(e.target.value)}
-              placeholder="e.g. Toothache, Cleaning, Crown, Consultation"
+              placeholder="e.g. Toothache, Cleaning, Root Canal, Consultation"
               className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 font-bold text-slate-900 focus:border-teal-600 focus:bg-white placeholder-slate-400"
             />
           </div>
 
-          {/* Notes */}
+          {/* Notes (Optional) */}
           <div>
-            <label className="block font-black text-slate-800 mb-1">Notes</label>
+            <label className="block font-black text-slate-800 mb-1">Notes (Optional)</label>
             <textarea
               rows={2}
               value={notes}
@@ -571,21 +637,34 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
           </div>
 
           {/* Submit Button */}
-          <div className="pt-4 border-t border-slate-200 flex justify-end gap-2">
+          <div className="pt-4 border-t border-slate-200 flex items-center justify-between gap-3">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl text-slate-700 border border-slate-300 font-bold hover:bg-slate-100 cursor-pointer"
+              className="px-4 py-2.5 rounded-xl text-slate-700 border border-slate-300 font-bold hover:bg-slate-100 cursor-pointer text-xs"
             >
               Cancel
             </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="px-5 py-2.5 rounded-xl font-black text-white bg-teal-600 hover:bg-teal-700 shadow-xs cursor-pointer disabled:opacity-50"
-            >
-              {submitting ? 'Saving...' : 'Confirm Appointment'}
-            </button>
+
+            {bookingMode === 'BOOK_NOW' ? (
+              <button
+                type="submit"
+                disabled={submitting || !selectedPatientId}
+                className="flex-1 py-3 px-5 rounded-xl font-black text-white bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 shadow-md cursor-pointer disabled:opacity-50 transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-xs sm:text-sm"
+              >
+                <Zap className="w-4 h-4" />
+                <span>{submitting ? 'Generating Token...' : '⚡ Book Now & Issue Token #'}</span>
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={submitting || !selectedPatientId}
+                className="flex-1 py-3 px-5 rounded-xl font-black text-white bg-slate-900 hover:bg-slate-800 shadow-md cursor-pointer disabled:opacity-50 transition-all active:scale-[0.98] flex items-center justify-center gap-2 text-xs sm:text-sm"
+              >
+                <Calendar className="w-4 h-4" />
+                <span>{submitting ? 'Booking...' : '📅 Confirm Advance Booking'}</span>
+              </button>
+            )}
           </div>
         </form>
         )}

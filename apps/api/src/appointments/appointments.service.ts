@@ -685,8 +685,28 @@ export class AppointmentsService {
         updateData.notes = `${updateData.notes || appt.notes || ''}\n[EMERGENCY ESCALATION]: ${dto.emergencyReason.trim()}`;
       }
 
-      if (dto.status === 'CHECKED_IN' && !appt.checkInTime) {
-        updateData.checkInTime = now;
+      if (dto.status === 'CHECKED_IN') {
+        // Assert clinic is open for receptionist check-in
+        await this.clinicHoursService.assertOpen(
+          clinicId,
+          now,
+          'RECEPTION_CHECKIN',
+          dto.emergencyReason,
+          actor,
+          undefined,
+          tx,
+        );
+        if (!appt.checkInTime) updateData.checkInTime = now;
+        updateData.isConfirmedAtDesk = true;
+        if (!appt.tokenNumber) {
+          const istDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(now);
+          const seqRecord = await tx.dailyQueueSequence.upsert({
+            where: { clinicId_dateString: { clinicId, dateString: istDateStr } },
+            update: { lastSequence: { increment: 1 } },
+            create: { clinicId, dateString: istDateStr, lastSequence: 1 },
+          });
+          updateData.tokenNumber = seqRecord.lastSequence;
+        }
       }
 
       const updated = await tx.appointment.update({
@@ -738,13 +758,39 @@ export class AppointmentsService {
 
       if (!appt) throw new NotFoundException('Appointment not found');
 
+      const dataToUpdate: any = {
+        isConfirmedAtDesk: true,
+        confirmedAtDeskAt: new Date(),
+        confirmedByStaffId: staffUser?.userId || staffUser?.id || null,
+      };
+
+      if (['SCHEDULED', 'CONFIRMED'].includes(appt.status)) {
+        await this.clinicHoursService.assertOpen(
+          clinicId,
+          new Date(),
+          'RECEPTION_CHECKIN',
+          undefined,
+          staffUser,
+          undefined,
+          tx,
+        );
+        dataToUpdate.status = 'CHECKED_IN';
+        if (!appt.checkInTime) dataToUpdate.checkInTime = new Date();
+      }
+
+      if (!appt.tokenNumber) {
+        const istDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+        const seqRecord = await tx.dailyQueueSequence.upsert({
+          where: { clinicId_dateString: { clinicId, dateString: istDateStr } },
+          update: { lastSequence: { increment: 1 } },
+          create: { clinicId, dateString: istDateStr, lastSequence: 1 },
+        });
+        dataToUpdate.tokenNumber = seqRecord.lastSequence;
+      }
+
       const updated = await tx.appointment.update({
         where: { id },
-        data: {
-          isConfirmedAtDesk: true,
-          confirmedAtDeskAt: new Date(),
-          confirmedByStaffId: staffUser?.userId || staffUser?.id || null,
-        },
+        data: dataToUpdate,
         include: {
           patient: { select: { fullName: true, phone: true, uhid: true } },
           dentist: { select: { fullName: true } },
@@ -1695,13 +1741,36 @@ export class AppointmentsService {
         // 3. Query queue metrics strictly under tenant isolation
         const { start: dayStart, end: dayEnd } = this.getKolkataDayBounds(appt.scheduledStart);
 
-        // Patients ahead in queue (status CHECKED_IN with tokenNumber < this token)
+        // Patients ahead in queue (status CHECKED_IN, CALLED, or IN_CHAIR with tokenNumber < this token)
         const currentlyAhead = await tx.appointment.count({
           where: {
             clinicId: appt.clinicId,
             scheduledStart: { gte: dayStart, lte: dayEnd },
-            status: 'CHECKED_IN',
+            status: { in: ['CHECKED_IN', 'CALLED', 'IN_CHAIR'] },
             tokenNumber: { lt: appt.tokenNumber || 999999 },
+          },
+        });
+
+        // Next waiting patient across the clinic
+        const nextWaiting = await tx.appointment.findFirst({
+          where: {
+            clinicId: appt.clinicId,
+            scheduledStart: { gte: dayStart, lte: dayEnd },
+            status: { in: ['CHECKED_IN', 'CALLED'] },
+          },
+          orderBy: { tokenNumber: 'asc' },
+          select: {
+            tokenNumber: true,
+            chairNumber: true,
+          },
+        });
+
+        // Total patients currently waiting in lobby
+        const totalWaiting = await tx.appointment.count({
+          where: {
+            clinicId: appt.clinicId,
+            scheduledStart: { gte: dayStart, lte: dayEnd },
+            status: 'CHECKED_IN',
           },
         });
 
@@ -1720,20 +1789,50 @@ export class AppointmentsService {
         });
 
         const activeChairsServing = inChairAppts.map(ic => ({
-          chairNumber: ic.chairNumber,
+          chairNumber: ic.chairNumber || 1,
           tokenNumber: ic.tokenNumber,
           isBusy: ic.status === 'IN_CHAIR',
           isCalling: ic.status === 'CALLED',
         }));
 
+        const clinicChairCount = (await tx.clinic.findUnique({ where: { id: appt.clinicId }, select: { chairCount: true } }))?.chairCount || 1;
+        const targetChairNum = appt.expectedChairNumber || appt.chairNumber || (clinicChairCount === 1 ? 1 : null);
+        const servingInThisChair = inChairAppts.find(ic => (targetChairNum ? (ic.chairNumber || 1) === targetChairNum : true)) || inChairAppts[0];
+
+        const queuePosition = appt.status === 'CHECKED_IN'
+          ? currentlyAhead + 1
+          : (['CALLED', 'IN_CHAIR'].includes(appt.status) ? 0 : null);
+
+        const isSelfServing = (servingInThisChair && servingInThisChair.tokenNumber === appt.tokenNumber) || appt.status === 'IN_CHAIR';
+
+        let chairBanner = `Operatory Chair #${targetChairNum || 1} is sanitized and preparing for you.`;
+        if (isSelfServing) {
+          chairBanner = `You are currently seated in Operatory Chair #${targetChairNum || servingInThisChair?.chairNumber || 1}. Consultation & procedure in progress.`;
+        } else if (appt.status === 'CALLED') {
+          chairBanner = `Your Token #${appt.tokenNumber} has been called to Chair #${targetChairNum || 1}! Please proceed into the operatory room.`;
+        } else if (servingInThisChair) {
+          if (currentlyAhead === 0) {
+            chairBanner = `Operatory Chair #${targetChairNum || servingInThisChair.chairNumber || 1} is currently treating Token #${servingInThisChair.tokenNumber}. You are next in line!`;
+          } else {
+            chairBanner = `Operatory Chair #${targetChairNum || servingInThisChair.chairNumber || 1} is currently treating Token #${servingInThisChair.tokenNumber}. ${currentlyAhead} patient${currentlyAhead > 1 ? 's' : ''} ahead of you.`;
+          }
+        }
+
         return {
           success: true,
           tokenNumber: appt.tokenNumber,
           status: appt.status,
-          chairNumber: appt.chairNumber,
-          expectedChairNumber: appt.expectedChairNumber,
+          chairNumber: appt.chairNumber || targetChairNum || 1,
+          expectedChairNumber: appt.expectedChairNumber || targetChairNum || 1,
           isImmediateSeat: appt.isConfirmedAtDesk && appt.status === 'CALLED',
+          patientsAhead: currentlyAhead,
           currentlyAhead,
+          queuePosition,
+          nextTokenNumber: nextWaiting?.tokenNumber || null,
+          totalWaitingInLobby: totalWaiting,
+          servingInThisChairToken: servingInThisChair?.tokenNumber || null,
+          servingInThisChairStatus: servingInThisChair?.status || null,
+          chairBanner,
           activeChairsServing,
           clinicName: appt.clinic?.name || 'Dental Clinic',
           clinicAddress: appt.clinic?.address || '',
@@ -1903,7 +2002,7 @@ export class AppointmentsService {
         where: {
           clinicId: targetClinicId,
           scheduledStart: { gte: todayStart, lte: todayEnd },
-          status: 'CHECKED_IN',
+          status: { in: ['CHECKED_IN', 'CALLED'] },
           tokenNumber: { lt: matchedAppt.tokenNumber || 999999 },
         },
       });
@@ -1942,6 +2041,7 @@ export class AppointmentsService {
 
     const { appt, currentlyAhead } = lookupResult;
     const tokenOrRef = (dto.tokenOrReference || '').trim();
+    const queuePosition = appt.status === 'CHECKED_IN' ? currentlyAhead + 1 : (['CALLED', 'IN_CHAIR'].includes(appt.status) ? 0 : null);
 
     // If phone-only lookup: return ONLY tokenNumber, patientsAhead, status (NO clinic name, NO chair details)
     if (!tokenOrRef) {
@@ -1949,6 +2049,8 @@ export class AppointmentsService {
         found: true,
         tokenNumber: appt.tokenNumber,
         patientsAhead: currentlyAhead,
+        currentlyAhead,
+        queuePosition,
         status: appt.status,
       };
     }
@@ -1961,6 +2063,8 @@ export class AppointmentsService {
       chairNumber: ['CALLED', 'IN_CHAIR'].includes(appt.status) ? appt.chairNumber : null,
       expectedChairNumber: appt.expectedChairNumber,
       patientsAhead: currentlyAhead,
+      currentlyAhead,
+      queuePosition,
     };
   }
 

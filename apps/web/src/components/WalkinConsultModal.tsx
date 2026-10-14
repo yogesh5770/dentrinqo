@@ -87,19 +87,26 @@ export const WalkinConsultModal: React.FC<WalkinConsultModalProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [bookingSuccess, setBookingSuccess] = useState<any | null>(null);
+  const [clinicStatus, setClinicStatus] = useState<any | null>(null);
 
-  // Load active dentists for the clinic
+  // Load active dentists and clinic operational status
   useEffect(() => {
-    const fetchDentists = async () => {
+    const fetchDentistsAndStatus = async () => {
       try {
-        const res = await apiRequest<any[]>('/users');
-        if (Array.isArray(res)) {
-          const docs = res.filter(u => u.role === 'DENTIST' || u.role === 'ADMIN');
+        const [usersRes, statusRes] = await Promise.all([
+          apiRequest<any[]>('/users').catch(() => []),
+          apiRequest<any>('/clinic/status').catch(() => null),
+        ]);
+        if (Array.isArray(usersRes)) {
+          const docs = usersRes.filter(u => u.role === 'DENTIST' || u.role === 'ADMIN');
           setDentists(docs);
+        }
+        if (statusRes) {
+          setClinicStatus(statusRes);
         }
       } catch {}
     };
-    fetchDentists();
+    fetchDentistsAndStatus();
   }, []);
 
   // Phone search debouncing
@@ -176,6 +183,11 @@ export const WalkinConsultModal: React.FC<WalkinConsultModalProps> = ({
 
     if (!selectedPatientId && !consentDataUse) {
       setErrorMsg('Patient consent for medical data processing is required under DPDP Act.');
+      return;
+    }
+
+    if (clinicStatus && !clinicStatus.isOpen) {
+      setErrorMsg(`Hospital is currently closed (${clinicStatus.message || 'Outside hours'}). Walk-in consultations cannot be accepted while the clinic is closed.`);
       return;
     }
 
@@ -759,17 +771,39 @@ export const WalkinConsultModal: React.FC<WalkinConsultModalProps> = ({
                 </div>
               )}
 
+              {/* Closed Warning Banner */}
+              {clinicStatus && !clinicStatus.isOpen && (
+                <div className="p-3.5 rounded-2xl bg-rose-50 border-2 border-rose-300 text-rose-950 flex items-center gap-3 text-xs font-bold animate-in fade-in">
+                  <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+                  <div>
+                    <span className="block font-black text-rose-900">Hospital is Currently Closed</span>
+                    <span className="text-[11px] text-rose-800 font-medium">
+                      {clinicStatus.message || 'Walk-in consultations cannot be registered outside operating hours.'}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* Primary CTA: 1-Click Consultation Booking */}
               <div className="pt-2">
                 <button
                   type="submit"
-                  disabled={submitting}
-                  className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-sm transition-all cursor-pointer shadow-lg shadow-teal-900/20 flex items-center justify-center gap-2 active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={submitting || (clinicStatus && !clinicStatus.isOpen)}
+                  className={`w-full py-3.5 px-4 rounded-2xl font-black text-sm transition-all shadow-lg flex items-center justify-center gap-2 active:scale-98 ${
+                    clinicStatus && !clinicStatus.isOpen
+                      ? 'bg-slate-300 text-slate-600 cursor-not-allowed shadow-none border border-slate-300'
+                      : 'bg-gradient-to-r from-emerald-600 via-teal-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white cursor-pointer shadow-teal-900/20 disabled:opacity-50 disabled:cursor-not-allowed'
+                  }`}
                 >
                   {submitting ? (
                     <>
                       <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                       <span>Allocating Token & Operatory Chair...</span>
+                    </>
+                  ) : clinicStatus && !clinicStatus.isOpen ? (
+                    <>
+                      <AlertTriangle className="w-4 h-4 text-rose-600" />
+                      <span>🚫 Hospital Closed (Walk-Ins Disabled)</span>
                     </>
                   ) : (
                     <>

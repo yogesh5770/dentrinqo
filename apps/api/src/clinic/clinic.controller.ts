@@ -91,9 +91,11 @@ export class ClinicController {
   @ApiOperation({ summary: 'Update weekly operating hours and breaks (Admin only)' })
   async updateWorkingHours(
     @CurrentUser() user: any,
-    @Body() body: { schedules: Array<any> },
+    @Body() body: any,
   ) {
-    return this.clinicHoursService.updateWorkingHours(user.clinicId, body.schedules, user);
+    const schedules = body?.schedules || body?.hours || (Array.isArray(body) ? body : []);
+    const workingHoursString = body?.workingHours;
+    return this.clinicHoursService.updateWorkingHours(user.clinicId, schedules, user, undefined, workingHoursString);
   }
 
   @Get('closures')
