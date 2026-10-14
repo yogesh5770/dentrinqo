@@ -235,19 +235,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-          {/* Live TV 4-Digit Arrival Code Card */}
-          <div className="flex items-center gap-2 bg-linear-to-r from-amber-50 to-orange-50 border-2 border-amber-400 text-amber-950 font-black text-xs py-1.5 px-3 rounded-xl shadow-xs">
-            <KeyRound className="w-4 h-4 text-amber-700 shrink-0" />
-            <div>
-              <span className="text-[9px] uppercase tracking-wider text-amber-800 font-extrabold block -mb-0.5">
-                Live TV Code
-              </span>
-              <strong className="font-mono text-sm tracking-widest text-teal-950 bg-white px-2 py-0.5 rounded-md border border-amber-300 shadow-2xs font-black">
-                {lobbyCode || '••••'}
-              </strong>
-            </div>
-          </div>
-
           <button
             onClick={() => setShowQrModal(true)}
             className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-teal-300 font-bold text-xs flex items-center gap-1.5 border border-slate-700 cursor-pointer transition-all shadow-xs"

@@ -275,23 +275,17 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
                   </span>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 text-center py-1">
+                <div className="grid grid-cols-2 gap-3 text-center py-1">
                   <div className="bg-white/10 rounded-xl p-2.5 backdrop-blur-xs border border-white/10">
-                    <div className="text-[10px] uppercase font-bold text-teal-200">Token</div>
+                    <div className="text-[10px] uppercase font-bold text-teal-200">Queue Token</div>
                     <div className="font-mono text-base sm:text-xl font-black text-amber-300">
                       {bookingSuccessData.tokenNumber ? `#${bookingSuccessData.tokenNumber}` : 'On Arrival'}
                     </div>
                   </div>
                   <div className="bg-white/10 rounded-xl p-2.5 backdrop-blur-xs border border-white/10">
-                    <div className="text-[10px] uppercase font-bold text-teal-200">Chair</div>
+                    <div className="text-[10px] uppercase font-bold text-teal-200">Operatory Chair</div>
                     <div className="font-mono text-2xl font-black text-emerald-300">
                       #{bookingSuccessData.chairNumber}
-                    </div>
-                  </div>
-                  <div className="bg-white/10 rounded-xl p-2.5 backdrop-blur-xs border border-white/10">
-                    <div className="text-[10px] uppercase font-bold text-teal-200">TV Code</div>
-                    <div className="font-mono text-2xl font-black text-white">
-                      {bookingSuccessData.lobbyCode || '4281'}
                     </div>
                   </div>
                 </div>
