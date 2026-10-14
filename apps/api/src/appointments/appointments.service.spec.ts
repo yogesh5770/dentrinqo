@@ -2,49 +2,68 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AppointmentsService } from '../appointments/appointments.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { ClinicHoursService } from '../clinic/clinic-hours.service';
 import { ConflictException, BadRequestException, NotFoundException } from '@nestjs/common';
 
 describe('AppointmentsService', () => {
   let service: AppointmentsService;
   let prisma: PrismaService;
+  let mockPrisma: any;
 
   beforeAll(async () => {
+    mockPrisma = {
+      clinic: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'clinic-aks-id', code: 'AKS', name: 'AKS Elite Dental' }),
+        findUnique: jest.fn().mockResolvedValue({ id: 'clinic-aks-id', code: 'AKS', name: 'AKS Elite Dental' }),
+      },
+      patient: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'p1' }),
+        findMany: jest.fn().mockResolvedValue([]),
+        create: jest.fn(),
+        count: jest.fn().mockResolvedValue(10),
+      },
+      user: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'd1', fullName: 'Dr. Khalidh', role: 'DENTIST', isActive: true }),
+      },
+      appointment: {
+        findFirst: jest.fn(),
+        create: jest.fn(),
+        findMany: jest.fn(),
+        update: jest.fn(),
+        count: jest.fn().mockResolvedValue(0),
+      },
+      dailyQueueSequence: {
+        upsert: jest.fn().mockResolvedValue({ lastSequence: 1 }),
+      },
+      nextSequence: jest.fn().mockResolvedValue(1),
+    };
+    mockPrisma.forTenant = jest.fn((clinicId: string, fn: any) => fn(mockPrisma));
+    mockPrisma.$transaction = jest.fn((fn: any) => fn(mockPrisma));
+    mockPrisma.$executeRaw = jest.fn().mockResolvedValue(1);
+
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AppointmentsService,
         {
           provide: PrismaService,
-          useValue: {
-            clinic: {
-              findFirst: jest.fn(),
-            },
-            patient: {
-              findFirst: jest.fn().mockResolvedValue({ id: 'p1' }),
-              findMany: jest.fn().mockResolvedValue([]),
-              create: jest.fn(),
-              count: jest.fn().mockResolvedValue(10),
-            },
-            user: {
-              findFirst: jest.fn().mockResolvedValue({ id: 'd1', fullName: 'Dr. Khalidh', role: 'DENTIST', isActive: true }),
-            },
-            appointment: {
-              findFirst: jest.fn(),
-              create: jest.fn(),
-              findMany: jest.fn(),
-              update: jest.fn(),
-              count: jest.fn().mockResolvedValue(0),
-            },
-            dailyQueueSequence: {
-              upsert: jest.fn().mockResolvedValue({ lastSequence: 1 }),
-            },
-          },
+          useValue: mockPrisma,
         },
         {
           provide: AuditService,
-          useValue: { log: jest.fn() },
+          useValue: { log: jest.fn().mockResolvedValue(true) },
+        },
+        {
+          provide: ClinicHoursService,
+          useValue: {
+            assertOpen: jest.fn().mockResolvedValue(true),
+            getClinicStatus: jest.fn().mockResolvedValue({ isOpen: true, workingHours: [] }),
+            isOperatingHour: jest.fn().mockResolvedValue(true),
+          },
         },
       ],
     }).compile();
+
 
     service = module.get<AppointmentsService>(AppointmentsService);
     prisma = module.get<PrismaService>(PrismaService);
@@ -52,6 +71,20 @@ describe('AppointmentsService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPrisma.forTenant.mockImplementation((clinicId: string, fn: any) => fn(mockPrisma));
+    mockPrisma.$transaction.mockImplementation((fn: any) => fn(mockPrisma));
+    mockPrisma.$executeRaw.mockResolvedValue(1);
+    mockPrisma.clinic.findFirst.mockResolvedValue({ id: 'clinic-aks-id', code: 'AKS', name: 'AKS Elite Dental' });
+    mockPrisma.clinic.findUnique.mockResolvedValue({ id: 'clinic-aks-id', code: 'AKS', name: 'AKS Elite Dental' });
+    mockPrisma.dailyQueueSequence.upsert.mockResolvedValue({ lastSequence: 1 });
+    mockPrisma.nextSequence.mockResolvedValue(1);
+    mockPrisma.patient.findFirst.mockResolvedValue({ id: 'p1', clinicId: 'clinic-aks-id' });
+    mockPrisma.patient.findMany.mockResolvedValue([]);
+    mockPrisma.patient.create.mockImplementation(({ data }: any) => ({ id: 'p1', ...data }));
+    mockPrisma.user.findFirst.mockResolvedValue({ id: 'd1', fullName: 'Dr. Khalidh', role: 'DENTIST', isActive: true });
+    mockPrisma.appointment.findMany.mockResolvedValue([]);
+    mockPrisma.appointment.create.mockImplementation(({ data }: any) => ({ id: 'appt-1', ...data }));
+    mockPrisma.appointment.update.mockImplementation(({ data }: any) => ({ id: 'appt-1', ...data }));
   });
 
   describe('Internal Scheduling Conflicts', () => {
@@ -155,7 +188,7 @@ describe('AppointmentsService', () => {
       jest.spyOn(prisma.appointment, 'create').mockResolvedValueOnce({
         id: 'appt-uuid-9999',
         clinicId: 'clinic-aks-id',
-        status: 'PENDING_CONFIRMATION',
+        status: 'SCHEDULED',
         scheduledStart: new Date(),
         scheduledEnd: new Date(),
       } as any);
@@ -163,7 +196,7 @@ describe('AppointmentsService', () => {
       const result = await service.createPublicRequest(validDto, '192.168.1.100');
 
       expect(result.success).toBe(true);
-      expect(result.status).toBe('PENDING_CONFIRMATION');
+      expect(result.status).toBe('SCHEDULED');
       expect(result.requiresConfirmation).toBe(true);
       expect(result.reference).toContain('AKS-');
       expect(result.clinicName).toBe('AKS Elite Dental Clinic');

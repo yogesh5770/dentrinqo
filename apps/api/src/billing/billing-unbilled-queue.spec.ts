@@ -22,6 +22,8 @@ describe('Billing Operatory Unbilled Queue & Doctor-to-Billing Workflow', () => 
       invoice: {
         findMany: jest.fn(),
       },
+      forTenant: jest.fn((clinicId: string, callback: any) => callback(mockPrisma)),
+      nextSequence: jest.fn().mockResolvedValue(1),
     };
 
     billingService = new BillingService(mockPrisma, mockAudit);

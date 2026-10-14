@@ -24,6 +24,8 @@ describe('Task 3: Clinic Isolation - Prescriptions Authorization', () => {
       clinic: {
         findUnique: jest.fn().mockResolvedValue({ id: CLINIC_A, name: "AK's Elite Dental" }),
       },
+      forTenant: jest.fn((clinicId: string, callback: any) => callback(mockPrisma)),
+      nextSequence: jest.fn().mockResolvedValue(1),
     };
     prescriptionsService = new PrescriptionsService(mockPrisma, mockAudit);
   });
@@ -32,6 +34,7 @@ describe('Task 3: Clinic Isolation - Prescriptions Authorization', () => {
     it('allows access when prescription belongs to patient in caller clinic', async () => {
       mockPrisma.prescription.findUnique.mockResolvedValue({
         id: 'rx-100',
+        clinicId: CLINIC_A,
         prescriptionNumber: 'RX-2026-0001',
         patient: {
           clinicId: CLINIC_A,

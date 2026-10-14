@@ -223,9 +223,14 @@ export class AppointmentsService {
     preferredDentistId?: string | null,
     tx?: any,
   ): Promise<number[]> {
-    if (!tx || tx === this.prisma) {
+    if (!tx || (tx === this.prisma && !(tx as any).__inTenantCtx)) {
       return this.prisma.forTenant(clinicId, async (tenantTx) => {
-        return this.getCandidateChairsForSlot(clinicId, start, end, preferredDentistId, tenantTx);
+        (tenantTx as any).__inTenantCtx = true;
+        try {
+          return await this.getCandidateChairsForSlot(clinicId, start, end, preferredDentistId, tenantTx);
+        } finally {
+          delete (tenantTx as any).__inTenantCtx;
+        }
       });
     }
 
@@ -1151,9 +1156,9 @@ export class AppointmentsService {
           // Create new distinct patient record flagged with possibleDuplicate = true, source = ONLINE, needsVerification = true
           const isSharedPhoneOtherName = existingPatientsOnPhone.length > 0;
           const year = new Date().getFullYear();
-          const patientCount = await tx.patient.count({ where: { clinicId } });
+          const seq = await this.prisma.nextSequence(clinicId, 'UHID', String(year), tx);
           const randSuffix = crypto.randomBytes(2).toString('hex').toUpperCase();
-          const uhid = `${clinic.code}-${year}-${String(patientCount + 1).padStart(4, '0')}-${randSuffix}`;
+          const uhid = `${clinic.code}-${year}-${String(seq).padStart(4, '0')}-${randSuffix}`;
 
           patient = await tx.patient.create({
             data: {
@@ -1320,24 +1325,26 @@ export class AppointmentsService {
     });
 
     // 10. Audit trail (run post-commit to avoid holding transactions or connection deadlocks)
-    this.auditService.log({
-      clinicId,
-      actorId: result.staffId,
-      actorRole: 'SYSTEM',
-      action: 'PUBLIC_BOOKING_REQUEST_RECEIVED',
-      entityType: 'Appointment',
-      entityId: result.appointmentId,
-      details: {
-        reference: result.reference,
-        tokenNumber: result.tokenNumber,
-        chairNumber: result.chairNumber,
-        preferredDate: dto.preferredDate,
-        preferredSlot: dto.preferredSlot,
-        service: dto.service,
-        clientIp: clientIp || 'unknown',
-        trackingCodeCreated: true,
-      },
-    }).catch(() => {});
+    Promise.resolve(
+      this.auditService.log({
+        clinicId,
+        actorId: result.staffId,
+        actorRole: 'SYSTEM',
+        action: 'PUBLIC_BOOKING_REQUEST_RECEIVED',
+        entityType: 'Appointment',
+        entityId: result.appointmentId,
+        details: {
+          reference: result.reference,
+          tokenNumber: result.tokenNumber,
+          chairNumber: result.chairNumber,
+          preferredDate: dto.preferredDate,
+          preferredSlot: dto.preferredSlot,
+          service: dto.service,
+          clientIp: clientIp || 'unknown',
+          trackingCodeCreated: true,
+        },
+      }),
+    ).catch(() => {});
 
     return result;
   }
@@ -1464,9 +1471,9 @@ export class AppointmentsService {
           // Register new walk-in patient at reception
           const clinic = await tx.clinic.findUnique({ where: { id: clinicId } });
           const year = new Date().getFullYear();
-          const patientCount = await tx.patient.count({ where: { clinicId } });
+          const seq = await this.prisma.nextSequence(clinicId, 'UHID', String(year), tx);
           const randSuffix = crypto.randomBytes(2).toString('hex').toUpperCase();
-          const uhid = `${clinic?.code || 'AKS'}-${year}-${String(patientCount + 1).padStart(4, '0')}-${randSuffix}`;
+          const uhid = `${clinic?.code || 'AKS'}-${year}-${String(seq).padStart(4, '0')}-${randSuffix}`;
 
           patient = await tx.patient.create({
             data: {
@@ -2287,6 +2294,23 @@ export class AppointmentsService {
       clinic = await this.prisma.clinic.findFirst({ where: { code: codePrefix } });
     }
     if (!clinic) {
+      const cleanIdent = (dto.identifier || dto.phone || '').trim();
+      if (cleanIdent) {
+        const matchingAppt = await this.prisma.appointment.findFirst({
+          where: {
+            OR: [
+              { patient: { phone: cleanIdent } },
+              { patient: { uhid: cleanIdent } },
+            ],
+          },
+          include: { clinic: true },
+        });
+        if (matchingAppt?.clinic) {
+          clinic = matchingAppt.clinic;
+        }
+      }
+    }
+    if (!clinic) {
       throw new BadRequestException('Dental clinic could not be resolved from host context.');
     }
     // Unified assertOpen check (Requirement 1, 3: Self check-in allowed only inside working hours)
@@ -2596,9 +2620,9 @@ export class AppointmentsService {
 
       if (!patient) {
         const year = new Date().getFullYear();
-        const patientCount = await tx.patient.count({ where: { clinicId: clinic.id } });
+        const seq = await this.prisma.nextSequence(clinic.id, 'UHID', String(year), tx);
         const randSuffix = crypto.randomBytes(2).toString('hex').toUpperCase();
-        const uhid = `${clinic.code}-${year}-${String(patientCount + 1).padStart(4, '0')}-${randSuffix}`;
+        const uhid = `${clinic.code}-${year}-${String(seq).padStart(4, '0')}-${randSuffix}`;
 
         patient = await tx.patient.create({
           data: {

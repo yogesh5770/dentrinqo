@@ -166,18 +166,12 @@ export class UsersService {
       const clinic = await tx.clinic.findUnique({ where: { id: clinicId } });
       const clinicName = clinic?.name || 'Dental Clinic';
 
-      // Auto-generate sequential Employee ID (e.g. AKS-EMP-001, JDC-EMP-001...)
+      // Auto-generate sequential Employee ID (e.g. AKS-EMP-001, JDC-EMP-001...) atomically
       let finalEmployeeId = data.employeeId?.trim();
       if (!finalEmployeeId) {
         const clinicPrefix = clinic?.code ? clinic.code.toUpperCase() : 'EMP';
-        const userCount = await tx.user.count({ where: { clinicId } });
-        let seq = userCount + 1;
-        let candidate = `${clinicPrefix}-EMP-${seq.toString().padStart(3, '0')}`;
-        while (await tx.user.findFirst({ where: { clinicId, employeeId: candidate } })) {
-          seq++;
-          candidate = `${clinicPrefix}-EMP-${seq.toString().padStart(3, '0')}`;
-        }
-        finalEmployeeId = candidate;
+        const seq = await this.prisma.nextSequence(clinicId, 'EMP', 'ALL', tx);
+        finalEmployeeId = `${clinicPrefix}-EMP-${seq.toString().padStart(3, '0')}`;
       }
 
       const permissionsJson = data.permissions

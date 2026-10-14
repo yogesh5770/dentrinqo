@@ -194,10 +194,10 @@ export class PatientAuthService {
         });
         matchedExisting = true;
       } else {
-        // Create initial SELF patient profile
+        // Create initial SELF patient profile with atomic UHID
         const year = new Date().getFullYear();
-        const patientCount = await tx.patient.count({ where: { clinicId: clinic.id } });
-        const uhid = `${clinic.code}-${year}-${String(patientCount + 1).padStart(4, '0')}`;
+        const seq = await this.prisma.nextSequence(clinic.id, 'UHID', String(year), tx);
+        const uhid = `${clinic.code}-${year}-${String(seq).padStart(4, '0')}`;
 
         primaryPatient = await tx.patient.create({
           data: {
@@ -450,8 +450,8 @@ export class PatientAuthService {
 
     return this.prisma.forTenant(targetClinicId, async (tx) => {
       const year = new Date().getFullYear();
-      const count = await tx.patient.count({ where: { clinicId: targetClinicId } });
-      const uhid = `${account.clinic.code}-${year}-${String(count + 1).padStart(4, '0')}`;
+      const seq = await this.prisma.nextSequence(targetClinicId, 'UHID', String(year), tx);
+      const uhid = `${account.clinic.code}-${year}-${String(seq).padStart(4, '0')}`;
 
       const newPatient = await tx.patient.create({
         data: {

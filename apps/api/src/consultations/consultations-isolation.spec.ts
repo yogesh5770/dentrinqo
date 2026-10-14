@@ -26,6 +26,8 @@ describe('Task 3: Clinic Isolation - Consultations Authorization', () => {
       appointment: {
         update: jest.fn(),
       },
+      forTenant: jest.fn((clinicId: string, callback: any) => callback(mockPrisma)),
+      nextSequence: jest.fn().mockResolvedValue(1),
     };
     consultationsService = new ConsultationsService(mockPrisma, mockAudit);
   });

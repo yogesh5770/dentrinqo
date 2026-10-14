@@ -43,16 +43,18 @@ export class PatientsService {
     private readonly auditService: AuditService,
   ) {}
 
-  // Generate sequence-based UHID e.g. AKS-2026-0004 (collision-proof)
+  // Generate sequence-based UHID e.g. AKS-2026-0004 (atomic and concurrency-safe)
   private async generateNextUhid(clinicCode: string, clinicId?: string, tx?: any): Promise<string> {
-    const client = tx || this.prisma;
     const currentYear = new Date().getFullYear();
-    const count = clinicId
-      ? await client.patient.count({ where: { clinicId } })
-      : await client.patient.count();
+    if (clinicId) {
+      const seq = await this.prisma.nextSequence(clinicId, 'UHID', String(currentYear), tx);
+      return `${clinicCode}-${currentYear}-${seq.toString().padStart(4, '0')}`;
+    }
+    const client = tx || this.prisma;
+    const count = await client.patient.count();
     let seq = count + 1;
     let uhid = `${clinicCode}-${currentYear}-${seq.toString().padStart(4, '0')}`;
-    while (await client.patient.findFirst({ where: { ...(clinicId ? { clinicId } : {}), uhid } })) {
+    while (await client.patient.findFirst({ where: { uhid } })) {
       seq++;
       uhid = `${clinicCode}-${currentYear}-${seq.toString().padStart(4, '0')}`;
     }

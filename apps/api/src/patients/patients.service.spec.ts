@@ -5,23 +5,27 @@ import { AuditService } from '../audit/audit.service';
 
 describe('PatientsService', () => {
   let service: PatientsService;
-  let prisma: PrismaService;
+  let mockPrisma: any;
 
   beforeAll(async () => {
+    mockPrisma = {
+      forTenant: jest.fn((clinicId: string, fn: any) => fn(mockPrisma)),
+      nextSequence: jest.fn().mockResolvedValue(1),
+      clinic: { findUnique: jest.fn().mockResolvedValue({ code: 'AKS' }) },
+      patient: {
+        count: jest.fn().mockResolvedValue(4),
+        findFirst: jest.fn(),
+        create: jest.fn(),
+        findMany: jest.fn(),
+      },
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PatientsService,
         {
           provide: PrismaService,
-          useValue: {
-            clinic: { findUnique: jest.fn().mockResolvedValue({ code: 'AKS' }) },
-            patient: {
-              count: jest.fn().mockResolvedValue(4),
-              findFirst: jest.fn(),
-              create: jest.fn(),
-              findMany: jest.fn(),
-            },
-          },
+          useValue: mockPrisma,
         },
         {
           provide: AuditService,
@@ -31,11 +35,11 @@ describe('PatientsService', () => {
     }).compile();
 
     service = module.get<PatientsService>(PatientsService);
-    prisma = module.get<PrismaService>(PrismaService);
   });
 
+
   it('should detect duplicate phone numbers accurately', async () => {
-    jest.spyOn(prisma.patient, 'findFirst').mockResolvedValueOnce({
+    jest.spyOn(mockPrisma.patient, 'findFirst').mockResolvedValueOnce({
       id: 'existing-id',
       uhid: 'AKS-2026-0001',
       fullName: 'Kavitha Murugan',
@@ -48,7 +52,7 @@ describe('PatientsService', () => {
   });
 
   it('should report non-duplicate when phone does not exist', async () => {
-    jest.spyOn(prisma.patient, 'findFirst').mockResolvedValueOnce(null);
+    jest.spyOn(mockPrisma.patient, 'findFirst').mockResolvedValueOnce(null);
 
     const result = await service.checkDuplicate('clinic-1', '9999999999');
     expect(result.isDuplicate).toBe(false);

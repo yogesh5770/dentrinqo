@@ -44,6 +44,8 @@ describe('Task 4: Financial Records - Non-Destructive Void Workflow & Statutory 
       completedProcedure: {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      forTenant: jest.fn((clinicId: string, callback: any) => callback(mockPrisma)),
+      nextSequence: jest.fn().mockResolvedValue(1),
       $transaction: jest.fn((callback) => callback(mockPrisma)),
     };
 
@@ -118,6 +120,7 @@ describe('Task 4: Financial Records - Non-Destructive Void Workflow & Statutory 
             paidPaise: 200000,
           }),
         }),
+        expect.anything(),
       );
     });
 

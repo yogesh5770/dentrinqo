@@ -63,22 +63,17 @@ export class BillingService {
         return recentDuplicate;
       }
 
-      // Generate Invoice Number: ${clinicCode}-INV-YYYY-XXXX (collision-proof against multi-clinic and concurrency)
+      // Generate Invoice Number: ${clinicCode}-INV-YYYY-XXXX (atomic and concurrency-safe)
       const currentYear = new Date().getFullYear();
       const clinic = await tx.clinic.findUnique({ where: { id: clinicId } });
       const clinicPrefix = clinic?.code ? `${clinic.code}-INV` : 'INV';
+      const seq = await this.prisma.nextSequence(clinicId, 'INVOICE', String(currentYear), tx);
+      const invoiceNumber = `${clinicPrefix}-${currentYear}-${String(seq).padStart(4, '0')}`;
       let invoice: any = null;
       let lastError: any = null;
 
       for (let attempt = 0; attempt < 5; attempt++) {
         try {
-          const count = await tx.invoice.count({ where: { clinicId } });
-          let seq = count + 1 + attempt;
-          let invoiceNumber = `${clinicPrefix}-${currentYear}-${String(seq).padStart(4, '0')}`;
-          while (await tx.invoice.findFirst({ where: { clinicId, invoiceNumber } })) {
-            seq++;
-            invoiceNumber = `${clinicPrefix}-${currentYear}-${String(seq).padStart(4, '0')}`;
-          }
 
           invoice = await tx.invoice.create({
             data: {
@@ -196,13 +191,8 @@ export class BillingService {
       const clinic = await tx.clinic.findUnique({ where: { id: clinicId } });
       const receiptPrefix = clinic?.code ? `${clinic.code}-RCP` : 'RCP';
       const currentYear = new Date().getFullYear();
-      const count = await tx.payment.count({ where: { clinicId } });
-      let seq = count + 1;
-      let receiptNumber = `${receiptPrefix}-${currentYear}-${String(seq).padStart(4, '0')}`;
-      while (await tx.payment.findFirst({ where: { clinicId, receiptNumber } })) {
-        seq++;
-        receiptNumber = `${receiptPrefix}-${currentYear}-${String(seq).padStart(4, '0')}`;
-      }
+      const seq = await this.prisma.nextSequence(clinicId, 'RECEIPT', String(currentYear), tx);
+      const receiptNumber = `${receiptPrefix}-${currentYear}-${String(seq).padStart(4, '0')}`;
 
       const newPaidPaise = invoice.paidPaise + dto.amountPaise;
       const newBalancePaise = invoice.balancePaise - dto.amountPaise;

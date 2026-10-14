@@ -36,4 +36,36 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       return operation(tx as unknown as PrismaClient);
     }, { maxWait: 20000, timeout: 20000 });
   }
+
+  /**
+   * Atomically allocates the next integer sequence for a clinic, sequenceType, and year.
+   * Uses atomic PostgreSQL upsert with { increment: 1 } to prevent concurrency races.
+   */
+  async nextSequence(
+    clinicId: string,
+    sequenceType: 'UHID' | 'INVOICE' | 'RECEIPT' | 'PRESCRIPTION' | 'EMP' | string,
+    fiscalYear: string = String(new Date().getFullYear()),
+    txClient?: any,
+  ): Promise<number> {
+    const client = txClient || this;
+    const record = await client.clinicSequence.upsert({
+      where: {
+        clinicId_sequenceType_fiscalYear: {
+          clinicId,
+          sequenceType,
+          fiscalYear,
+        },
+      },
+      update: {
+        currentValue: { increment: 1 },
+      },
+      create: {
+        clinicId,
+        sequenceType,
+        fiscalYear,
+        currentValue: 1,
+      },
+    });
+    return record.currentValue;
+  }
 }

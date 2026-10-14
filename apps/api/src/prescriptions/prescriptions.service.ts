@@ -114,10 +114,10 @@ export class PrescriptionsService {
       });
       if (!patient) throw new NotFoundException('Patient record not found');
 
-      // Generate unique prescription number: RX-YYYY-COUNT
+      // Generate unique prescription number: RX-YYYY-COUNT (atomic and concurrency-safe)
       const currentYear = new Date().getFullYear();
-      const count = await tx.prescription.count({ where: { clinicId } });
-      const prescriptionNumber = `RX-${currentYear}-${String(count + 1).padStart(4, '0')}`;
+      const seq = await this.prisma.nextSequence(clinicId, 'PRESCRIPTION', String(currentYear), tx);
+      const prescriptionNumber = `RX-${currentYear}-${String(seq).padStart(4, '0')}`;
 
       const prescription = await tx.prescription.create({
         data: {
