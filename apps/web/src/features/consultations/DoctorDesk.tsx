@@ -26,6 +26,9 @@ import {
   Archive,
   Bell,
   BellRing,
+  FolderOpen,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { TreatmentPlanManager } from '../treatment-plans/TreatmentPlanManager';
 import { ProcedureLogger } from '../procedures/ProcedureLogger';
@@ -42,10 +45,10 @@ import { useClinicSync, triggerClinicSync } from '../../lib/sync';
 import { useAuth } from '../../hooks/useAuth';
 
 interface DoctorDeskProps {
-  defaultTab?: 'examination' | 'chart' | 'treatmentPlans' | 'procedures' | 'prescriptions' | 'imaging';
+  defaultTab?: 'treatment' | 'chart' | 'prescriptions' | 'records' | 'examination' | 'treatmentPlans' | 'procedures' | 'imaging';
 }
 
-export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examination' }) => {
+export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment' }) => {
   const { user } = useAuth();
   const doctorDisplayName = user?.fullName || 'Attending Doctor';
   const [todayPatients, setTodayPatients] = useState<any[]>([]);
@@ -67,14 +70,19 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
     setQuickSerialInput('');
   };
 
-  // Operatory Tab
+  // Minimalist Operatory Tabs (4 Clean Modes)
   const [operatoryTab, setOperatoryTab] = useState<
-    'examination' | 'chart' | 'treatmentPlans' | 'procedures' | 'prescriptions' | 'imaging'
-  >(defaultTab);
+    'treatment' | 'chart' | 'prescriptions' | 'records'
+  >('treatment');
+  const [showFullPlanManager, setShowFullPlanManager] = useState(false);
+  const [showProcedureLogger, setShowProcedureLogger] = useState(false);
 
   useEffect(() => {
     if (defaultTab) {
-      setOperatoryTab(defaultTab);
+      if (defaultTab === 'chart') setOperatoryTab('chart');
+      else if (defaultTab === 'prescriptions') setOperatoryTab('prescriptions');
+      else if (defaultTab === 'imaging' || defaultTab === 'records') setOperatoryTab('records');
+      else setOperatoryTab('treatment');
     }
   }, [defaultTab]);
 
@@ -729,15 +737,16 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
             </div>
           )}
 
-          {selectedAppt && (
-            <button
-              onClick={() => setInvoiceModalOpen(true)}
-              className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs py-2 px-3.5 rounded-xl shadow-xs transition-all cursor-pointer"
-            >
-              <Receipt className="w-3.5 h-3.5" />
-              Invoice
-            </button>
-          )}
+          {/* Compact Card Lookup (replaces heavy sidebar widget) */}
+          <button
+            type="button"
+            onClick={() => setReconsultModalOpen(true)}
+            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-xs py-2 px-3 rounded-xl shadow-xs transition-all cursor-pointer active:scale-95"
+            title="Card Serial Number Lookup & Re-Consultation"
+          >
+            <Stethoscope className="w-3.5 h-3.5 text-white" />
+            <span>Card Lookup</span>
+          </button>
         </div>
       </div>
 
@@ -913,48 +922,6 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
 
           return (
             <div className="hidden lg:block lg:col-span-4 space-y-4">
-              {/* Quick Serial # Re-Consult Widget */}
-              <div className="p-3 bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 rounded-2xl text-white shadow-xs space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-black text-xs flex items-center gap-1.5">
-                    <Stethoscope className="w-3.5 h-3.5 text-amber-200" />
-                    Card # Re-Consultation
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDigitizeInitialSerial('');
-                      setDigitizeModalOpen(true);
-                    }}
-                    className="text-[10px] font-black bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded-lg transition cursor-pointer"
-                  >
-                    + New Card
-                  </button>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <input
-                    type="text"
-                    value={quickSerialInput}
-                    onChange={e => setQuickSerialInput(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleQuickSerialLookup(quickSerialInput);
-                      }
-                    }}
-                    placeholder="Card Serial Number..."
-                    className="flex-1 bg-white text-slate-900 font-mono font-black text-xs px-2.5 py-1.5 rounded-xl border-0 focus:outline-none placeholder-slate-400"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleQuickSerialLookup(quickSerialInput)}
-                    className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs rounded-xl shadow-xs transition cursor-pointer active:scale-95"
-                  >
-                    Search
-                  </button>
-                </div>
-              </div>
-
               {/* Patient Queue Card */}
               <div className="clinic-card p-4 bg-white border border-slate-200 shadow-xs space-y-3">
                 {/* Header & Tabs */}
@@ -1380,307 +1347,380 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                 </div>
               )}
 
-              {/* Operatory Chairside Treatment Plan Action Bar */}
-              {patientPlans && patientPlans.length > 0 && (() => {
-                const uncompletedItems: any[] = [];
-                patientPlans.forEach(plan => {
-                  (plan.items || []).forEach((item: any) => {
-                    if (item.status !== 'COMPLETED') {
-                      uncompletedItems.push({ ...item, planTitle: plan.title, planId: plan.id });
-                    }
-                  });
-                });
-                if (uncompletedItems.length === 0) return null;
-
-                return (
-                  <div className="clinic-card p-4 bg-gradient-to-r from-teal-50 via-emerald-50 to-teal-50 border border-teal-200 shadow-xs rounded-2xl space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 rounded-lg bg-teal-600 text-white flex items-center justify-center font-black shrink-0">
-                          <ClipboardList className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <h4 className="font-black text-xs sm:text-sm text-teal-950 flex items-center gap-2">
-                            <span>Chairside Treatment Plan</span>
-                            <span className="text-[10px] font-mono bg-teal-200 text-teal-900 px-2 py-0.5 rounded-full font-black">
-                              {uncompletedItems.length} Pending Procedure{uncompletedItems.length > 1 ? 's' : ''}
-                            </span>
-                          </h4>
-                          <p className="text-[11px] text-teal-800 font-medium">
-                            Click <strong className="text-emerald-800">"⚡ Complete in Chair"</strong> to record work; price and item immediately alert the Reception Billing Desk.
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setOperatoryTab('treatmentPlans')}
-                        className="text-xs font-black text-teal-700 hover:text-teal-900 underline cursor-pointer shrink-0"
-                      >
-                        Manage Plans →
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                      {uncompletedItems.map(item => {
-                        const itemFeeRupees = Math.round((item.estimatedCostPaise || 0) / 100);
-                        return (
-                          <div
-                            key={item.id}
-                            className="p-3 bg-white border border-teal-200/90 rounded-xl shadow-2xs flex items-center justify-between gap-2"
-                          >
-                            <div className="min-w-0">
-                              <div className="font-black text-slate-900 text-xs truncate flex items-center gap-1.5">
-                                {item.toothNumber && (
-                                  <span className="font-mono bg-teal-100 text-teal-900 px-1.5 py-0.5 rounded text-[10px] font-black shrink-0">
-                                    #{item.toothNumber}
-                                  </span>
-                                )}
-                                <span className="truncate">{item.procedureName}</span>
-                              </div>
-                              <div className="text-[11px] font-mono font-black text-emerald-700 mt-0.5">
-                                ₹{itemFeeRupees.toLocaleString('en-IN')}
-                              </div>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => handleChairsideCompletePlanItem(item)}
-                              className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] rounded-lg shadow-xs cursor-pointer transition-all flex items-center gap-1 shrink-0"
-                              title="Complete in chair & notify reception billing desk"
-                            >
-                              <Zap className="w-3 h-3 text-amber-300 fill-amber-300" />
-                              <span>Complete (₹{itemFeeRupees})</span>
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Operatory Sub-Tabs - Fully Responsive (Never Cut Off) */}
+              {/* Operatory Sub-Tabs - 4 Clean, Focused Modes */}
               <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-slate-100 rounded-2xl border border-slate-200 mb-4">
                 <button
                   type="button"
-                  onClick={() => setOperatoryTab('examination')}
-                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                    operatoryTab === 'examination'
+                  onClick={() => setOperatoryTab('treatment')}
+                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-4 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                    operatoryTab === 'treatment'
                       ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
                   }`}
                 >
                   <Activity className="w-4 h-4 text-teal-600 shrink-0" />
-                  <span>Clinical Notes</span>
+                  <span>1. Treatment & Notes</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setOperatoryTab('chart')}
-                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-4 rounded-xl text-xs font-black transition-all cursor-pointer ${
                     operatoryTab === 'chart'
                       ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
                   }`}
                 >
                   <Smile className="w-4 h-4 text-teal-600 shrink-0" />
-                  <span>Dental Chart (FDI)</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setOperatoryTab('treatmentPlans')}
-                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                    operatoryTab === 'treatmentPlans'
-                      ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
-                  }`}
-                >
-                  <ClipboardList className="w-4 h-4 text-teal-600 shrink-0" />
-                  <span>Treatment Plans</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setOperatoryTab('procedures')}
-                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                    operatoryTab === 'procedures'
-                      ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
-                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
-                  }`}
-                >
-                  <Stethoscope className="w-4 h-4 text-teal-600 shrink-0" />
-                  <span>Procedures</span>
+                  <span>2. Dental Chart (FDI)</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setOperatoryTab('prescriptions')}
-                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-4 rounded-xl text-xs font-black transition-all cursor-pointer ${
                     operatoryTab === 'prescriptions'
                       ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
                   }`}
                 >
                   <FileText className="w-4 h-4 text-teal-600 shrink-0" />
-                  <span>Prescriptions (℞)</span>
+                  <span>3. Prescriptions (℞)</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => setOperatoryTab('imaging')}
-                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                    operatoryTab === 'imaging'
+                  onClick={() => setOperatoryTab('records')}
+                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-4 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                    operatoryTab === 'records'
                       ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
                   }`}
                 >
-                  <Activity className="w-4 h-4 text-teal-600 shrink-0" />
-                  <span>X-rays & Documents</span>
+                  <FolderOpen className="w-4 h-4 text-teal-600 shrink-0" />
+                  <span>4. X-rays & Records</span>
                 </button>
               </div>
 
-              {/* TAB 1: Clinical Notes & Diagnosis */}
-              {operatoryTab === 'examination' && (
-                <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs space-y-5">
-                  {message && (
-                    <div className="p-3 bg-teal-50 border border-teal-200 text-teal-900 rounded-xl text-xs font-bold flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-teal-600 shrink-0" />
-                      <span>{message}</span>
+              {/* TAB 1: Treatment & Clinical Notes */}
+              {operatoryTab === 'treatment' && (
+                <div className="space-y-4">
+                  {/* Chairside Treatment Plan Items (if any planned items exist) */}
+                  {(() => {
+                    const uncompletedItems: any[] = [];
+                    (patientPlans || []).forEach(plan => {
+                      (plan.items || []).forEach((item: any) => {
+                        if (item.status !== 'COMPLETED') {
+                          uncompletedItems.push({ ...item, planTitle: plan.title, planId: plan.id });
+                        }
+                      });
+                    });
+
+                    return (
+                      <div className="clinic-card p-4 bg-gradient-to-r from-teal-50 via-emerald-50 to-teal-50 border border-teal-200 shadow-xs rounded-2xl space-y-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-xl bg-teal-600 text-white flex items-center justify-center font-black shrink-0 shadow-xs">
+                              <ClipboardList className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h4 className="font-black text-xs sm:text-sm text-teal-950 flex items-center gap-2">
+                                <span>Chairside Treatment Plan</span>
+                                <span className="text-[10px] font-mono bg-teal-200 text-teal-900 px-2 py-0.5 rounded-full font-black">
+                                  {uncompletedItems.length} Pending
+                                </span>
+                              </h4>
+                              <p className="text-[11px] text-teal-800 font-medium">
+                                Click <strong className="text-emerald-800">"⚡ Complete in Chair"</strong> to record work; fees automatically route to Reception Billing Desk.
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setShowFullPlanManager(!showFullPlanManager)}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                                showFullPlanManager
+                                  ? 'bg-teal-700 text-white shadow-xs'
+                                  : 'bg-white text-teal-800 border border-teal-300 hover:bg-teal-100/60'
+                              }`}
+                            >
+                              <ClipboardList className="w-3.5 h-3.5" />
+                              <span>{showFullPlanManager ? 'Hide Plan Editor' : '+ Add / Edit Plans'}</span>
+                              {showFullPlanManager ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setShowProcedureLogger(!showProcedureLogger)}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                                showProcedureLogger
+                                  ? 'bg-slate-800 text-white shadow-xs'
+                                  : 'bg-white text-slate-800 border border-slate-300 hover:bg-slate-100'
+                              }`}
+                            >
+                              <Stethoscope className="w-3.5 h-3.5" />
+                              <span>{showProcedureLogger ? 'Hide Custom Procedures' : '+ Custom Procedure'}</span>
+                              {showProcedureLogger ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        {uncompletedItems.length > 0 ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+                            {uncompletedItems.map(item => {
+                              const itemFeeRupees = Math.round((item.estimatedCostPaise || 0) / 100);
+                              return (
+                                <div
+                                  key={item.id}
+                                  className="p-3 bg-white border border-teal-200/90 rounded-xl shadow-2xs flex items-center justify-between gap-2"
+                                >
+                                  <div className="min-w-0">
+                                    <div className="font-black text-slate-900 text-xs truncate flex items-center gap-1.5">
+                                      {item.toothNumber && (
+                                        <span className="font-mono bg-teal-100 text-teal-900 px-1.5 py-0.5 rounded text-[10px] font-black shrink-0">
+                                          #{item.toothNumber}
+                                        </span>
+                                      )}
+                                      <span className="truncate">{item.procedureName}</span>
+                                    </div>
+                                    <div className="text-[11px] font-mono font-black text-emerald-700 mt-0.5">
+                                      ₹{itemFeeRupees.toLocaleString('en-IN')}
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleChairsideCompletePlanItem(item)}
+                                    className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] rounded-lg shadow-xs cursor-pointer transition-all flex items-center gap-1 shrink-0"
+                                    title="Complete in chair & notify reception billing desk"
+                                  >
+                                    <Zap className="w-3 h-3 text-amber-300 fill-amber-300" />
+                                    <span>Complete (₹{itemFeeRupees})</span>
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="text-center py-2 text-xs font-semibold text-teal-800/80 bg-white/60 rounded-xl border border-teal-100">
+                            No pending procedures in treatment plan. Click <strong className="text-teal-900">"+ Add / Edit Plans"</strong> above to prescribe new procedures, or proceed with standard consultation notes below.
+                          </div>
+                        )}
+
+                        {/* Completed & unbilled items list for today's visit */}
+                        {unbilledProcedures && unbilledProcedures.length > 0 && (
+                          <div className="pt-2 border-t border-teal-200/70 flex flex-wrap items-center gap-2 text-xs font-bold text-teal-950">
+                            <span className="text-[11px] uppercase tracking-wider text-teal-700 font-black">Recorded for Billing:</span>
+                            {unbilledProcedures.map((up, idx) => (
+                              <span
+                                key={idx}
+                                className="bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1"
+                              >
+                                <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                                <span>{up.procedureName || up.name}</span>
+                                <span>(₹{up.feeRupees || Math.round((up.feePaise || up.estimatedCostPaise || 0) / 100)})</span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Expandable Treatment Plan Manager Drawer */}
+                  {showFullPlanManager && (
+                    <div className="clinic-card p-5 bg-white border-2 border-teal-500 rounded-2xl shadow-md space-y-3">
+                      <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+                        <div className="flex items-center gap-2">
+                          <ClipboardList className="w-5 h-5 text-teal-700" />
+                          <h4 className="font-black text-sm text-slate-900">Patient Treatment Plan Manager</h4>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowFullPlanManager(false)}
+                          className="px-2.5 py-1 text-xs font-black text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+                        >
+                          ✕ Close Manager
+                        </button>
+                      </div>
+                      <TreatmentPlanManager
+                        patientId={selectedAppt.patientId}
+                        patientName={selectedAppt.patientName}
+                        consultationId={consultationId || undefined}
+                        readOnly={false}
+                      />
                     </div>
                   )}
 
-                  <div className="space-y-4 text-xs">
-                    <div>
-                      <label className="block font-black text-slate-800 uppercase tracking-wider mb-1.5 text-xs">
-                        Chief Complaint <span className="text-rose-500">*</span>
-                      </label>
-                      <textarea
-                        rows={2}
-                        disabled={isFinalized}
-                        value={chiefComplaint}
-                        onChange={e => setChiefComplaint(e.target.value)}
-                        placeholder="e.g. Pain in lower right jaw for past 3 days..."
-                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-900 font-semibold focus:outline-none focus:border-teal-600 focus:bg-white disabled:bg-slate-100"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block font-black text-slate-800 uppercase tracking-wider mb-1.5 text-xs">
-                          Clinical Findings
-                        </label>
-                        <textarea
-                          rows={3}
-                          disabled={isFinalized}
-                          value={clinicalExamination}
-                          onChange={e => setClinicalExamination(e.target.value)}
-                          placeholder="e.g. Deep cavity on #46, tenderness to percussion..."
-                          className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-900 font-semibold focus:outline-none focus:border-teal-600 focus:bg-white disabled:bg-slate-100"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block font-black text-slate-800 uppercase tracking-wider mb-1.5 text-xs">
-                          Diagnosis
-                        </label>
-                        <textarea
-                          rows={3}
-                          disabled={isFinalized}
-                          value={diagnosis}
-                          onChange={e => setDiagnosis(e.target.value)}
-                          placeholder="e.g. Irreversible Pulpitis #46..."
-                          className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-900 font-semibold focus:outline-none focus:border-teal-600 focus:bg-white disabled:bg-slate-100"
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <SpeechToTextDictation
-                        value={clinicalNotes}
-                        onChange={setClinicalNotes}
-                        label="Treatment Notes & Plan (Voice Dictation to Text)"
-                        placeholder="e.g. Advised Root Canal Treatment and Crown. Speak or type here..."
-                        helperText="Converts your voice speech directly to text in real time. No audio files are saved."
-                        minRows={3}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="pt-4 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      {!isFinalized ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={handleSaveConsultation}
-                            disabled={saving}
-                            className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-black text-xs py-2 px-4 rounded-xl border border-slate-300 transition-all cursor-pointer"
-                          >
-                            <Save className="w-3.5 h-3.5" />
-                            {saving ? 'Saving...' : 'Save Notes'}
-                          </button>
-
-                          {consultationId && (
-                            <button
-                              type="button"
-                              onClick={handleFinalizeConsultation}
-                              disabled={saving}
-                              className="flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white font-black text-xs py-2 px-4 rounded-xl shadow-xs transition-all cursor-pointer"
-                            >
-                              <Lock className="w-3.5 h-3.5" />
-                              Finalize Consultation
-                            </button>
-                          )}
-                        </>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setAmendedDiagnosis(diagnosis);
-                            setAmendedNotes(clinicalNotes);
-                            setShowAmendModal(true);
-                          }}
-                          className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-black text-xs py-2 px-4 rounded-xl shadow-xs transition-all cursor-pointer"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                          Edit Record
-                        </button>
-                      )}
-                    </div>
-
-                    {selectedAppt.status !== 'COMPLETED' ? (
-                      <button
-                        type="button"
-                        disabled={submittingCheckout || saving}
-                        onClick={handleDoctorCompleteVisit}
-                        className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-xs py-2.5 px-4 rounded-xl shadow-sm transition-all cursor-pointer active:scale-95"
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>{submittingCheckout ? 'Finalizing...' : '✅ Finish Treatment & Send to Reception'}</span>
-                      </button>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-black text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                          Sent to Billing Desk
-                        </span>
+                  {/* Expandable Custom Procedure Logger Drawer */}
+                  {showProcedureLogger && (
+                    <div className="clinic-card p-5 bg-white border-2 border-slate-700 rounded-2xl shadow-md space-y-3">
+                      <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+                        <div className="flex items-center gap-2">
+                          <Stethoscope className="w-5 h-5 text-slate-800" />
+                          <h4 className="font-black text-sm text-slate-900">Custom Procedure Logger</h4>
+                        </div>
                         <button
                           type="button"
-                          onClick={clearChairScreen}
-                          className="px-3.5 py-2 rounded-xl text-xs font-black bg-slate-900 hover:bg-slate-800 text-white transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                          onClick={() => setShowProcedureLogger(false)}
+                          className="px-2.5 py-1 text-xs font-black text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
                         >
-                          <Armchair className="w-3.5 h-3.5" />
-                          <span>Close & Ready Chair</span>
+                          ✕ Close Logger
                         </button>
                       </div>
+                      <ProcedureLogger
+                        patientId={selectedAppt.patientId}
+                        consultationId={consultationId || undefined}
+                        readOnly={false}
+                        onOpenBillingWithProcedures={() => setInvoiceModalOpen(true)}
+                      />
+                    </div>
+                  )}
+
+                  {/* Clinical Examination & Notes Card */}
+                  <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs space-y-5 rounded-2xl">
+                    {message && (
+                      <div className="p-3 bg-teal-50 border border-teal-200 text-teal-900 rounded-xl text-xs font-bold flex items-center gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-teal-600 shrink-0" />
+                        <span>{message}</span>
+                      </div>
                     )}
+
+                    <div className="space-y-4 text-xs">
+                      <div>
+                        <label className="block font-black text-slate-800 uppercase tracking-wider mb-1.5 text-xs">
+                          Chief Complaint <span className="text-rose-500">*</span>
+                        </label>
+                        <textarea
+                          rows={2}
+                          disabled={isFinalized}
+                          value={chiefComplaint}
+                          onChange={e => setChiefComplaint(e.target.value)}
+                          placeholder="e.g. Pain in lower right jaw for past 3 days..."
+                          className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-900 font-semibold focus:outline-none focus:border-teal-600 focus:bg-white disabled:bg-slate-100"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block font-black text-slate-800 uppercase tracking-wider mb-1.5 text-xs">
+                            Clinical Findings
+                          </label>
+                          <textarea
+                            rows={3}
+                            disabled={isFinalized}
+                            value={clinicalExamination}
+                            onChange={e => setClinicalExamination(e.target.value)}
+                            placeholder="e.g. Deep cavity on #46, tenderness to percussion..."
+                            className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-900 font-semibold focus:outline-none focus:border-teal-600 focus:bg-white disabled:bg-slate-100"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block font-black text-slate-800 uppercase tracking-wider mb-1.5 text-xs">
+                            Diagnosis
+                          </label>
+                          <textarea
+                            rows={3}
+                            disabled={isFinalized}
+                            value={diagnosis}
+                            onChange={e => setDiagnosis(e.target.value)}
+                            placeholder="e.g. Irreversible Pulpitis #46..."
+                            className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-900 font-semibold focus:outline-none focus:border-teal-600 focus:bg-white disabled:bg-slate-100"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <SpeechToTextDictation
+                          value={clinicalNotes}
+                          onChange={setClinicalNotes}
+                          label="Treatment Notes & Plan (Voice Dictation to Text)"
+                          placeholder="e.g. Advised Root Canal Treatment and Crown. Speak or type here..."
+                          helperText="Converts your voice speech directly to text in real time. No audio files are saved."
+                          minRows={3}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="pt-4 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        {!isFinalized ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={handleSaveConsultation}
+                              disabled={saving}
+                              className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-black text-xs py-2 px-4 rounded-xl border border-slate-300 transition-all cursor-pointer"
+                            >
+                              <Save className="w-3.5 h-3.5" />
+                              {saving ? 'Saving...' : 'Save Notes'}
+                            </button>
+
+                            {consultationId && (
+                              <button
+                                type="button"
+                                onClick={handleFinalizeConsultation}
+                                disabled={saving}
+                                className="flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white font-black text-xs py-2 px-4 rounded-xl shadow-xs transition-all cursor-pointer"
+                              >
+                                <Lock className="w-3.5 h-3.5" />
+                                Finalize Consultation
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAmendedDiagnosis(diagnosis);
+                              setAmendedNotes(clinicalNotes);
+                              setShowAmendModal(true);
+                            }}
+                            className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-black text-xs py-2 px-4 rounded-xl shadow-xs transition-all cursor-pointer"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                            Edit Record
+                          </button>
+                        )}
+                      </div>
+
+                      {selectedAppt.status !== 'COMPLETED' ? (
+                        <button
+                          type="button"
+                          disabled={submittingCheckout || saving}
+                          onClick={handleDoctorCompleteVisit}
+                          className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-xs py-2.5 px-4 rounded-xl shadow-sm transition-all cursor-pointer active:scale-95"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>{submittingCheckout ? 'Finalizing...' : '✅ Finish Treatment & Send to Reception'}</span>
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            Sent to Billing Desk
+                          </span>
+                          <button
+                            type="button"
+                            onClick={clearChairScreen}
+                            className="px-3.5 py-2 rounded-xl text-xs font-black bg-slate-900 hover:bg-slate-800 text-white transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+                          >
+                            <Armchair className="w-3.5 h-3.5" />
+                            <span>Close & Ready Chair</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
 
-              {/* TAB: Dental Chart (FDI Odontogram) */}
+              {/* TAB 2: Dental Chart (FDI Odontogram) */}
               {operatoryTab === 'chart' && (
-                <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs">
+                <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs rounded-2xl">
                   <FdiDentalChart
                     patientId={selectedAppt.patientId}
                     consultationId={consultationId || undefined}
@@ -1689,33 +1729,9 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                 </div>
               )}
 
-              {/* TAB 2: Treatment Plans */}
-              {operatoryTab === 'treatmentPlans' && (
-                <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs">
-                  <TreatmentPlanManager
-                    patientId={selectedAppt.patientId}
-                    patientName={selectedAppt.patientName}
-                    consultationId={consultationId || undefined}
-                    readOnly={false}
-                  />
-                </div>
-              )}
-
-              {/* TAB 4: Procedures */}
-              {operatoryTab === 'procedures' && (
-                <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs">
-                  <ProcedureLogger
-                    patientId={selectedAppt.patientId}
-                    consultationId={consultationId || undefined}
-                    readOnly={false}
-                    onOpenBillingWithProcedures={() => setInvoiceModalOpen(true)}
-                  />
-                </div>
-              )}
-
-              {/* TAB 5: Prescriptions (Rx) */}
+              {/* TAB 3: Prescriptions (Rx) */}
               {operatoryTab === 'prescriptions' && (
-                <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs">
+                <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs rounded-2xl">
                   <PrescriptionDesk
                     patientId={selectedAppt.patientId}
                     consultationId={consultationId || undefined}
@@ -1724,9 +1740,9 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                 </div>
               )}
 
-              {/* TAB: X-rays & Documents */}
-              {operatoryTab === 'imaging' && (
-                <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs">
+              {/* TAB 4: X-rays & Documents */}
+              {operatoryTab === 'records' && (
+                <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs rounded-2xl">
                   <MedicalFilesGallery
                     patientId={selectedAppt.patientId}
                     patientName={selectedAppt.patientName}
