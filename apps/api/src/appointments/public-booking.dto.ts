@@ -110,6 +110,16 @@ export class PublicCheckInDto {
   @IsNotEmpty()
   identifier: string;
 
+  @ApiPropertyOptional({ example: '9876543210', description: 'Patient contact mobile number' })
+  @IsOptional()
+  @IsString()
+  patientPhone?: string;
+
+  @ApiPropertyOptional({ example: 'AKS-2026-A1B2', description: 'Booking reference code' })
+  @IsOptional()
+  @IsString()
+  bookingReference?: string;
+
   @ApiPropertyOptional({ example: 'A8B2C1', description: 'Daily rotating lobby Standee QR verification salt code' })
   @IsOptional()
   @IsString()

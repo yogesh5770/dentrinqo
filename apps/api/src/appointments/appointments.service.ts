@@ -2289,9 +2289,12 @@ export class AppointmentsService {
         where: { code: maybeClinicCode.toUpperCase() },
       });
     }
-    if (!clinic && dto.bookingReference && dto.bookingReference.includes('-')) {
-      const codePrefix = dto.bookingReference.split('-')[0].toUpperCase();
-      clinic = await this.prisma.clinic.findFirst({ where: { code: codePrefix } });
+    if (!clinic) {
+      const rawIdent = (dto.identifier || dto.bookingReference || '').trim();
+      if (rawIdent.includes('-')) {
+        const prefix = rawIdent.split('-')[0].toUpperCase();
+        clinic = await this.prisma.clinic.findFirst({ where: { code: prefix } });
+      }
     }
     if (!clinic) {
       const cleanIdent = (dto.identifier || dto.phone || '').trim();
@@ -2299,7 +2302,7 @@ export class AppointmentsService {
         const matchingAppt = await this.prisma.appointment.findFirst({
           where: {
             OR: [
-              { patient: { phone: cleanIdent } },
+              { patient: { phone: { contains: cleanIdent } } },
               { patient: { uhid: cleanIdent } },
             ],
           },
@@ -2311,7 +2314,7 @@ export class AppointmentsService {
       }
     }
     if (!clinic) {
-      throw new BadRequestException('Dental clinic could not be resolved from host context.');
+      throw new BadRequestException('Dental clinic could not be resolved from host context or QR scan.');
     }
     // Unified assertOpen check (Requirement 1, 3: Self check-in allowed only inside working hours)
     await this.clinicHoursService.assertOpen(
@@ -2340,18 +2343,19 @@ export class AppointmentsService {
     }
 
     return this.prisma.forTenant(clinic.id, async (tx) => {
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const todayEnd = new Date();
-      todayEnd.setHours(23, 59, 59, 999);
+      const now = new Date();
+      const { dateStr: istDateStr, start: todayStart, end: todayEnd } = this.getKolkataDayBounds(now);
 
       let appt: any = null;
-      const clean = (dto.identifier || dto.phone || '').trim();
-      const bookingRef = (dto.bookingReference || '').trim();
+      const cleanIdent = (dto.identifier || dto.phone || dto.bookingReference || '').trim();
+      const patientPhone = (dto.patientPhone || '').trim().replace(/\D/g, '').slice(-10);
       const patientName = (dto.patientName || dto.fullName || '').trim().toLowerCase();
 
-      if (bookingRef) {
-        const parts = bookingRef.split('-');
+      // Check if identifier is a Booking Reference (e.g. AKS-2026-A1B2 or contains '-' or alphanumeric short code)
+      const isBookingRef = cleanIdent.includes('-') || (cleanIdent.length <= 8 && !/^\d{10}$/.test(cleanIdent));
+
+      if (isBookingRef) {
+        const parts = cleanIdent.split('-');
         const shortId = parts[parts.length - 1].toLowerCase();
         const allRecent = await tx.appointment.findMany({
           where: {
@@ -2369,11 +2373,18 @@ export class AppointmentsService {
           a.id.replace(/-/g, '').toLowerCase().startsWith(shortId) ||
           a.id.toLowerCase().includes(shortId)
         );
+
+        if (appt && patientPhone && !appt.patient.phone.replace(/\D/g, '').endsWith(patientPhone)) {
+          throw new BadRequestException('The mobile number provided does not match this booking reference.');
+        }
       }
 
-      if (!appt && clean) {
-        const phoneTail = clean.replace(/\D/g, '').slice(-10);
-        if (phoneTail.length >= 10) {
+      // If not resolved by booking ref, search by phone number or UHID
+      if (!appt && cleanIdent) {
+        const digits = cleanIdent.replace(/\D/g, '');
+        const phoneTail = digits.length >= 10 ? digits.slice(-10) : patientPhone;
+
+        if (phoneTail && phoneTail.length >= 10) {
           const candidates = await tx.appointment.findMany({
             where: {
               clinicId: clinic.id,
@@ -2403,6 +2414,21 @@ export class AppointmentsService {
               throw new BadRequestException(`No appointment matching name "${dto.patientName}" found on this mobile number.`);
             }
           }
+        } else if (cleanIdent.includes('UHID') || cleanIdent.startsWith(clinic.code)) {
+          appt = await tx.appointment.findFirst({
+            where: {
+              clinicId: clinic.id,
+              patient: { uhid: cleanIdent },
+              scheduledStart: { gte: todayStart, lte: todayEnd },
+              status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+            },
+            orderBy: { scheduledStart: 'asc' },
+            include: {
+              patient: true,
+              dentist: { select: { fullName: true } },
+              clinic: { select: { name: true, address: true, phone: true, code: true, requireDeskConfirmation: true } },
+            },
+          });
         }
       }
 
@@ -2419,14 +2445,66 @@ export class AppointmentsService {
         throw new BadRequestException('This appointment was cancelled. Please register with the reception desk.');
       }
 
+      // Early / Late Arrival Business Rules
+      const scheduledTime = new Date(appt.scheduledStart).getTime();
+      const currentTime = now.getTime();
+      const diffMinutes = Math.round((currentTime - scheduledTime) / (60 * 1000));
+      const maxLate = clinic.maxLateMinutes ?? 45;
+      const maxEarlyMinutes = 120; // 2 hours early window
+
       const isAlreadyCheckedIn = appt.status === 'CHECKED_IN' || appt.status === 'CALLED' || appt.status === 'IN_CHAIR';
 
-      let finalAppt = appt;
-      let tokenNumber = appt.tokenNumber;
+      if (!isAlreadyCheckedIn) {
+        if (diffMinutes < -maxEarlyMinutes) {
+          const earlyTimeStr = new Intl.DateTimeFormat('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+          }).format(new Date(appt.scheduledStart));
+          throw new BadRequestException(
+            `Your appointment is scheduled for ${earlyTimeStr}. Self check-in opens 2 hours prior to your scheduled time. Please check in closer to your appointment or speak with the reception desk.`,
+          );
+        }
 
-      if (!isAlreadyCheckedIn || !tokenNumber) {
+        if (diffMinutes > maxLate) {
+          throw new BadRequestException(
+            `You have arrived ${diffMinutes} minutes past your scheduled appointment time (Clinic late check-in limit is ${maxLate} minutes). Please proceed to the reception desk to be accommodated in the walk-in queue.`,
+          );
+        }
+      }
+
+      // Lock row to serialize concurrent check-ins for the same appointment
+      if (typeof tx.$executeRaw === 'function') {
+        try {
+          await tx.$executeRaw`SELECT id FROM "Appointment" WHERE id = ${appt.id} FOR UPDATE`;
+        } catch {
+          // Continue if database or mock does not support raw locking
+        }
+      }
+
+      // Re-fetch current state of appointment after acquiring the lock
+      const lockedAppt = typeof tx.appointment.findUnique === 'function'
+        ? (await tx.appointment.findUnique({
+            where: { id: appt.id },
+            include: {
+              patient: true,
+              dentist: { select: { fullName: true } },
+              clinic: { select: { name: true, address: true, phone: true, code: true, requireDeskConfirmation: true } },
+            },
+          })) || appt
+        : appt;
+
+      if (!lockedAppt) {
+        throw new NotFoundException('Appointment record could not be re-verified.');
+      }
+
+      const isLockedAlreadyCheckedIn = lockedAppt.status === 'CHECKED_IN' || lockedAppt.status === 'CALLED' || lockedAppt.status === 'IN_CHAIR';
+      let finalAppt = lockedAppt;
+      let tokenNumber = lockedAppt.tokenNumber;
+
+      if (!isLockedAlreadyCheckedIn || !tokenNumber) {
         if (!tokenNumber) {
-          const istDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
           const seqRecord = await tx.dailyQueueSequence.upsert({
             where: { clinicId_dateString: { clinicId: clinic.id, dateString: istDateStr } },
             update: { lastSequence: { increment: 1 } },
@@ -2435,15 +2513,19 @@ export class AppointmentsService {
           tokenNumber = seqRecord.lastSequence;
         }
 
+        const isSlightlyLate = diffMinutes > 5 && diffMinutes <= maxLate;
+        const arrivalNote = isSlightlyLate ? `[LATE ARRIVAL: ${diffMinutes} mins past start]` : '';
+        const deskNote = `[CHECK-IN: SELF_QR | ${clinic.requireDeskConfirmation ? 'Desk Confirmation Pending' : 'Confirmed'}]`;
+
         finalAppt = await tx.appointment.update({
           where: { id: appt.id },
           data: {
             status: 'CHECKED_IN',
             tokenNumber,
-            checkInTime: appt.checkInTime || new Date(),
+            checkInTime: lockedAppt.checkInTime || now,
             isConfirmedAtDesk: clinic.requireDeskConfirmation ? false : true,
             checkInSource: 'SELF_QR',
-            notes: [appt.notes, `[CHECK-IN: SELF_QR | ${clinic.requireDeskConfirmation ? 'Desk Confirmation Pending' : 'Confirmed'}]`].filter(Boolean).join('\n'),
+            notes: [lockedAppt.notes, deskNote, arrivalNote].filter(Boolean).join('\n'),
           },
           include: {
             patient: true,
@@ -2466,7 +2548,7 @@ export class AppointmentsService {
 
       const ref = `${finalAppt.clinic?.code || 'CLINIC'}-${new Date(finalAppt.createdAt).getFullYear()}-${finalAppt.id.replace(/-/g, '').substring(0, 5).toUpperCase()}`;
 
-      if (!isAlreadyCheckedIn) {
+      if (!isLockedAlreadyCheckedIn) {
         await this.auditService.log({
           clinicId: finalAppt.clinicId,
           actorId: finalAppt.patientId,
@@ -2507,7 +2589,7 @@ export class AppointmentsService {
 
       return {
         success: true,
-        alreadyCheckedIn: isAlreadyCheckedIn,
+        alreadyCheckedIn: isLockedAlreadyCheckedIn,
         status: finalAppt.status,
         reference: ref,
         tokenNumber,
@@ -2521,11 +2603,11 @@ export class AppointmentsService {
         dentistName: finalAppt.dentist?.fullName || 'Assigned Duty Doctor',
         chairNumber: finalAppt.chairNumber || 1,
         scheduledStart: finalAppt.scheduledStart,
-        checkInTime: finalAppt.checkInTime || new Date(),
+        checkInTime: finalAppt.checkInTime || now,
         clinicName: finalAppt.clinic?.name || 'Dental Clinic',
         clinicAddress: finalAppt.clinic?.address || '',
         clinicPhone: finalAppt.clinic?.phone || '',
-        message: isAlreadyCheckedIn
+        message: isLockedAlreadyCheckedIn
           ? `You are already checked in! Your Token is #${tokenNumber}. Please take a seat in the waiting lobby.`
           : `Check-in successful! Your Token is #${tokenNumber}. Please take a seat in the waiting lobby.`,
       };
@@ -2542,7 +2624,7 @@ export class AppointmentsService {
       );
     }
 
-    // 2. Resolve Clinic
+    // 2. Resolve Clinic Fail-Closed
     let clinic: any = null;
     if (hostClinicId) {
       clinic = await this.prisma.clinic.findUnique({ where: { id: hostClinicId } });
@@ -2551,9 +2633,6 @@ export class AppointmentsService {
       clinic = await this.prisma.clinic.findFirst({
         where: { code: dto.clinicCode.toUpperCase() },
       });
-    }
-    if (!clinic) {
-      clinic = await this.prisma.clinic.findFirst();
     }
     if (!clinic) {
       throw new BadRequestException('Dental clinic could not be resolved from host context.');
@@ -2618,6 +2697,60 @@ export class AppointmentsService {
         (p: any) => p.fullName.trim().toLowerCase() === patientName.toLowerCase(),
       );
 
+      const now = new Date();
+      const { dateStr: istDateStr, start: todayStart, end: todayEnd } = this.getKolkataDayBounds(now);
+
+      // Idempotency: If patient already exists and has an active checked-in appointment today, return existing token
+      if (patient) {
+        const existingActiveAppt = await tx.appointment.findFirst({
+          where: {
+            clinicId: clinic.id,
+            patientId: patient.id,
+            scheduledStart: { gte: todayStart, lte: todayEnd },
+            status: { in: ['CHECKED_IN', 'CALLED', 'IN_CHAIR'] },
+          },
+          include: {
+            dentist: { select: { fullName: true } },
+          },
+        });
+
+        if (existingActiveAppt && existingActiveAppt.tokenNumber) {
+          const waitingAhead = await tx.appointment.count({
+            where: {
+              clinicId: clinic.id,
+              status: 'CHECKED_IN',
+              scheduledStart: { gte: todayStart, lte: todayEnd },
+              tokenNumber: { lt: existingActiveAppt.tokenNumber },
+            },
+          });
+
+          const shortId = existingActiveAppt.id.replace(/-/g, '').substring(0, 5).toUpperCase();
+          const reference = `${clinic.code}-${now.getFullYear()}-${shortId}`;
+
+          return {
+            success: true,
+            alreadyCheckedIn: true,
+            reference,
+            tokenNumber: existingActiveAppt.tokenNumber,
+            trackingCode: existingActiveAppt.trackingCode,
+            trackingUrl: existingActiveAppt.trackingCode ? `/track/${existingActiveAppt.trackingCode}` : undefined,
+            chairNumber: existingActiveAppt.chairNumber || 1,
+            currentlyAhead: waitingAhead,
+            patientsAhead: waitingAhead,
+            activeChairsServing: [],
+            dentistName: existingActiveAppt.dentist?.fullName || 'Assigned Duty Doctor',
+            patientName: patient.fullName,
+            status: existingActiveAppt.status,
+            isConfirmedAtDesk: true,
+            appointmentId: existingActiveAppt.id,
+            clinicName: clinic.name,
+            clinicPhone: clinic.phone,
+            clinicAddress: clinic.address,
+            message: `Welcome back to ${clinic.name}! You are already registered and checked in. Your Token is #${existingActiveAppt.tokenNumber}. Please take a seat in the waiting lobby.`,
+          };
+        }
+      }
+
       if (!patient) {
         const year = new Date().getFullYear();
         const seq = await this.prisma.nextSequence(clinic.id, 'UHID', String(year), tx);
@@ -2660,8 +2793,6 @@ export class AppointmentsService {
       }
 
       // Step C: Atomic Daily Queue Sequence in Asia/Kolkata
-      const now = new Date();
-      const { dateStr: istDateStr, start: todayStart, end: todayEnd } = this.getKolkataDayBounds(now);
       const seqRecord = await tx.dailyQueueSequence.upsert({
         where: {
           clinicId_dateString: {
