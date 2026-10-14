@@ -3,11 +3,24 @@ import { useEffect, useRef } from 'react';
 export interface ClinicSyncEvent {
   reason?: string;
   payload?: any;
+  clinicId?: string;
   timestamp: number;
 }
 
 type SyncListener = (event?: ClinicSyncEvent) => void;
 const listeners = new Set<SyncListener>();
+
+export const getCurrentClinicId = (): string | undefined => {
+  if (typeof window === 'undefined') return undefined;
+  try {
+    const cached = sessionStorage.getItem(`clinic_cache_${window.location.host}`);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed?.id) return parsed.id;
+    }
+  } catch {}
+  return undefined;
+};
 
 let broadcastChannel: BroadcastChannel | null = null;
 try {
@@ -15,6 +28,11 @@ try {
     broadcastChannel = new BroadcastChannel('dental_clinic_sync');
     broadcastChannel.onmessage = (ev) => {
       const data: ClinicSyncEvent = ev.data || { timestamp: Date.now() };
+      const currentClinicId = getCurrentClinicId();
+      // Multi-tenant isolation: strictly ignore sync events from a different clinic
+      if (data.clinicId && currentClinicId && data.clinicId !== currentClinicId) {
+        return;
+      }
       listeners.forEach(fn => {
         try {
           fn(data);
@@ -126,12 +144,14 @@ export const playPatientTurnBeeper = () => {
 /**
  * Triggers an instant update across all views and open browser tabs/windows
  */
-export const triggerClinicSync = (reason?: string, payload?: any) => {
+export const triggerClinicSync = (reason?: string, payload?: any, clinicId?: string) => {
   if (typeof window === 'undefined') return;
 
+  const resolvedClinicId = clinicId || getCurrentClinicId();
   const eventData: ClinicSyncEvent = {
     reason,
     payload,
+    clinicId: resolvedClinicId,
     timestamp: Date.now(),
   };
 
@@ -158,6 +178,7 @@ export const triggerClinicSync = (reason?: string, payload?: any) => {
 interface UseClinicSyncOptions {
   intervalMs?: number; // Background polling interval (default 8000ms = 8s)
   enablePolling?: boolean;
+  clinicId?: string;
 }
 
 /**
@@ -172,12 +193,17 @@ export const useClinicSync = (
   refreshFn: (event?: ClinicSyncEvent) => void | Promise<any>,
   options: UseClinicSyncOptions = {}
 ) => {
-  const { intervalMs = 8000, enablePolling = true } = options;
+  const { intervalMs = 8000, enablePolling = true, clinicId: targetClinicId } = options;
   const fnRef = useRef(refreshFn);
   fnRef.current = refreshFn;
 
   useEffect(() => {
     const handler = (ev?: ClinicSyncEvent) => {
+      const activeClinicId = targetClinicId || getCurrentClinicId();
+      // If event has clinicId and local window has clinicId, filter out mismatched events
+      if (ev?.clinicId && activeClinicId && ev.clinicId !== activeClinicId) {
+        return;
+      }
       fnRef.current(ev);
     };
 

@@ -49,6 +49,24 @@ async function bootstrap() {
         return callback(null, true);
       }
 
+      // Allow trusted tenant domains, DuckDNS staging domains, and direct server IPs
+      try {
+        const parsed = new URL(origin);
+        const host = parsed.hostname.toLowerCase();
+        if (
+          host === 'localhost' ||
+          host === '127.0.0.1' ||
+          host.endsWith('.duckdns.org') ||
+          host.endsWith('.elitedental.in') ||
+          host.endsWith('.dentrinqo.com') ||
+          /^(\d{1,3}\.){3}\d{1,3}$/.test(host)
+        ) {
+          return callback(null, true);
+        }
+      } catch {
+        // Invalid origin URL format
+      }
+
       // Reject untrusted origin with an error - never reflect arbitrary origins
       logger.warn(`Rejected unauthorized CORS request from origin: ${origin}`);
       return callback(new Error(`CORS policy violation: Origin '${origin}' is not in trusted allowlist`), false);
@@ -73,8 +91,8 @@ async function bootstrap() {
 
   // Swagger OpenAPI Documentation
   const config = new DocumentBuilder()
-    .setTitle("AK's Elite Dental Clinic API")
-    .setDescription('Mission-critical Dental Clinic Management System API for Aks Elite Dental Clinic, Madurai')
+    .setTitle('Dentrinqo Multi-Tenant Dental Cloud API')
+    .setDescription('Mission-critical Multi-Tenant Dental Healthcare Management System API')
     .setVersion('1.0.0')
     .addTag('Authentication')
     .addTag('Patient Management')
