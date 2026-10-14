@@ -2176,14 +2176,14 @@ export class AppointmentsService {
       );
     }
 
-    // 3. Rotating HMAC Lobby Code Verification
-    if (clinic.requireLobbyCode) {
-      const codeCandidate = dto.lobbyCode ? String(dto.lobbyCode).trim() : '';
+    // 3. Optional Rotating HMAC Lobby Code Verification (If code provided)
+    if (clinic.requireLobbyCode && dto.lobbyCode) {
+      const codeCandidate = String(dto.lobbyCode).trim();
       const isValid = this.verifyRotatingLobbyCode(clinic, codeCandidate);
       if (!isValid) {
         this.recordFailedLobbyAttempt(ip, clinic.id);
         throw new BadRequestException(
-          `Invalid or expired lobby code. Please enter the ${clinic.lobbyCodeDigits || 4}-digit code currently displayed on the waiting room TV or reception screen.`,
+          `Invalid or expired lobby code. Please check with reception.`,
         );
       }
     }
@@ -2416,14 +2416,14 @@ export class AppointmentsService {
       );
     }
 
-    // 4. Rotating HMAC Lobby Code Verification
-    if (clinic.requireLobbyCode) {
-      const codeCandidate = dto.lobbyCode ? String(dto.lobbyCode).trim() : '';
+    // 4. Optional Rotating HMAC Lobby Code Verification (If code provided)
+    if (clinic.requireLobbyCode && dto.lobbyCode) {
+      const codeCandidate = String(dto.lobbyCode).trim();
       const isValid = this.verifyRotatingLobbyCode(clinic, codeCandidate);
       if (!isValid) {
         this.recordFailedLobbyAttempt(ip, clinic.id);
         throw new BadRequestException(
-          `Invalid or expired lobby code. Please enter the ${clinic.lobbyCodeDigits || 4}-digit code currently displayed on the waiting room TV or reception screen.`,
+          `Invalid or expired lobby code. Please check with reception.`,
         );
       }
     }

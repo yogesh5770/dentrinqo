@@ -61,7 +61,6 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
   const initialRef = searchParams.get('ref') || '';
   const [phone, setPhone] = useState(initialPhone);
   const [bookingRefOrName, setBookingRefOrName] = useState(initialRef);
-  const [lobbyCode, setLobbyCode] = useState('');
 
   // Form State for Walk-In Patients
   const [walkinName, setWalkinName] = useState('');
@@ -69,7 +68,6 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
   const [walkinAge, setWalkinAge] = useState('');
   const [walkinGender, setWalkinGender] = useState<'MALE' | 'FEMALE' | 'OTHER'>('MALE');
   const [walkinComplaint, setWalkinComplaint] = useState('Toothache / Dental Consultation');
-  const [walkinLobbyCode, setWalkinLobbyCode] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -145,7 +143,6 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
     e.preventDefault();
     const cleanPhone = phone.trim().replace(/\D/g, '');
     const cleanRefOrName = bookingRefOrName.trim();
-    const cleanCode = lobbyCode.trim();
 
     if (!cleanPhone || cleanPhone.length < 10) {
       setError('Please enter your valid 10-digit mobile number.');
@@ -154,11 +151,6 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
 
     if (!cleanRefOrName) {
       setError('Please enter your Booking Reference (e.g. AKS-...) OR your registered Full Name.');
-      return;
-    }
-
-    if (!cleanCode) {
-      setError('Please enter the Check-In Code displayed on the Waiting Room TV or reception counter.');
       return;
     }
 
@@ -184,7 +176,6 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
           patientPhone: cleanPhone,
           patientName: patientNameParam,
           clinicCode: activeClinicCode,
-          lobbyCode: cleanCode,
         }),
       });
 
@@ -227,7 +218,6 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
     e.preventDefault();
     const cleanName = walkinName.trim();
     const cleanPhone = walkinPhone.trim().replace(/\D/g, '');
-    const cleanCode = walkinLobbyCode.trim();
 
     if (!cleanName) {
       setError('Please enter your full name.');
@@ -235,10 +225,6 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
     }
     if (!cleanPhone || cleanPhone.length < 10) {
       setError('Please enter your 10-digit mobile number.');
-      return;
-    }
-    if (!cleanCode) {
-      setError('Please enter the Check-In Code displayed on the Waiting Room TV or reception counter.');
       return;
     }
 
@@ -259,9 +245,8 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
           patientPhone: cleanPhone,
           age: walkinAge ? parseInt(walkinAge, 10) : undefined,
           gender: walkinGender,
-          reason: `[WALK-IN] ${walkinComplaint}`,
+          reason: walkinComplaint ? `[WALK-IN] ${walkinComplaint}` : '[WALK-IN] Consultation',
           clinicCode: activeClinicCode,
-          lobbyCode: cleanCode,
           isWalkIn: true,
         }),
       });
@@ -342,7 +327,7 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
               Welcome to the Hospital! Confirm Your Arrival
             </h2>
             <p className="text-xs text-teal-100/90 leading-relaxed font-medium">
-              Check in with the rotating code shown on the waiting room TV or reception counter to receive your live queue token.
+              Confirm your booked appointment or register as a walk-in to receive your live queue token immediately.
             </p>
           </div>
         </div>
@@ -492,34 +477,6 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
                   </p>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-black uppercase tracking-wider text-slate-700 mb-1.5 flex items-center justify-between">
-                    <span>3. On-Screen Lobby Code</span>
-                    <span className="text-[10px] text-amber-700 font-bold normal-case flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      <span>Shown on Waiting Room TV</span>
-                    </span>
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={lobbyCode}
-                      onChange={(e) => {
-                        setLobbyCode(e.target.value.replace(/[^0-9A-Za-z]/g, '').toUpperCase());
-                        setError(null);
-                      }}
-                      placeholder="e.g. 8429"
-                      maxLength={6}
-                      className="w-full pl-11 pr-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-2xl text-lg font-mono font-black text-slate-900 tracking-widest focus:bg-white focus:border-teal-600 focus:ring-4 focus:ring-teal-100 transition outline-none"
-                      required
-                    />
-                    <KeyRound className="w-5 h-5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  </div>
-                  <p className="text-[11px] text-slate-500 mt-1 font-medium">
-                    Look at the waiting room TV or ask reception for today's rotating arrival code.
-                  </p>
-                </div>
-
                 <button
                   type="submit"
                   disabled={loading}
@@ -626,31 +583,6 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
                     placeholder="e.g. Toothache, cleaning, bleeding gums"
                     className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-2xl text-sm font-bold text-slate-900 focus:bg-white focus:border-teal-600 outline-none"
                   />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-black uppercase tracking-wider text-slate-700 mb-1.5 flex items-center justify-between">
-                    <span>On-Screen Lobby Code</span>
-                    <span className="text-[10px] text-amber-700 font-bold normal-case flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
-                      <span>Shown on Waiting Room TV</span>
-                    </span>
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={walkinLobbyCode}
-                      onChange={(e) => {
-                        setWalkinLobbyCode(e.target.value.replace(/[^0-9A-Za-z]/g, '').toUpperCase());
-                        setError(null);
-                      }}
-                      placeholder="e.g. 8429"
-                      maxLength={6}
-                      className="w-full pl-11 pr-4 py-3 bg-slate-50 border-2 border-slate-200 rounded-2xl text-lg font-mono font-black text-slate-900 tracking-widest focus:bg-white focus:border-teal-600 focus:ring-4 focus:ring-teal-100 transition outline-none"
-                      required
-                    />
-                    <KeyRound className="w-5 h-5 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  </div>
                 </div>
 
                 <button
@@ -854,10 +786,8 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
                   setCheckInSuccess(null);
                   setPhone('');
                   setBookingRefOrName('');
-                  setLobbyCode('');
                   setWalkinName('');
                   setWalkinPhone('');
-                  setWalkinLobbyCode('');
                 }}
                 className="text-xs font-bold text-slate-500 hover:text-slate-800 underline cursor-pointer"
               >

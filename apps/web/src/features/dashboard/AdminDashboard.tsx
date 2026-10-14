@@ -670,22 +670,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <h3 className="text-xl font-black text-slate-900">{clinicName}</h3>
             <p className="text-xs text-slate-500 font-medium">Official Hospital Reception & Lobby Standee QRs</p>
 
-            {/* Live 4-Digit Arrival Code Callout */}
-            <div className="mt-4 p-3 bg-amber-50 border border-amber-300 rounded-2xl flex items-center justify-between gap-3 text-left">
+            {/* Zero-Friction Standee Callout */}
+            <div className="mt-4 p-3 bg-teal-50 border border-teal-200 rounded-2xl flex items-center justify-between gap-3 text-left">
               <div className="flex items-center gap-2.5">
-                <KeyRound className="w-5 h-5 text-amber-700 shrink-0" />
+                <CheckCircle2 className="w-5 h-5 text-teal-700 shrink-0" />
                 <div>
-                  <span className="text-[10px] uppercase tracking-wider text-amber-800 font-extrabold block">
-                    Today's Live TV Check-in Code
+                  <span className="text-[10px] uppercase tracking-wider text-teal-800 font-extrabold block">
+                    Zero-Friction Reception Counter Standee
                   </span>
-                  <p className="text-[11px] text-amber-900 font-medium">
-                    Patients must type this 4-digit code upon scanning to confirm physical lobby presence.
+                  <p className="text-[11px] text-teal-900 font-medium">
+                    Patients scanning these counter standees check in or register instantly with no code entry required.
                   </p>
                 </div>
               </div>
-              <strong className="font-mono text-lg tracking-widest text-teal-950 bg-white px-3 py-1 rounded-xl border border-amber-300 shadow-xs font-black shrink-0">
-                {lobbyCode || '••••'}
-              </strong>
+              <span className="text-[10px] uppercase font-black text-teal-800 bg-white px-2.5 py-1 rounded-xl border border-teal-200 shrink-0">
+                Direct Token
+              </span>
             </div>
 
             {/* Tab Selector */}
