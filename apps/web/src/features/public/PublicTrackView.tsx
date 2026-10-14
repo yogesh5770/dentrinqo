@@ -16,11 +16,14 @@ import {
   Phone,
   Shield,
   ArrowRight,
+  QrCode,
 } from 'lucide-react';
 
 interface TrackingData {
   success: boolean;
-  tokenNumber: number;
+  reference?: string;
+  patientPhone?: string;
+  tokenNumber: number | null;
   status: string;
   chairNumber: number;
   expectedChairNumber: number;
@@ -245,16 +248,40 @@ export const PublicTrackView: React.FC = () => {
             {/* Giant Token Card */}
             <div className="p-6 rounded-3xl bg-white/5 border border-white/10 backdrop-blur-md text-center space-y-3 relative overflow-hidden shadow-2xl">
               <div className="text-[11px] font-black uppercase tracking-widest text-teal-400">
-                Your Queue Token
+                {data.tokenNumber ? 'Your Queue Token' : 'Scheduled Appointment'}
               </div>
-              <div className="text-6xl sm:text-7xl font-black font-mono tracking-tight text-white">
-                #{data.tokenNumber}
-              </div>
+              {data.tokenNumber ? (
+                <div className="text-6xl sm:text-7xl font-black font-mono tracking-tight text-white">
+                  #{data.tokenNumber}
+                </div>
+              ) : (
+                <div className="py-2 space-y-2">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-black uppercase tracking-wider">
+                    <Clock className="w-3.5 h-3.5 animate-pulse" />
+                    <span>Awaiting Arrival Check-In</span>
+                  </div>
+                  <div className="text-xl sm:text-2xl font-black text-white">
+                    Scan Reception QR to Enter Queue
+                  </div>
+                  <p className="text-xs text-slate-300 max-w-sm mx-auto leading-relaxed">
+                    Your slot is confirmed. When you arrive at the clinic, scan the QR code standee at reception or confirm at the desk to receive your live token number.
+                  </p>
+                  <div className="pt-2">
+                    <a
+                      href={`/checkin?ref=${encodeURIComponent(data.reference || '')}&phone=${encodeURIComponent(data.patientPhone || '')}`}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-black text-xs transition shadow-lg cursor-pointer"
+                    >
+                      <QrCode className="w-4 h-4" />
+                      <span>Arrived at Clinic? Check In Now</span>
+                    </a>
+                  </div>
+                </div>
+              )}
 
               {/* Dynamic Queue Position & Reduction Badge */}
               {/* Dynamic Queue Position & Reduction Badge */}
               {!isInChair && !isPostTreatment && (() => {
-                const isScheduled = data.status === 'SCHEDULED' || data.status === 'CONFIRMED';
+                const isScheduled = data.status === 'SCHEDULED' || data.status === 'CONFIRMED' || !data.tokenNumber;
                 const ahead = typeof data.patientsAhead === 'number'
                   ? data.patientsAhead
                   : (typeof data.currentlyAhead === 'number' ? data.currentlyAhead : 0);
@@ -368,6 +395,8 @@ export const PublicTrackView: React.FC = () => {
                       ? `Chair #${data.chairNumber || 1} (Please Enter)`
                       : data.isImmediateSeat
                       ? `Chair #${data.chairNumber || 1} (Immediate)`
+                      : !data.tokenNumber
+                      ? `Chair #${data.expectedChairNumber || data.chairNumber || 1} (Reserved Slot)`
                       : `Chair #${data.expectedChairNumber || data.chairNumber || 1} (Auto-Balanced)`}
                   </span>
                 </div>
@@ -375,6 +404,8 @@ export const PublicTrackView: React.FC = () => {
                   <p className="text-[11px] text-slate-400 font-medium text-left">
                     {isInChair
                       ? `You are currently seated in Operatory Chair #${data.chairNumber || 1}. Consultation & procedure in progress.`
+                      : !data.tokenNumber
+                      ? `Operatory Chair #${data.expectedChairNumber || data.chairNumber || 1} is reserved for your appointment. Scan the QR at reception on arrival to enter the queue.`
                       : data.chairBanner}
                   </p>
                 )}

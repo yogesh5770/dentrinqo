@@ -367,14 +367,17 @@ export class AppointmentsService {
       }
       if (!dentist) throw new NotFoundException('Dentist record not found or no active dentist available in clinic');
 
-      const todayStart = new Date(start);
-      todayStart.setHours(0, 0, 0, 0);
-      const todayEnd = new Date(start);
-      todayEnd.setHours(23, 59, 59, 999);
-      const countToday = await tx.appointment.count({
-        where: { clinicId, scheduledStart: { gte: todayStart, lte: todayEnd } },
-      });
-      const tokenNumber = (dto as any).tokenNumber || (countToday + 1);
+      const isImmediateCheckIn = dto.status === 'CHECKED_IN';
+      let tokenNumber: number | null = null;
+      if (isImmediateCheckIn) {
+        const istDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(start);
+        const seqRecord = await tx.dailyQueueSequence.upsert({
+          where: { clinicId_dateString: { clinicId, dateString: istDateStr } },
+          update: { lastSequence: { increment: 1 } },
+          create: { clinicId, dateString: istDateStr, lastSequence: 1 },
+        });
+        tokenNumber = (dto as any).tokenNumber || seqRecord.lastSequence;
+      }
       const trackingCode = (dto as any).trackingCode || crypto.randomBytes(16).toString('hex');
 
       let appt: any = null;
@@ -1210,28 +1213,8 @@ export class AppointmentsService {
         );
       }
 
-      // 8. Generate 128-bit unguessable tracking code & atomic sequential daily queue token
+      // 8. Generate 128-bit unguessable tracking code
       const trackingCode = crypto.randomBytes(16).toString('hex'); // 32 hex chars = 128 bits
-      const istDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(scheduledStart);
-
-      const seqRecord = await tx.dailyQueueSequence.upsert({
-        where: {
-          clinicId_dateString: {
-            clinicId,
-            dateString: istDateStr,
-          },
-        },
-        update: {
-          lastSequence: { increment: 1 },
-        },
-        create: {
-          clinicId,
-          dateString: istDateStr,
-          lastSequence: 1,
-        },
-      });
-      const tokenNumber = seqRecord.lastSequence;
-
       const isWalkin = Boolean(dto.isWalkin) ||
                        Boolean(dto.lobbyCode) ||
                        (dto.service && /walk[- ]?in|lobby/i.test(dto.service)) ||
@@ -1239,6 +1222,28 @@ export class AppointmentsService {
                        (dto.preferredSlot && /walk[- ]?in/i.test(dto.preferredSlot));
       const initialStatus = isWalkin ? 'CHECKED_IN' : 'SCHEDULED';
       const checkInTime = isWalkin ? new Date() : null;
+
+      let tokenNumber: number | null = null;
+      if (isWalkin) {
+        const istDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(scheduledStart);
+        const seqRecord = await tx.dailyQueueSequence.upsert({
+          where: {
+            clinicId_dateString: {
+              clinicId,
+              dateString: istDateStr,
+            },
+          },
+          update: {
+            lastSequence: { increment: 1 },
+          },
+          create: {
+            clinicId,
+            dateString: istDateStr,
+            lastSequence: 1,
+          },
+        });
+        tokenNumber = seqRecord.lastSequence;
+      }
 
       // 9. Persist Appointment with Candidate Retry Loop
       let appt: any = null;
@@ -1724,6 +1729,9 @@ export class AppointmentsService {
             dentist: {
               select: { fullName: true, specialization: true },
             },
+            patient: {
+              select: { phone: true, fullName: true },
+            },
           },
         });
 
@@ -1818,8 +1826,13 @@ export class AppointmentsService {
           }
         }
 
+        const shortId = appt.id.replace(/-/g, '').substring(0, 5).toUpperCase();
+        const reference = `${appt.clinic?.code || 'CLINIC'}-${new Date(appt.createdAt).getFullYear()}-${shortId}`;
+
         return {
           success: true,
+          reference,
+          patientPhone: appt.patient?.phone || '',
           tokenNumber: appt.tokenNumber,
           status: appt.status,
           chairNumber: appt.chairNumber || targetChairNum || 1,
@@ -2181,9 +2194,18 @@ export class AppointmentsService {
         select: { id: true, status: true },
       });
 
-      const tokenNumber = sameDayAppts.findIndex((a: any) => a.id === appt.id) + 1 || 1;
-      const completedBefore = sameDayAppts.filter((a: any, idx: number) => idx < tokenNumber - 1 && a.status === 'COMPLETED').length;
-      const currentlyAhead = Math.max(0, (tokenNumber - 1) - completedBefore);
+      const tokenNumber = appt.tokenNumber || null;
+      let currentlyAhead = 0;
+      if (tokenNumber) {
+        currentlyAhead = await tx.appointment.count({
+          where: {
+            clinicId: appt.clinicId,
+            scheduledStart: { gte: dayStart, lte: dayEnd },
+            status: { in: ['CHECKED_IN', 'CALLED', 'IN_CHAIR'] },
+            tokenNumber: { lt: tokenNumber },
+          },
+        });
+      }
 
       const ref = `${appt.clinic?.code || 'CLINIC'}-${new Date(appt.createdAt).getFullYear()}-${appt.id.replace(/-/g, '').substring(0, 5).toUpperCase()}`;
 
@@ -2197,12 +2219,13 @@ export class AppointmentsService {
           id: true,
           chairNumber: true,
           status: true,
+          tokenNumber: true,
         },
       });
 
       const activeChairsServing = inChairAppts.map(ic => ({
-        chairNumber: ic.chairNumber,
-        tokenNumber: sameDayAppts.findIndex((a: any) => a.id === ic.id) + 1 || 1,
+        chairNumber: ic.chairNumber || 1,
+        tokenNumber: ic.tokenNumber || 1,
         isBusy: ic.status === 'IN_CHAIR',
         isCalling: ic.status === 'CALLED',
       }));
@@ -2375,12 +2398,25 @@ export class AppointmentsService {
       const isAlreadyCheckedIn = appt.status === 'CHECKED_IN' || appt.status === 'CALLED' || appt.status === 'IN_CHAIR';
 
       let finalAppt = appt;
-      if (!isAlreadyCheckedIn) {
+      let tokenNumber = appt.tokenNumber;
+
+      if (!isAlreadyCheckedIn || !tokenNumber) {
+        if (!tokenNumber) {
+          const istDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
+          const seqRecord = await tx.dailyQueueSequence.upsert({
+            where: { clinicId_dateString: { clinicId: clinic.id, dateString: istDateStr } },
+            update: { lastSequence: { increment: 1 } },
+            create: { clinicId: clinic.id, dateString: istDateStr, lastSequence: 1 },
+          });
+          tokenNumber = seqRecord.lastSequence;
+        }
+
         finalAppt = await tx.appointment.update({
           where: { id: appt.id },
           data: {
             status: 'CHECKED_IN',
-            checkInTime: new Date(),
+            tokenNumber,
+            checkInTime: appt.checkInTime || new Date(),
             isConfirmedAtDesk: clinic.requireDeskConfirmation ? false : true,
             checkInSource: 'SELF_QR',
             notes: [appt.notes, `[CHECK-IN: SELF_QR | ${clinic.requireDeskConfirmation ? 'Desk Confirmation Pending' : 'Confirmed'}]`].filter(Boolean).join('\n'),
@@ -2393,25 +2429,16 @@ export class AppointmentsService {
         });
       }
 
-      // Compute token number and queue count
-      const dayStart = new Date(finalAppt.scheduledStart);
-      dayStart.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(finalAppt.scheduledStart);
-      dayEnd.setHours(23, 59, 59, 999);
-
-      const sameDayAppts = await tx.appointment.findMany({
+      // Compute live queue count ahead
+      const { start: dayStart, end: dayEnd } = this.getKolkataDayBounds(finalAppt.scheduledStart);
+      const currentlyAhead = await tx.appointment.count({
         where: {
           clinicId: finalAppt.clinicId,
           scheduledStart: { gte: dayStart, lte: dayEnd },
-          status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+          status: { in: ['CHECKED_IN', 'CALLED', 'IN_CHAIR'] },
+          tokenNumber: { lt: tokenNumber },
         },
-        orderBy: { scheduledStart: 'asc' },
-        select: { id: true, status: true },
       });
-
-      const tokenNumber = sameDayAppts.findIndex((a: any) => a.id === finalAppt.id) + 1 || 1;
-      const completedBefore = sameDayAppts.filter((a: any, idx: number) => idx < tokenNumber - 1 && a.status === 'COMPLETED').length;
-      const currentlyAhead = Math.max(0, (tokenNumber - 1) - completedBefore);
 
       const ref = `${finalAppt.clinic?.code || 'CLINIC'}-${new Date(finalAppt.createdAt).getFullYear()}-${finalAppt.id.replace(/-/g, '').substring(0, 5).toUpperCase()}`;
 
@@ -2443,12 +2470,13 @@ export class AppointmentsService {
           id: true,
           chairNumber: true,
           status: true,
+          tokenNumber: true,
         },
       });
 
       const activeChairsServing = inChairAppts.map(ic => ({
-        chairNumber: ic.chairNumber,
-        tokenNumber: sameDayAppts.findIndex((a: any) => a.id === ic.id) + 1 || 1,
+        chairNumber: ic.chairNumber || 1,
+        tokenNumber: ic.tokenNumber || 1,
         isBusy: ic.status === 'IN_CHAIR',
         isCalling: ic.status === 'CALLED',
       }));

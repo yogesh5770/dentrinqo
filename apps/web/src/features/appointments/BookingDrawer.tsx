@@ -278,8 +278,8 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
                 <div className="grid grid-cols-3 gap-2 text-center py-1">
                   <div className="bg-white/10 rounded-xl p-2.5 backdrop-blur-xs border border-white/10">
                     <div className="text-[10px] uppercase font-bold text-teal-200">Token</div>
-                    <div className="font-mono text-2xl font-black text-amber-300">
-                      #{bookingSuccessData.tokenNumber || '—'}
+                    <div className="font-mono text-base sm:text-xl font-black text-amber-300">
+                      {bookingSuccessData.tokenNumber ? `#${bookingSuccessData.tokenNumber}` : 'On Arrival'}
                     </div>
                   </div>
                   <div className="bg-white/10 rounded-xl p-2.5 backdrop-blur-xs border border-white/10">
@@ -298,7 +298,11 @@ export const BookingDrawer: React.FC<BookingDrawerProps> = ({
 
                 <div className="bg-teal-950/70 rounded-xl p-3 border border-teal-600/30 text-xs text-teal-100 font-medium leading-relaxed">
                   <strong className="text-amber-300 block mb-0.5">🗣️ Verbal Instruction for Receptionist:</strong>
-                  "Please tell the patient: 'Your appointment is booked for <strong>Chair #{bookingSuccessData.chairNumber}</strong> with <strong>Token #{bookingSuccessData.tokenNumber || '—'}</strong>. When you arrive at the clinic lobby, check the waiting room TV or verify with reception!'"
+                  {bookingSuccessData.tokenNumber ? (
+                    <span>"Please tell the patient: 'Your appointment is booked for <strong>Chair #{bookingSuccessData.chairNumber}</strong> with <strong>Token #{bookingSuccessData.tokenNumber}</strong>. Please take a seat in the waiting area!'"</span>
+                  ) : (
+                    <span>"Please tell the patient: 'Your appointment is scheduled for <strong>{bookingSuccessData.date} at {bookingSuccessData.time}</strong> (Chair #{bookingSuccessData.chairNumber}). When you arrive at the clinic, please scan the check-in QR standee or check in with reception to receive your live queue token!'"</span>
+                  )}
                 </div>
               </div>
 

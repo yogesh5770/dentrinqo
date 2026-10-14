@@ -347,11 +347,11 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
       `📅 *Date:* ${new Date(selectedDate).toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}\n` +
       `⏰ *Slot / Status:* ${isWalkIn ? '🏥 Walk-In (Present in Clinic Lobby)' : selectedSlot}\n` +
       `💺 *Operatory:* Chair #${selectedChair} (${chairs.find(c => c.chairNumber === selectedChair)?.doctorName || 'Doctor Room'})\n` +
-      `🔖 *Daily Token:* #${tokenNumber || 1}\n` +
+      (tokenNumber ? `🔖 *Daily Token:* #${tokenNumber}\n` : `🔖 *Queue Token:* Generated upon QR scan at clinic\n`) +
       `🩺 *Concern / Problem:* ${reasonLabel}\n` +
       `💬 *Message for Doctor:* ${customMessage}\n` +
       `🔖 *Reference:* ${bookingRef || 'NEW'}\n\n` +
-      `_I have registered via the clinic portal. Please confirm my token. Thank you!_`
+      `_I have registered via the clinic portal. Please confirm my appointment. Thank you!_`
     );
     return `https://wa.me/${cleanPhone}?text=${msg}`;
   };
@@ -1380,26 +1380,50 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
                 </div>
 
                 {/* Large Sequential Daily Token Banner */}
-                <div className="p-4 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-between shadow-xs">
-                  <div>
-                    <span className="text-[10px] font-black uppercase tracking-wider text-teal-700 block">
-                      TODAY'S LIVE QUEUE TOKEN
-                    </span>
-                    <span className="text-3xl font-black font-mono text-teal-900">
-                      TOKEN #{tokenNumber || 1}
-                    </span>
-                    <span className="text-[11px] text-teal-800 font-bold block mt-0.5">
-                      {visitType === 'WALK_IN' ? '🏥 Walk-In Lobby Queue' : '🌐 Online Scheduled Priority'}
-                    </span>
+                {tokenNumber ? (
+                  <div className="p-4 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-between shadow-xs">
+                    <div>
+                      <span className="text-[10px] font-black uppercase tracking-wider text-teal-700 block">
+                        TODAY'S LIVE QUEUE TOKEN
+                      </span>
+                      <span className="text-3xl font-black font-mono text-teal-900">
+                        TOKEN #{tokenNumber}
+                      </span>
+                      <span className="text-[11px] text-teal-800 font-bold block mt-0.5">
+                        {visitType === 'WALK_IN' ? '🏥 Walk-In Lobby Queue' : '🌐 Priority Queue Token'}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] uppercase font-bold text-slate-500 block">Assigned Operatory</span>
+                      <span className="text-sm font-black text-slate-900">Chair #{selectedChair}</span>
+                      <span className="text-[11px] text-teal-800 font-bold block">
+                        {chairs.find(c => c.chairNumber === selectedChair)?.doctorName || 'Doctor Room'}
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Assigned Operatory</span>
-                    <span className="text-sm font-black text-slate-900">Chair #{selectedChair}</span>
-                    <span className="text-[11px] text-teal-800 font-bold block">
-                      {chairs.find(c => c.chairNumber === selectedChair)?.doctorName || 'Doctor Room'}
-                    </span>
+                ) : (
+                  <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                    <div>
+                      <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 block">
+                        APPOINTMENT STATUS
+                      </span>
+                      <div className="text-base sm:text-lg font-black text-amber-950 flex items-center gap-1.5 mt-0.5">
+                        <Calendar className="w-4 h-4 text-amber-700" />
+                        <span>Scheduled for {new Date(selectedDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} ({selectedSlot})</span>
+                      </div>
+                      <span className="text-[11px] text-amber-800 font-medium block mt-1">
+                        ⚡ Your live queue token will be generated when you scan the check-in QR standee at reception upon arrival.
+                      </span>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-[10px] uppercase font-bold text-slate-500 block">Reserved Operatory</span>
+                      <span className="text-sm font-black text-slate-900">Chair #{selectedChair}</span>
+                      <span className="text-[11px] text-amber-800 font-bold block">
+                        {chairs.find(c => c.chairNumber === selectedChair)?.doctorName || 'Doctor Room'}
+                      </span>
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Smartphone Live Queue Tracker CTA */}
                 {trackingCode && (
