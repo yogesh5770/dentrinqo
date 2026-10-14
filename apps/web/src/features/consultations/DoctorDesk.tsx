@@ -24,6 +24,8 @@ import {
   Zap,
   Send,
   Archive,
+  Bell,
+  BellRing,
 } from 'lucide-react';
 import { TreatmentPlanManager } from '../treatment-plans/TreatmentPlanManager';
 import { ProcedureLogger } from '../procedures/ProcedureLogger';
@@ -108,6 +110,12 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
   const [submittingCheckout, setSubmittingCheckout] = useState(false);
   const [treatmentCatalogue, setTreatmentCatalogue] = useState<any[]>([]);
   const [patientPlans, setPatientPlans] = useState<any[]>([]);
+  const [unbilledProcedures, setUnbilledProcedures] = useState<any[]>([]);
+
+  const totalRecordedFee = unbilledProcedures.reduce((sum, p) => {
+    const paise = p.treatmentPlanItem?.estimatedCostPaise || p.feePaise || (p.estimatedCostPaise ? p.estimatedCostPaise : 0);
+    return sum + (paise ? Math.round(paise / 100) : (p.feeRupees || 0));
+  }, 0);
 
   const [queueTab, setQueueTab] = useState<'WAITING_IN_CLINIC' | 'ALL_TODAY'>('WAITING_IN_CLINIC');
   const [submittingSendToReception, setSubmittingSendToReception] = useState(false);
@@ -142,30 +150,68 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
     }
   };
 
-  const handleCallNextPatient = async (targetAppt?: any) => {
+  // 1. Doctor calls / pages patient to operatory room (rings audio chime on patient's phone & updates tracker)
+  const handleNotifyPatient = async (targetAppt?: any) => {
     const waitingList = todayPatients.filter((a: any) =>
       ['CHECKED_IN', 'CALLED'].includes(a.status) &&
-      (selectedChair !== 'ALL' ? a.chairNumber === selectedChair : true)
+      (totalChairs === 1 || selectedChair === 'ALL' || a.chairNumber === selectedChair)
     );
     const apptToCall = targetAppt || waitingList[0];
     if (!apptToCall) {
-      alert('No patients currently waiting in the lobby for this operatory chair.');
+      alert('No checked-in patients waiting in the lobby.');
       return;
     }
 
     try {
-      const chairNum = selectedChair !== 'ALL' ? Number(selectedChair) : (apptToCall.chairNumber || 1);
+      const chairNum = totalChairs === 1 ? 1 : (selectedChair !== 'ALL' ? Number(selectedChair) : (apptToCall.chairNumber || 1));
       await apiRequest(`/appointments/${apptToCall.id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'CALLED', chairNumber: chairNum }),
+      });
+      triggerClinicSync('appt_CALLED', { appointmentId: apptToCall.id, chairNumber: chairNum });
+      const updated = { ...apptToCall, status: 'CALLED', chairNumber: chairNum };
+      selectPatient(updated);
+      setMessage(`📢 Token #${apptToCall.tokenNumber || '—'} (${apptToCall.patientName}) called! Patient phone chime & screen alert dispatched.`);
+      fetchDoctorQueue(true);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to call/notify patient');
+    }
+  };
+
+  // 2. Doctor confirms patient is seated in the chair
+  const handleSeatPatient = async (targetAppt?: any) => {
+    const waitingList = todayPatients.filter((a: any) =>
+      ['CHECKED_IN', 'CALLED'].includes(a.status) &&
+      (totalChairs === 1 || selectedChair === 'ALL' || a.chairNumber === selectedChair)
+    );
+    const apptToSeat = targetAppt || waitingList[0];
+    if (!apptToSeat) {
+      alert('No patients available to seat.');
+      return;
+    }
+
+    try {
+      const chairNum = totalChairs === 1 ? 1 : (selectedChair !== 'ALL' ? Number(selectedChair) : (apptToSeat.chairNumber || 1));
+      await apiRequest(`/appointments/${apptToSeat.id}/status`, {
         method: 'PATCH',
         body: JSON.stringify({ status: 'IN_CHAIR', chairNumber: chairNum }),
       });
-      triggerClinicSync('appt_IN_CHAIR', { appointmentId: apptToCall.id, chairNumber: chairNum });
-      const updated = { ...apptToCall, status: 'IN_CHAIR', chairNumber: chairNum };
+      triggerClinicSync('appt_IN_CHAIR', { appointmentId: apptToSeat.id, chairNumber: chairNum });
+      const updated = { ...apptToSeat, status: 'IN_CHAIR', chairNumber: chairNum };
       selectPatient(updated);
+      setMessage(`💺 Token #${apptToSeat.tokenNumber || '—'} (${apptToSeat.patientName}) is now seated in Operatory Chair #${chairNum}.`);
       fetchDoctorQueue(true);
     } catch (err: any) {
-      alert(err?.message || 'Failed to call patient to chair');
+      alert(err?.message || 'Failed to seat patient in chair');
     }
+  };
+
+  // Backward compatibility alias
+  const handleCallNextPatient = async (targetAppt?: any) => {
+    if (targetAppt && targetAppt.status === 'CALLED') {
+      return handleSeatPatient(targetAppt);
+    }
+    return handleNotifyPatient(targetAppt);
   };
 
   const fetchDoctorQueue = async (silent = false) => {
@@ -225,11 +271,13 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
     setLoading(true);
 
     try {
-      const [consults, plans] = await Promise.all([
+      const [consults, plans, unbilled] = await Promise.all([
         apiRequest<any[]>(`/consultations/patient/${appt.patientId}`).catch(() => []),
         apiRequest<any[]>(`/treatment-plans/patient/${appt.patientId}`).catch(() => []),
+        apiRequest<any[]>(`/procedures/patient/${appt.patientId}?unbilledOnly=true`).catch(() => []),
       ]);
       setPatientPlans(plans || []);
+      setUnbilledProcedures(unbilled || []);
       const matching = consults?.find(c => c.appointmentId === appt.id) || consults?.[0];
 
       if (matching) {
@@ -262,6 +310,7 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
     setDiagnosis('');
     setClinicalNotes('');
     setIsFinalized(false);
+    setUnbilledProcedures([]);
     setMessage(null);
   };
 
@@ -375,30 +424,21 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
         }
       }
 
-      // 2. Check if unbilled procedures already exist for this patient
+      // 2. Check if unbilled procedures already exist for this patient (e.g. from Treatment Plan or Procedures tab)
       const unbilled = await apiRequest<any[]>(`/procedures/patient/${selectedAppt.patientId}?unbilledOnly=true`).catch(() => []);
       
       if (unbilled && unbilled.length > 0) {
+        // PROCEDURES ALREADY RECORDED - MARK COMPLETED WITHOUT DUPLICATE CONSULTATION CHARGE
         await apiRequest(`/appointments/${selectedAppt.id}/status`, {
           method: 'PATCH',
           body: JSON.stringify({ status: 'COMPLETED' }),
         });
         const totalRupees = Math.round(
-          unbilled.reduce((sum, p) => sum + (p.treatmentPlanItem?.estimatedCostPaise || p.feePaise || 50000), 0) / 100
+          unbilled.reduce((sum, p) => sum + (p.treatmentPlanItem?.estimatedCostPaise || p.feePaise || 0), 0) / 100
         );
         setMessage(`✅ Patient treatment marked COMPLETED with ${unbilled.length} procedure(s) (₹${totalRupees})! Sent to Reception Billing Desk.`);
         
-        // Dispatch live sync alerts to reception
-        triggerClinicSync('doctor_completed_visit', {
-          patientName: selectedAppt.patientName,
-          patientId: selectedAppt.patientId,
-          patientUhid: selectedAppt.patientUhid,
-          patientPhone: selectedAppt.patientPhone,
-          doctorName: selectedAppt.dentistName || doctorDisplayName,
-          procedureName: unbilled[0]?.procedureName || 'Completed Clinical Treatment',
-          toothNumber: unbilled[0]?.toothNumber,
-          feeRupees: totalRupees,
-        });
+        // Single unified sync alert to reception
         triggerClinicSync('doctor_sent_to_reception', {
           appointmentId: selectedAppt.id,
           patientName: selectedAppt.patientName,
@@ -421,7 +461,7 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
         return;
       }
 
-      // 3. No procedures recorded yet -> open quick completion modal with preselected procedure
+      // 3. No procedures recorded yet -> open quick completion modal for standard consultation fee
       const defaultProc = treatmentCatalogue.find(
         c => (selectedAppt.reason && c.name.toLowerCase().includes(selectedAppt.reason.toLowerCase())) ||
              (diagnosis && c.name.toLowerCase().includes(diagnosis.toLowerCase()))
@@ -497,23 +537,12 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
       });
 
       setQuickCompleteOpen(false);
-      const feeRupees = withProcedure ? quickFeeRupees : 300;
       const summaryMsg = withProcedure 
         ? `✅ Procedure "${quickProcedureName}" (₹${quickFeeRupees}) recorded & sent to Reception Billing Desk!`
         : `✅ Patient consultation marked COMPLETED and sent to Reception Billing Desk!`;
       setMessage(summaryMsg);
 
-      // 4. Dispatch live alerts to Reception Desk
-      triggerClinicSync('doctor_completed_visit', {
-        patientName: selectedAppt.patientName,
-        patientId: selectedAppt.patientId,
-        patientUhid: selectedAppt.patientUhid,
-        patientPhone: selectedAppt.patientPhone,
-        doctorName: selectedAppt.dentistName || doctorDisplayName,
-        procedureName: withProcedure ? quickProcedureName : 'General Consultation',
-        toothNumber: quickToothNumber,
-        feeRupees,
-      });
+      // 4. Dispatch single live alert to Reception Desk
       triggerClinicSync('doctor_sent_to_reception', {
         appointmentId: selectedAppt.id,
         patientName: selectedAppt.patientName,
@@ -620,6 +649,8 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
       });
 
       const feeRupees = Math.round((item.estimatedCostPaise || 0) / 100);
+      setUnbilledProcedures(prev => [...prev, { ...item, feePaise: item.estimatedCostPaise || 0, feeRupees }]);
+
       triggerClinicSync('treatment_completed_in_chair', {
         patientName: selectedAppt.patientName,
         patientId: selectedAppt.patientId,
@@ -632,7 +663,7 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
       });
 
       setMessage(`✅ Procedure "${item.procedureName}" (₹${feeRupees}) recorded as COMPLETED in chair & sent to Reception Billing Desk!`);
-      // Refresh treatment plans
+      // Refresh treatment plans and queue
       apiRequest<any[]>(`/treatment-plans/patient/${selectedAppt.patientId}`)
         .then(res => setPatientPlans(res || []))
         .catch(() => {});
@@ -818,10 +849,42 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                             {appt.reason || 'General Dental Consultation'}
                           </div>
                           <div className="mt-2 pt-2 border-t border-slate-200 flex items-center justify-between text-xs">
-                            <span className="font-extrabold text-teal-700">{appt.status}</span>
-                            <span className="font-mono text-slate-600 font-semibold">
-                              {new Date(appt.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            <span className={`font-extrabold ${
+                              appt.status === 'IN_CHAIR' ? 'text-teal-700 font-black' : appt.status === 'CALLED' ? 'text-cyan-700 font-black' : 'text-amber-800'
+                            }`}>
+                              {appt.status === 'IN_CHAIR' ? '🟢 IN CHAIR' : appt.status === 'CALLED' ? '🔔 CALLED' : appt.status === 'CHECKED_IN' ? '🟡 IN LOBBY' : appt.status}
                             </span>
+                            <div className="flex items-center gap-1.5">
+                              {appt.status === 'CHECKED_IN' && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleNotifyPatient(appt);
+                                    setMobileQueueOpen(false);
+                                  }}
+                                  className="px-2 py-0.5 bg-cyan-600 text-white rounded text-[10px] font-black"
+                                >
+                                  📢 Call
+                                </button>
+                              )}
+                              {appt.status === 'CALLED' && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleSeatPatient(appt);
+                                    setMobileQueueOpen(false);
+                                  }}
+                                  className="px-2 py-0.5 bg-emerald-600 text-white rounded text-[10px] font-black"
+                                >
+                                  💺 Seat
+                                </button>
+                              )}
+                              <span className="font-mono text-slate-500 font-semibold text-[11px]">
+                                {new Date(appt.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       );
@@ -907,15 +970,34 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                   </span>
                 </div>
 
-                {/* Big Action: Call Next Patient to Chair */}
+                {/* Big Action: Call Next Patient or Seat in Chair */}
                 {nextWaitingPatient && (
                   <button
                     type="button"
-                    onClick={() => handleCallNextPatient(nextWaitingPatient)}
-                    className="w-full py-2.5 px-3 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white font-black text-xs rounded-xl shadow-xs transition active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                    onClick={() => {
+                      if (nextWaitingPatient.status === 'CALLED') {
+                        handleSeatPatient(nextWaitingPatient);
+                      } else {
+                        handleNotifyPatient(nextWaitingPatient);
+                      }
+                    }}
+                    className={`w-full py-2.5 px-3 text-white font-black text-xs rounded-xl shadow-xs transition active:scale-95 cursor-pointer flex items-center justify-center gap-2 ${
+                      nextWaitingPatient.status === 'CALLED'
+                        ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700'
+                        : 'bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-700 hover:to-teal-700'
+                    }`}
                   >
-                    <Armchair className="w-4 h-4" />
-                    <span>📢 Call Token #{nextWaitingPatient.tokenNumber || '—'} ({nextWaitingPatient.patientName}) to Chair</span>
+                    {nextWaitingPatient.status === 'CALLED' ? (
+                      <>
+                        <Armchair className="w-4 h-4" />
+                        <span>💺 Confirm Token #{nextWaitingPatient.tokenNumber || '—'} Seated in Chair</span>
+                      </>
+                    ) : (
+                      <>
+                        <BellRing className="w-4 h-4 animate-bounce" />
+                        <span>📢 Call / Notify Token #{nextWaitingPatient.tokenNumber || '—'} ({nextWaitingPatient.patientName})</span>
+                      </>
+                    )}
                   </button>
                 )}
 
@@ -1020,13 +1102,41 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                           </div>
                           <div className="mt-2.5 pt-2 border-t border-slate-200 flex items-center justify-between text-xs">
                             <span className={`font-extrabold ${
-                              isInChair ? 'text-teal-700 font-black' : isCheckedIn ? 'text-amber-800' : 'text-slate-600'
+                              isInChair ? 'text-teal-700 font-black' : isCalled ? 'text-cyan-700 font-black' : isCheckedIn ? 'text-amber-800' : 'text-slate-600'
                             }`}>
-                              {isInChair ? '🟢 IN CHAIR' : isCheckedIn ? '🟡 IN LOBBY' : appt.status}
+                              {isInChair ? '🟢 IN CHAIR' : isCalled ? '🔔 CALLED' : isCheckedIn ? '🟡 IN LOBBY' : appt.status}
                             </span>
-                            <span className="font-mono text-slate-600 font-semibold">
-                              {new Date(appt.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              {isCheckedIn && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleNotifyPatient(appt);
+                                  }}
+                                  className="px-2 py-0.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded text-[10px] font-black transition cursor-pointer"
+                                  title="Call/Notify Patient"
+                                >
+                                  📢 Call
+                                </button>
+                              )}
+                              {isCalled && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleSeatPatient(appt);
+                                  }}
+                                  className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-black transition cursor-pointer"
+                                  title="Seat Patient in Chair"
+                                >
+                                  💺 Seat
+                                </button>
+                              )}
+                              <span className="font-mono text-slate-500 font-semibold text-[11px] ml-1">
+                                {new Date(appt.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       );
@@ -1080,6 +1190,12 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                             🟢 In Chair #{totalChairs === 1 ? 1 : (selectedAppt.chairNumber || 1)}
                           </span>
                         )}
+                        {selectedAppt.status === 'CALLED' && (
+                          <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-cyan-100 text-cyan-900 border border-cyan-300 animate-pulse flex items-center gap-1">
+                            <BellRing className="w-3 h-3 text-cyan-700" />
+                            <span>Paging to Operatory</span>
+                          </span>
+                        )}
                         {selectedAppt.status === 'CHECKED_IN' && (
                           <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
                             🟡 Waiting in Lobby
@@ -1094,14 +1210,49 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
 
                   <div className="flex flex-wrap items-center gap-2">
                     {selectedAppt.status === 'CHECKED_IN' && (
-                      <button
-                        type="button"
-                        onClick={() => handleCallNextPatient(selectedAppt)}
-                        className="flex items-center gap-1.5 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white font-black text-xs sm:text-sm rounded-xl shadow-md cursor-pointer transition-all active:scale-95"
-                      >
-                        <Armchair className="w-4 h-4" />
-                        <span>💺 Seat in Chair Now</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleNotifyPatient(selectedAppt)}
+                          className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-700 hover:to-teal-700 text-white font-black text-xs sm:text-sm rounded-xl shadow-md cursor-pointer transition-all active:scale-95"
+                          title="Ring audio chime on patient's smartphone and call into operatory room"
+                        >
+                          <BellRing className="w-4 h-4 animate-bounce" />
+                          <span>📢 Call / Notify Patient</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSeatPatient(selectedAppt)}
+                          className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-black text-xs sm:text-sm rounded-xl border border-slate-300 transition-all cursor-pointer"
+                          title="Patient is already entering: mark seated directly"
+                        >
+                          <Armchair className="w-4 h-4" />
+                          <span>💺 Mark Seated</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {selectedAppt.status === 'CALLED' && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleSeatPatient(selectedAppt)}
+                          className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-black text-xs sm:text-sm rounded-xl shadow-md cursor-pointer transition-all active:scale-95"
+                          title="Confirm patient is seated in operatory chair"
+                        >
+                          <Armchair className="w-4 h-4" />
+                          <span>💺 Confirm Seated in Chair</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleNotifyPatient(selectedAppt)}
+                          className="flex items-center gap-1 px-3 py-2 bg-amber-100 hover:bg-amber-200 text-amber-900 font-black text-xs rounded-xl border border-amber-300 transition-all cursor-pointer"
+                          title="Send audio chime and call again"
+                        >
+                          <Bell className="w-3.5 h-3.5" />
+                          <span>Ring Again</span>
+                        </button>
+                      </div>
                     )}
 
                     {['SCHEDULED', 'CONFIRMED'].includes(selectedAppt.status) && (
@@ -1111,16 +1262,18 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                     )}
 
                     {selectedAppt.status === 'IN_CHAIR' && (
-                      <button
-                        type="button"
-                        disabled={submittingCheckout || submittingSendToReception}
-                        onClick={handleDoctorCompleteVisit}
-                        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-xs sm:text-sm rounded-xl shadow-md cursor-pointer transition-all active:scale-95"
-                        title="Complete consultation, record procedure/fee, free operatory chair, and send patient to Reception Billing"
-                      >
-                        <Send className="w-4 h-4" />
-                        <span>{submittingCheckout ? 'Processing...' : '📤 Complete & Send to Billing Desk'}</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black bg-emerald-50 text-emerald-900 border border-emerald-300">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                          <span>In Chair #{totalChairs === 1 ? 1 : (selectedAppt.chairNumber || 1)}</span>
+                        </span>
+                        {unbilledProcedures.length > 0 && (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-black bg-teal-100 text-teal-900 border border-teal-300">
+                            <Zap className="w-3.5 h-3.5 text-teal-700" />
+                            <span>{unbilledProcedures.length} Done (₹{totalRecordedFee.toLocaleString('en-IN')})</span>
+                          </span>
+                        )}
+                      </div>
                     )}
 
                     {selectedAppt.status === 'COMPLETED' && (
@@ -1186,14 +1339,29 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                         ['CHECKED_IN', 'CALLED'].includes(a.status) && a.id !== selectedAppt.id
                       );
                       if (nextWaiting) {
+                        const isCalled = nextWaiting.status === 'CALLED';
                         return (
                           <button
                             type="button"
-                            onClick={() => handleCallNextPatient(nextWaiting)}
-                            className="px-4 py-2.5 rounded-xl text-xs font-black bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white transition flex items-center gap-2 shadow-md cursor-pointer active:scale-95"
+                            onClick={() => {
+                              if (isCalled) {
+                                handleSeatPatient(nextWaiting);
+                              } else {
+                                handleNotifyPatient(nextWaiting);
+                              }
+                            }}
+                            className={`px-4 py-2.5 rounded-xl text-xs font-black text-white transition flex items-center gap-2 shadow-md cursor-pointer active:scale-95 ${
+                              isCalled
+                                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700'
+                                : 'bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-700 hover:to-teal-700'
+                            }`}
                           >
-                            <Armchair className="w-4 h-4" />
-                            <span>📢 Call Next: Token #{nextWaiting.tokenNumber || '—'} ({nextWaiting.patientName})</span>
+                            {isCalled ? <Armchair className="w-4 h-4" /> : <BellRing className="w-4 h-4 animate-bounce" />}
+                            <span>
+                              {isCalled
+                                ? `💺 Seat Next: Token #${nextWaiting.tokenNumber || '—'} (${nextWaiting.patientName})`
+                                : `📢 Call Next: Token #${nextWaiting.tokenNumber || '—'} (${nextWaiting.patientName})`}
+                            </span>
                           </button>
                         );
                       }
@@ -1485,10 +1653,10 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                         type="button"
                         disabled={submittingCheckout || saving}
                         onClick={handleDoctorCompleteVisit}
-                        className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-xs py-2 px-4 rounded-xl shadow-sm transition-all cursor-pointer active:scale-95"
+                        className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-black text-xs py-2.5 px-4 rounded-xl shadow-sm transition-all cursor-pointer active:scale-95"
                       >
-                        <Send className="w-3.5 h-3.5" />
-                        <span>{submittingCheckout ? 'Processing...' : '📤 Complete & Send to Billing Desk'}</span>
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>{submittingCheckout ? 'Finalizing...' : '✅ Finish Treatment & Send to Reception'}</span>
                       </button>
                     ) : (
                       <div className="flex items-center gap-2">
@@ -1566,6 +1734,46 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                   />
                 </div>
               )}
+
+              {/* Single Unified Visit Completion Bar (Visible Across All Operatory Tabs) */}
+              {selectedAppt.status === 'IN_CHAIR' && (
+                <div className="clinic-card p-4 sm:p-5 bg-gradient-to-r from-slate-900 via-teal-950 to-slate-900 text-white rounded-2xl shadow-lg border border-teal-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-teal-500/20 text-teal-300 border border-teal-500/40 flex items-center justify-center font-black shrink-0 shadow-inner">
+                      <Armchair className="w-6 h-6 text-teal-300" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-black text-teal-300 uppercase tracking-wider flex items-center gap-2">
+                        <span>Patient in Chair: #{selectedAppt.tokenNumber || '—'} {selectedAppt.patientName}</span>
+                        <span className="text-[10px] bg-teal-800 text-teal-200 px-2 py-0.5 rounded-full font-mono font-bold">
+                          Chair #{totalChairs === 1 ? 1 : (selectedAppt.chairNumber || 1)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-300 font-medium mt-1">
+                        {unbilledProcedures.length > 0 ? (
+                          <span className="text-emerald-300 font-bold">
+                            ⚡ {unbilledProcedures.length} procedure(s) completed (₹{totalRecordedFee.toLocaleString('en-IN')}) ready for billing
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">
+                            No procedures recorded yet • Will complete as standard consultation
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={submittingCheckout || saving}
+                    onClick={handleDoctorCompleteVisit}
+                    className="px-5 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs sm:text-sm rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95 shrink-0"
+                  >
+                    <CheckCircle2 className="w-4 h-4 text-slate-950" />
+                    <span>{submittingCheckout ? 'Finalizing...' : '✅ Finish Treatment & Send to Reception'}</span>
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="clinic-card p-8 sm:p-12 text-center text-slate-500 bg-white border border-slate-200 shadow-xs rounded-3xl space-y-4">
@@ -1600,15 +1808,30 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'examinatio
                   (selectedChair !== 'ALL' ? a.chairNumber === selectedChair : true)
                 );
                 if (nextWaiting) {
+                  const isCalled = nextWaiting.status === 'CALLED';
                   return (
                     <div className="pt-2">
                       <button
                         type="button"
-                        onClick={() => handleCallNextPatient(nextWaiting)}
-                        className="px-6 py-3 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white font-black text-sm rounded-2xl shadow-md transition cursor-pointer active:scale-95 flex items-center gap-2 mx-auto"
+                        onClick={() => {
+                          if (isCalled) {
+                            handleSeatPatient(nextWaiting);
+                          } else {
+                            handleNotifyPatient(nextWaiting);
+                          }
+                        }}
+                        className={`px-6 py-3 text-white font-black text-sm rounded-2xl shadow-md transition cursor-pointer active:scale-95 flex items-center gap-2 mx-auto ${
+                          isCalled
+                            ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700'
+                            : 'bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-700 hover:to-teal-700'
+                        }`}
                       >
-                        <Armchair className="w-4 h-4" />
-                        <span>📢 Call Token #{nextWaiting.tokenNumber || '—'} ({nextWaiting.patientName}) to Chair</span>
+                        {isCalled ? <Armchair className="w-5 h-5" /> : <BellRing className="w-5 h-5 animate-bounce" />}
+                        <span>
+                          {isCalled
+                            ? `💺 Confirm Token #${nextWaiting.tokenNumber || '—'} Seated in Chair`
+                            : `📢 Call / Notify Token #${nextWaiting.tokenNumber || '—'} (${nextWaiting.patientName})`}
+                        </span>
                       </button>
                     </div>
                   );
