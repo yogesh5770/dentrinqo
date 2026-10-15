@@ -7,6 +7,7 @@ export interface TenantClinic {
   name: string;
   code: string;
   tagline?: string | null;
+  logoUrl?: string | null;
   phone?: string | null;
   email?: string | null;
   address?: string | null;
@@ -107,10 +108,26 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [user?.clinicId]);
 
   useEffect(() => {
-    if (typeof document !== 'undefined' && clinic?.name) {
-      document.title = `${clinic.name} | Clinic Management System`;
+    if (typeof document !== 'undefined') {
+      if (clinic?.name) {
+        document.title = `${clinic.name} | Clinic Management System`;
+      }
+      if (clinic?.logoUrl) {
+        let link: HTMLLinkElement | null = document.querySelector("link[rel~='icon']");
+        if (!link) {
+          link = document.createElement('link');
+          link.rel = 'icon';
+          document.head.appendChild(link);
+        }
+        link.href = clinic.logoUrl;
+
+        let appleLink: HTMLLinkElement | null = document.querySelector("link[rel='apple-touch-icon']");
+        if (appleLink) {
+          appleLink.href = clinic.logoUrl;
+        }
+      }
     }
-  }, [clinic?.name]);
+  }, [clinic?.name, clinic?.logoUrl]);
 
   return (
     <TenantContext.Provider value={{ clinic, isLoading, refreshClinic }}>

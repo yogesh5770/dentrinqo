@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../../hooks/useAuth';
 import { apiRequest } from '../../lib/api';
 import { triggerClinicSync } from '../../lib/sync';
 import {
@@ -26,8 +27,6 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { SpeechToTextDictation } from '../../components/SpeechToTextDictation';
-import { useAuth } from '../../hooks/useAuth';
-import { useTenant } from '../../hooks/useTenant';
 
 import { ClinicLogo } from '../../components/ClinicLogo';
 interface NewPatientModalProps {
@@ -47,11 +46,9 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
   initialMode = 'LEGACY_ARCHIVE',
   initialSerialNo = '',
 }) => {
-  if (!isOpen) return null;
-
   const { user } = useAuth();
-  const { clinic: tenantClinic } = useTenant();
-  const clinicName = tenantClinic?.name || user?.clinic?.name || 'Dental Clinic';
+  const clinicName = user?.clinic?.name || 'Dental Clinic';
+  if (!isOpen) return null;
 
   // Active registration mode - defaults to LEGACY_ARCHIVE if opened with serial or archive
   const [recordMode, setRecordMode] = useState<'STANDARD' | 'LEGACY_ARCHIVE'>(
@@ -195,17 +192,29 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
 
       if (mode === 'WALK_IN_NOW') {
         try {
-          const quickRes = await apiRequest<any>('/appointments/reception-quick-consult', {
+          const selectedChair = recordMode === 'LEGACY_ARCHIVE' ? reappearChair : 1;
+          const quickRes = await apiRequest<any>('/appointments', {
             method: 'POST',
             body: JSON.stringify({
               patientId: res.id,
+              scheduledStart: new Date().toISOString(),
+              durationMinutes: 30,
               reason: recordMode === 'LEGACY_ARCHIVE'
                 ? `Re-Consultation (Card #${legacySlNo.trim()})`
                 : 'Walk-In Consultation & Examination',
+              status: 'CHECKED_IN',
+              chairNumber: selectedChair,
+              isReappearance: recordMode === 'LEGACY_ARCHIVE',
+              legacySlNo: recordMode === 'LEGACY_ARCHIVE' ? legacySlNo.trim() : undefined,
             }),
           });
           triggerClinicSync('appointment_booked');
-          triggerClinicSync('appt_CHECKED_IN');
+          triggerClinicSync('appt_CHECKED_IN', {
+            patientId: res.id,
+            patientName: res.fullName,
+            chairNumber: selectedChair,
+            tokenNumber: quickRes.tokenNumber,
+          });
           onPatientCreated(res);
           setWalkinSuccessData({ ...quickRes, patient: res });
           return;
@@ -632,7 +641,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {[1, 2, 3].map(chair => (
+                  {Array.from({ length: Math.max(1, user?.clinic?.chairCount || 1) }, (_, i) => i + 1).map(chair => (
                     <button
                       key={chair}
                       type="button"
@@ -643,7 +652,7 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
                           : 'bg-white text-teal-900 border border-teal-300 hover:bg-teal-100'
                       }`}
                     >
-                      Chair {chair}
+                      Chair {chair} {(user?.clinic?.chairCount || 1) === 1 ? '(Primary)' : ''}
                     </button>
                   ))}
                 </div>

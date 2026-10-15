@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useAuth } from '../hooks/useAuth';
 import { apiRequest } from '../lib/api';
 import { triggerClinicSync } from '../lib/sync';
 import {
@@ -35,6 +36,10 @@ export const QuickReconsultModal: React.FC<QuickReconsultModalProps> = ({
 }) => {
   if (!isOpen) return null;
 
+  const { user } = useAuth();
+  const clinicChairCount = Math.max(1, user?.clinic?.chairCount || 1);
+  const availableChairs = Array.from({ length: clinicChairCount }, (_, i) => i + 1);
+
   const [serialQuery, setSerialQuery] = useState(initialSerialNo || (preloadedPatient?.legacySlNo || ''));
   const [patient, setPatient] = useState<any | null>(preloadedPatient);
   const [searching, setSearching] = useState(false);
@@ -46,6 +51,8 @@ export const QuickReconsultModal: React.FC<QuickReconsultModalProps> = ({
   const [reason, setReason] = useState('Re-Consultation & Dental Review');
   const [submitting, setSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  const safeChairNumber = Math.min(chairNumber, clinicChairCount);
 
   const handleSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -97,7 +104,7 @@ export const QuickReconsultModal: React.FC<QuickReconsultModalProps> = ({
           durationMinutes: 30,
           reason: reason.trim() || `Re-Consultation (Card #${patient.legacySlNo || patient.uhid})`,
           status: 'CHECKED_IN',
-          chairNumber: chairNumber,
+          chairNumber: safeChairNumber,
           isReappearance: true,
           legacySlNo: patient.legacySlNo || undefined,
         }),
@@ -283,24 +290,31 @@ export const QuickReconsultModal: React.FC<QuickReconsultModalProps> = ({
                   <div>
                     <label className="block text-xs font-black text-slate-800 mb-1 flex items-center gap-1">
                       <Armchair className="w-3.5 h-3.5 text-teal-600" />
-                      Select Operatory Chair:
+                      Operatory Chair:
                     </label>
-                    <div className="flex gap-2">
-                      {[1, 2, 3].map(ch => (
-                        <button
-                          key={ch}
-                          type="button"
-                          onClick={() => setChairNumber(ch)}
-                          className={`flex-1 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                            chairNumber === ch
-                              ? 'bg-teal-700 text-white shadow-xs'
-                              : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'
-                          }`}
-                        >
-                          Chair {ch}
-                        </button>
-                      ))}
-                    </div>
+                    {clinicChairCount === 1 ? (
+                      <div className="py-2.5 px-3 rounded-xl text-xs font-black bg-teal-50 border border-teal-300 text-teal-900 flex items-center justify-between">
+                        <span>Operatory Chair #1</span>
+                        <span className="text-[10px] font-bold bg-teal-200 text-teal-800 px-2 py-0.5 rounded-full">Primary</span>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        {availableChairs.map(ch => (
+                          <button
+                            key={ch}
+                            type="button"
+                            onClick={() => setChairNumber(ch)}
+                            className={`flex-1 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                              safeChairNumber === ch
+                                ? 'bg-teal-700 text-white shadow-xs'
+                                : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-100'
+                            }`}
+                          >
+                            Chair {ch}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div>
@@ -328,7 +342,9 @@ export const QuickReconsultModal: React.FC<QuickReconsultModalProps> = ({
                   <span>
                     {submitting
                       ? 'Checking in...'
-                      : `Start Re-Consultation (Chair ${chairNumber})`}
+                      : clinicChairCount === 1
+                        ? 'Start Re-Consultation (Chair 1)'
+                        : `Start Re-Consultation (Chair ${safeChairNumber})`}
                   </span>
                 </button>
               </div>

@@ -1,42 +1,71 @@
-# AKS Elite Dental Clinic Management System
-**AK's Elite Dental Clinic & Multi-Speciality Dental Hospital, K.Pudur, Madurai**  
-Lead Clinician: Dr. Khalidh Khan (BDS, MDS - Conservative Dentistry & Endodontics)
+# Dentrinqo Multi-Tenant Dental Clinic Management Platform
+
+Dentrinqo is an enterprise-grade, multi-tenant SaaS for dental hospitals and dental clinics.
 
 ---
 
-## Current Status: Phase 1 (Core Application) Completed & Verified
+## 🏛 Directory Architecture
 
-### Architecture & System Overview
-- **Backend**: NestJS Modular Monolith (`apps/api`), Prisma ORM (`apps/api/prisma`), Node 24+, TypeScript
-- **Frontend**: React 19 + TypeScript + Vite + Tailwind CSS (`apps/web`), TanStack Query, Lucide Icons
-- **Database**: SQLite (`apps/api/prisma/dev.db`) for immediate zero-dependency local dev; PostgreSQL schema ready (`schema.postgresql.prisma`) with Docker Compose (`docker-compose.yml`) for production.
-- **Security & RBAC**: Argon2id password hashing, HTTP-only secure cookie sessions, role-based access control (`CLINIC_ADMIN`, `DENTIST`, `RECEPTIONIST`, `ACCOUNTANT`).
-- **Audit Logging**: Immutable logging of all authentication events, patient registrations, appointments, and clinical record changes.
+```
+dentrinqo/
+├── apps/
+│   ├── api/                 # NestJS Modular Backend Monolith (Prisma ORM, PostgreSQL RLS)
+│   └── web/                 # React 19 + TypeScript + Vite + Tailwind CSS Frontend
+├── packages/
+│   └── shared-types/        # Shared TypeScript interfaces & DTOs
+├── scripts/
+│   ├── onboard_new_hospital.py # Automated, zero-touch hospital onboarding engine
+│   ├── ops/                 # Multi-clinic deployment (deploy_all_clinics.py), DB migrations & maintenance
+│   └── tests/               # E2E journey, security, and live concurrency test suites
+├── docs/
+│   ├── reports/             # Clinical security, scheduling, and disaster recovery audits
+│   └── architecture/        # System diagrams and database schemas
+└── PRODUCTION_DEPLOYMENT.md  # Detailed server infrastructure guide
+```
 
 ---
 
-## Live Services
-- **Backend API**: `http://localhost:3001`
-- **OpenAPI / Swagger Documentation**: `http://localhost:3001/api/docs`
-- **Frontend Web Application**: `http://localhost:5173`
+## 🏥 Automated Hospital Onboarding
+
+Whenever you need to onboard a new hospital to your multi-tenant platform with 100% brand isolation, run:
+
+```bash
+python scripts/onboard_new_hospital.py \
+    --name "Star Dental Care & Implant Centre" \
+    --code "SDC" \
+    --domain "stardental.duckdns.org" \
+    --phone "+919876543210" \
+    --chairs 1 \
+    --city "Salem" \
+    --address "Main Road, Salem" \
+    --logo "C:/path/to/logo.png"
+```
+
+### What This Automates:
+1. **PostgreSQL Multi-Tenant Provisioning:**
+   - Creates the `Clinic` record scoped to exact operatory chairs.
+   - Links the primary domain in `ClinicDomain`.
+   - Generates 3 initial staff accounts (`admin@`, `doctor@`, `reception@`) with Argon2id passwords.
+   - Seeds the 9 standard dental treatment catalog items under PostgreSQL RLS.
+2. **100% Brand & Web Root Isolation:**
+   - Creates `/var/www/<code-lower>-web/` on the server.
+   - Deploys the latest production web bundle.
+   - Installs the clinic's logo at `/brand/<code-lower>.png` and replaces root `/favicon.png`.
+   - Generates custom Open Graph tags for WhatsApp link previews.
+3. **Nginx & SSL Auto-Configuration:**
+   - Creates an isolated server block in `/etc/nginx/sites-available/dental.conf`.
+   - Configures `/api/` reverse proxy and 1-year immutable caching.
+   - Configures HSTS (`Strict-Transport-Security`) and automatic port 80 -> HTTPS 301 redirects.
+   - Automatically issues / expands Let's Encrypt SSL certificates.
+4. **CORS Allowlist:**
+   - Adds the new domain to `CORS_ORIGIN` and database lookup cache.
 
 ---
 
-## Default Staff Credentials (Synthetic Development Data)
-| Role | Name | Email | Password |
+## 🌐 Active Production Hospitals
+
+| Hospital | Domain | Chairs | Web Root Directory |
 | :--- | :--- | :--- | :--- |
-| **Dentist** | Dr. Khalidh Khan (BDS, MDS) | `dr.khalidh@akselitedental.com` | `Dentist@12345` |
-| **Receptionist** | Priya R. | `reception@akselitedental.com` | `Reception@12345` |
-| **Clinic Admin** | Clinic Administrator | `admin@akselitedental.com` | `Admin@12345` |
-| **Accountant** | Senthil K. | `accounts@akselitedental.com` | `Accounts@12345` |
-
----
-
-## Tested & Verified Workflows (E2E)
-- [x] Secure authentication with Argon2id and session cookies
-- [x] Front-desk waiting lounge queue & 1-click status transitions (`SCHEDULED` -> `CHECKED_IN` -> `IN_CHAIR` -> `COMPLETED`)
-- [x] Patient intake with duplicate phone detection and medical history (Allergies, Diabetes, Hypertension)
-- [x] Operatory scheduling with multi-chair allocation (Chair 1, Chair 2, Chair 3) and conflict rejection
-- [x] Doctor consultation desk with clinical examination, FDI tooth-specific diagnosis, and record finalization locking
-- [x] Auditable clinical amendments preserving original medical notes
-- [x] Clinic admin audit log trail recording every transaction
+| **AK's Elite Dental** | `aksdental.duckdns.org` | 3 | `/var/www/aks-web/` |
+| **Jacobs Dental Clinic** | `jacobdental.duckdns.org` | 1 | `/var/www/jacobs-web/` |
+| **Fairy Dental Care** | `fairydentalcare.duckdns.org` | 1 | `/var/www/fairy-web/` |

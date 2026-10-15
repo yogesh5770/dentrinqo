@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useAuth } from '../../hooks/useAuth';
 import { apiRequest } from '../../lib/api';
 import { triggerClinicSync } from '../../lib/sync';
 import {
@@ -37,6 +38,8 @@ export const CaseSheetPhysicalArchive: React.FC<CaseSheetPhysicalArchiveProps> =
   clinicDoctors = [],
 }) => {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const chairCount = Math.max(1, user?.clinic?.chairCount || 1);
 
   // Edit Archive Info state
   const [isEditingInfo, setIsEditingInfo] = useState(false);
@@ -505,8 +508,8 @@ export const CaseSheetPhysicalArchive: React.FC<CaseSheetPhysicalArchiveProps> =
                 <label className="block font-black text-slate-900 mb-1.5">
                   Operatory Chair Selection
                 </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[1, 2, 3].map(chairNum => (
+                <div className={`grid gap-2 ${chairCount === 1 ? 'grid-cols-1' : chairCount === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                  {Array.from({ length: chairCount }, (_, i) => i + 1).map(chairNum => (
                     <button
                       type="button"
                       key={chairNum}
@@ -518,7 +521,7 @@ export const CaseSheetPhysicalArchive: React.FC<CaseSheetPhysicalArchiveProps> =
                       }`}
                     >
                       <Armchair className="w-4 h-4 mx-auto mb-1" />
-                      <span>Chair #{chairNum}</span>
+                      <span>Chair #{chairNum} {chairCount === 1 ? '(Primary)' : ''}</span>
                     </button>
                   ))}
                 </div>
