@@ -120,6 +120,9 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
             ...prev,
             reference: res.reference || prev?.reference,
             tokenNumber: res.tokenNumber ?? prev?.tokenNumber,
+            displayToken: res.displayToken || prev?.displayToken || ((prev?.arrivalType === 'ONLINE_BOOKING' ? 'A' : 'W') + String(res.tokenNumber || prev?.tokenNumber || 1).padStart(3, '0')),
+            arrivalType: res.arrivalType || prev?.arrivalType,
+            scheduledStart: res.scheduledStart || prev?.scheduledStart,
             currentlyAhead: res.currentlyAhead ?? prev?.currentlyAhead,
             activeChairsServing: res.activeChairsServing || prev?.activeChairsServing || [],
             chairNumber: res.chairNumber || prev?.chairNumber,
@@ -180,9 +183,14 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
       });
 
       if (res && res.success) {
+        const tokenNum = res.tokenNumber || 1;
+        const displayToken = res.displayToken || `A${String(tokenNum).padStart(3, '0')}`;
         setCheckInSuccess({
           reference: res.reference,
           tokenNumber: res.tokenNumber,
+          displayToken,
+          arrivalType: 'ONLINE_BOOKING',
+          scheduledStart: res.scheduledStart,
           currentlyAhead: res.currentlyAhead,
           activeChairsServing: res.activeChairsServing || [],
           chairNumber: res.chairNumber,
@@ -252,9 +260,13 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
       });
 
       if (res && res.success) {
+        const tokenNum = res.tokenNumber || 1;
+        const displayToken = res.displayToken || `W${String(tokenNum).padStart(3, '0')}`;
         setCheckInSuccess({
           reference: res.reference,
           tokenNumber: res.tokenNumber,
+          displayToken,
+          arrivalType: 'WALK_IN',
           currentlyAhead: res.currentlyAhead ?? 0,
           activeChairsServing: res.activeChairsServing || [],
           chairNumber: res.chairNumber,
@@ -647,8 +659,8 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
                     <span>Doctor: {checkInSuccess.dentistName || 'Attending Surgeon'}</span>
                   </div>
                   <div className="pt-2">
-                    <span className="inline-block px-3 py-1 bg-white/20 rounded-xl text-xs font-mono font-black text-white">
-                      YOUR QUEUE TOKEN #{checkInSuccess.tokenNumber || 1}
+                    <span className="inline-block px-4 py-1.5 bg-white/20 rounded-xl text-sm font-mono font-black text-white tracking-wider shadow-xs">
+                      YOUR QUEUE TOKEN {checkInSuccess.displayToken || `#${checkInSuccess.tokenNumber || 1}`}
                     </span>
                   </div>
                 </div>
@@ -733,21 +745,54 @@ export const PublicCheckInView: React.FC<PublicCheckInViewProps> = ({
                 </div>
 
                 {/* Live Queue Token Display */}
-                <div className="p-6 bg-gradient-to-b from-teal-50 to-emerald-50/40 rounded-3xl border-2 border-teal-300/80 shadow-inner space-y-2">
-                  <span className="text-[11px] font-black uppercase tracking-widest text-teal-800 block">
-                    YOUR LIVE CLINIC QUEUE TOKEN
-                  </span>
-                  <div className="text-5xl sm:text-6xl font-black font-mono text-teal-950 tracking-tight">
-                    #{checkInSuccess.tokenNumber || 1}
+                <div className="p-6 bg-gradient-to-b from-teal-50 to-emerald-50/40 rounded-3xl border-2 border-teal-300/80 shadow-inner space-y-3">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider shadow-2xs border bg-white">
+                    {checkInSuccess.arrivalType === 'ONLINE_BOOKING' ? (
+                      <span className="text-teal-900 border-teal-300 flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-teal-600" />
+                        Online Booking • Reserved Time Slot
+                      </span>
+                    ) : (
+                      <span className="text-amber-900 border-amber-300 flex items-center gap-1.5">
+                        <User className="w-3.5 h-3.5 text-amber-600" />
+                        Walk-In Registration • Active Lobby Queue
+                      </span>
+                    )}
                   </div>
-                  <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2 text-xs font-bold text-teal-900">
+
+                  <span className="text-[11px] font-black uppercase tracking-widest text-teal-800 block">
+                    YOUR CLINIC QUEUE TOKEN
+                  </span>
+
+                  <div className="text-5xl sm:text-6xl font-black font-mono text-teal-950 tracking-tight">
+                    {checkInSuccess.displayToken || `#${checkInSuccess.tokenNumber || 1}`}
+                  </div>
+
+                  {checkInSuccess.arrivalType === 'ONLINE_BOOKING' && checkInSuccess.scheduledStart && (
+                    <div className="text-xs font-bold text-teal-950 bg-teal-100/70 border border-teal-300/60 rounded-xl py-1 px-3 inline-block">
+                      ⏰ Appointment Time: {new Date(checkInSuccess.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-center gap-2.5 pt-1 text-xs font-bold text-teal-900">
                     <span className="px-3 py-1.5 rounded-xl bg-white border border-teal-200 shadow-2xs">
                       Operatory Chair #{checkInSuccess.chairNumber || 1}
                     </span>
                     <span className="px-3 py-1.5 rounded-xl bg-white border border-teal-200 shadow-2xs">
                       {checkInSuccess.currentlyAhead || 0} Patient{checkInSuccess.currentlyAhead === 1 ? '' : 's'} Ahead
                     </span>
+                    {checkInSuccess.arrivalType === 'WALK_IN' && (
+                      <span className="px-3 py-1.5 rounded-xl bg-amber-100 text-amber-950 border border-amber-200 shadow-2xs font-black">
+                        ⏱️ Est. Wait: {Math.max(10, (checkInSuccess.currentlyAhead || 0) * 15 + 10)}–{Math.max(20, (checkInSuccess.currentlyAhead || 0) * 20 + 20)} mins
+                      </span>
+                    )}
                   </div>
+
+                  <p className="text-[11px] text-slate-500 font-medium pt-1 max-w-sm mx-auto leading-relaxed">
+                    {checkInSuccess.arrivalType === 'ONLINE_BOOKING'
+                      ? 'Your appointment slot is confirmed. Please wait comfortably in the lobby until the doctor calls your token.'
+                      : 'Please wait until the clinic calls your token. Walk-in patients are accommodated in available doctor gaps without displacing booked slots.'}
+                  </p>
                 </div>
 
                 {/* Sound Alert Test Button */}

@@ -890,6 +890,10 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
                   <div className="space-y-2 max-h-[380px] overflow-y-auto touch-scroll">
                     {displayedPatients.map(appt => {
                       const isSelected = selectedAppt?.id === appt.id;
+                      const isBooked = appt.hasBookedSlot !== undefined ? appt.hasBookedSlot : (appt.arrivalType === 'ONLINE_BOOKING' || (!appt.reason?.toLowerCase().includes('walk-in') && appt.source !== 'SELF_QR'));
+                      const tokenNum = appt.tokenNumber || 1;
+                      const displayToken = appt.displayToken || `${isBooked ? 'A' : 'W'}${String(tokenNum).padStart(3, '0')}`;
+
                       return (
                         <div
                           key={appt.id}
@@ -905,12 +909,23 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
                         >
                           <div className="flex items-center justify-between">
                             <span className="font-black text-slate-900 text-sm">{appt.patientName}</span>
-                            <span className="font-mono text-xs text-amber-950 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-md font-black">
-                              TOKEN #{appt.tokenNumber || '—'}
+                            <span className={`font-mono text-xs px-2 py-0.5 rounded-md font-black shadow-2xs ${
+                              isBooked ? 'bg-teal-700 text-white' : 'bg-amber-400 text-slate-950'
+                            }`}>
+                              {displayToken}
                             </span>
                           </div>
-                          <div className="text-xs text-slate-600 font-mono font-bold mt-1">
-                            Chair {totalChairs === 1 ? 1 : (appt.chairNumber || 1)} • {appt.patientUhid}
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                            <span className={`text-[10px] font-black uppercase px-1.5 py-0.2 rounded-md ${
+                              isBooked
+                                ? 'bg-blue-50 text-blue-900 border border-blue-200'
+                                : 'bg-amber-50 text-amber-900 border border-amber-200'
+                            }`}>
+                              {isBooked ? '🌐 Online' : '🚶 Walk-In'}
+                            </span>
+                            <span className="text-xs text-slate-600 font-mono font-bold">
+                              Chair {totalChairs === 1 ? 1 : (appt.chairNumber || 1)} • {appt.patientUhid}
+                            </span>
                           </div>
                           <div className="text-xs text-slate-700 font-medium mt-1 line-clamp-1">
                             {appt.reason || 'General Dental Consultation'}
@@ -975,8 +990,101 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
             ['SCHEDULED', 'CONFIRMED'].includes(a.status) &&
             (totalChairs === 1 || selectedChair === 'ALL' || a.chairNumber === selectedChair)
           );
-          const displayedPatients = queueTab === 'WAITING_IN_CLINIC' ? inClinicPatients : upcomingPatients;
+          const displayedPatients = queueTab === 'WAITING_IN_CLINIC' ? inClinicPatients : todayPatients;
           const nextWaitingPatient = inClinicPatients.find(a => ['CHECKED_IN', 'CALLED'].includes(a.status));
+
+          // Smart Queue Priority & Gap Decision Engine
+          const nowMs = Date.now();
+          const nextScheduledBooked = todayPatients
+            .filter(a => ['SCHEDULED', 'CONFIRMED'].includes(a.status) && (totalChairs === 1 || selectedChair === 'ALL' || a.chairNumber === selectedChair))
+            .sort((a, b) => new Date(a.scheduledStart).getTime() - new Date(b.scheduledStart).getTime())[0];
+
+          const waitingCheckedIn = inClinicPatients.filter(a => ['CHECKED_IN', 'CALLED'].includes(a.status));
+
+          // 1. Booked patient who arrived on time or within the 10-15m grace window
+          const bookedPatientArrived = waitingCheckedIn.find(a => {
+            const isBooked = a.hasBookedSlot || a.arrivalType === 'ONLINE_BOOKING';
+            if (!isBooked) return false;
+            const startMs = new Date(a.scheduledStart).getTime();
+            const diffMins = (nowMs - startMs) / 60000;
+            return diffMins >= -10 && diffMins <= 15;
+          });
+
+          // 2. Late booked patient (arrived > 15m after scheduled slot - grace expired)
+          const lateBookedPatient = waitingCheckedIn.find(a => {
+            const isBooked = a.hasBookedSlot || a.arrivalType === 'ONLINE_BOOKING';
+            if (!isBooked) return false;
+            const startMs = new Date(a.scheduledStart).getTime();
+            const diffMins = (nowMs - startMs) / 60000;
+            return diffMins > 15;
+          });
+
+          // 3. Walk-in patient waiting in lobby
+          const topWalkinWaiting = waitingCheckedIn.find(a => !(a.hasBookedSlot || a.arrivalType === 'ONLINE_BOOKING'));
+
+          let queueRecommendation: { text: string; badge: string; type: string; actionAppt?: any } | null = null;
+          if (bookedPatientArrived) {
+            const timeStr = new Date(bookedPatientArrived.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            queueRecommendation = {
+              type: 'BOOKED_PRIORITY',
+              badge: '⭐ Appointment Priority',
+              text: `${bookedPatientArrived.patientName} (${bookedPatientArrived.displayToken || 'A001'}) has arrived for ${timeStr} booked slot within grace window. Scheduled booking receives priority call.`,
+              actionAppt: bookedPatientArrived,
+            };
+          } else if (nextScheduledBooked) {
+            const nextStartMs = new Date(nextScheduledBooked.scheduledStart).getTime();
+            const minsToNext = Math.round((nextStartMs - nowMs) / 60000);
+            const nextTimeStr = new Date(nextScheduledBooked.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+            if (minsToNext > 30 && topWalkinWaiting) {
+              queueRecommendation = {
+                type: 'GAP_AVAILABLE',
+                badge: '✨ Available Gap',
+                text: `Gap until ${nextTimeStr} (${minsToNext}m before ${nextScheduledBooked.patientName}): Walk-in ${topWalkinWaiting.patientName} (${topWalkinWaiting.displayToken || 'W001'}) can be accommodated now!`,
+                actionAppt: topWalkinWaiting,
+              };
+            } else if (minsToNext <= 10 && minsToNext >= -10) {
+              const inGrace = minsToNext < 0;
+              queueRecommendation = {
+                type: 'GRACE_PERIOD',
+                badge: '⏳ Protected Slot',
+                text: `${nextScheduledBooked.patientName}'s ${nextTimeStr} booking is ${inGrace ? `${Math.abs(minsToNext)}m into grace period` : `due in ${minsToNext}m`}. Chair protected for booked patient.`,
+                actionAppt: null,
+              };
+            } else if (topWalkinWaiting) {
+              queueRecommendation = {
+                type: 'WALKIN_NEXT',
+                badge: '🚶 Next in Queue',
+                text: `Call Walk-in ${topWalkinWaiting.patientName} (${topWalkinWaiting.displayToken || 'W001'}).`,
+                actionAppt: topWalkinWaiting,
+              };
+            } else if (lateBookedPatient) {
+              const timeStr = new Date(lateBookedPatient.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              const minsLate = Math.round((nowMs - new Date(lateBookedPatient.scheduledStart).getTime()) / 60000);
+              queueRecommendation = {
+                type: 'LATE_ARRIVAL',
+                badge: '⚠️ Late Arrival Review',
+                text: `${lateBookedPatient.patientName} (${lateBookedPatient.displayToken || 'A001'}) arrived ${minsLate}m late for ${timeStr} slot. Grace expired. Discretionary call into available gap.`,
+                actionAppt: lateBookedPatient,
+              };
+            }
+          } else if (topWalkinWaiting) {
+            queueRecommendation = {
+              type: 'WALKIN_NEXT',
+              badge: '🚶 Next in Queue',
+              text: `No upcoming on-time bookings. Call Walk-in ${topWalkinWaiting.patientName} (${topWalkinWaiting.displayToken || 'W001'}).`,
+              actionAppt: topWalkinWaiting,
+            };
+          } else if (lateBookedPatient) {
+            const timeStr = new Date(lateBookedPatient.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const minsLate = Math.round((nowMs - new Date(lateBookedPatient.scheduledStart).getTime()) / 60000);
+            queueRecommendation = {
+              type: 'LATE_ARRIVAL',
+              badge: '⚠️ Late Arrival Review',
+              text: `${lateBookedPatient.patientName} (${lateBookedPatient.displayToken || 'A001'}) arrived ${minsLate}m late for ${timeStr} slot. Call into chair now if operatory is free.`,
+              actionAppt: lateBookedPatient,
+            };
+          }
 
           return (
             <div className="hidden lg:block lg:col-span-4 space-y-4">
@@ -995,8 +1103,48 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
                   </span>
                 </div>
 
+                {/* Queue Priority Recommendation Banner */}
+                {queueRecommendation && (
+                  <div className={`p-3 rounded-xl border text-xs space-y-1.5 shadow-2xs ${
+                    queueRecommendation.type === 'BOOKED_PRIORITY'
+                      ? 'bg-teal-50 border-teal-300 text-teal-950'
+                      : queueRecommendation.type === 'GAP_AVAILABLE'
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
+                      : queueRecommendation.type === 'GRACE_PERIOD'
+                      ? 'bg-amber-50 border-amber-300 text-amber-950'
+                      : queueRecommendation.type === 'LATE_ARRIVAL'
+                      ? 'bg-orange-50 border-orange-300 text-orange-950'
+                      : 'bg-slate-50 border-slate-200 text-slate-900'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <span className="font-black text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-md bg-white/80 border border-current shadow-2xs">
+                        {queueRecommendation.badge}
+                      </span>
+                    </div>
+                    <p className="font-semibold text-[11px] leading-snug">
+                      {queueRecommendation.text}
+                    </p>
+                    {queueRecommendation.actionAppt && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (queueRecommendation?.actionAppt?.status === 'CALLED') {
+                            handleSeatPatient(queueRecommendation.actionAppt);
+                          } else {
+                            handleNotifyPatient(queueRecommendation?.actionAppt);
+                          }
+                        }}
+                        className="w-full py-1.5 px-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[11px] font-black transition cursor-pointer flex items-center justify-center gap-1 active:scale-95 mt-1"
+                      >
+                        <Bell className="w-3 h-3 text-amber-300" />
+                        <span>📢 Call Recommended: {queueRecommendation.actionAppt.patientName} ({queueRecommendation.actionAppt.displayToken || 'Token'})</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 {/* Big Action: Call Next Patient or Seat in Chair */}
-                {nextWaitingPatient && (
+                {!queueRecommendation?.actionAppt && nextWaitingPatient && (
                   <button
                     type="button"
                     onClick={() => {
@@ -1015,12 +1163,12 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
                     {nextWaitingPatient.status === 'CALLED' ? (
                       <>
                         <Armchair className="w-4 h-4" />
-                        <span>💺 Confirm Token #{nextWaitingPatient.tokenNumber || '—'} Seated in Chair</span>
+                        <span>💺 Confirm {nextWaitingPatient.displayToken || `Token #${nextWaitingPatient.tokenNumber || '—'}`} Seated in Chair</span>
                       </>
                     ) : (
                       <>
                         <BellRing className="w-4 h-4 animate-bounce" />
-                        <span>📢 Call / Notify Token #{nextWaitingPatient.tokenNumber || '—'} ({nextWaitingPatient.patientName})</span>
+                        <span>📢 Call / Notify {nextWaitingPatient.displayToken || `Token #${nextWaitingPatient.tokenNumber || '—'}`} ({nextWaitingPatient.patientName})</span>
                       </>
                     )}
                   </button>
@@ -1036,7 +1184,7 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    <span>🏥 In Clinic</span>
+                    <span>🏥 Waiting Queue</span>
                     <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
                       inClinicPatients.length > 0 ? 'bg-amber-100 text-amber-900' : 'bg-slate-200 text-slate-700'
                     }`}>
@@ -1052,9 +1200,9 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    <span>📅 Upcoming (Not Arrived)</span>
+                    <span>📅 Today's Bookings</span>
                     <span className="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded-full font-bold">
-                      {upcomingPatients.length}
+                      {todayPatients.length}
                     </span>
                   </button>
                 </div>
@@ -1065,35 +1213,24 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
                       <User className="w-5 h-5" />
                     </div>
                     <p className="text-xs font-bold text-slate-800">
-                      {queueTab === 'WAITING_IN_CLINIC' ? 'No Patients in Waiting Lobby' : 'No Upcoming Bookings Today'}
+                      {queueTab === 'WAITING_IN_CLINIC' ? 'No Patients in Waiting Lobby' : 'No Appointments Booked Today'}
                     </p>
                     <p className="text-[11px] text-slate-500 mt-1 leading-snug">
                       {queueTab === 'WAITING_IN_CLINIC'
                         ? 'Patients physically checked in at Front Desk will appear here with Token numbers.'
-                        : 'No additional scheduled visits booked for today.'}
+                        : 'No scheduled visits booked for today.'}
                     </p>
-                    {queueTab === 'WAITING_IN_CLINIC' && upcomingPatients.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setQueueTab('ALL_TODAY')}
-                        className="mt-3 text-xs font-bold text-teal-700 hover:text-teal-800 underline cursor-pointer"
-                      >
-                        View {upcomingPatients.length} scheduled visits (Not arrived yet)
-                      </button>
-                    )}
                   </div>
                 ) : (
                   <div className="space-y-2.5 max-h-[620px] overflow-y-auto">
-                    {queueTab === 'ALL_TODAY' && (
-                      <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-900 font-medium">
-                        ⚠️ These patients have booked appointments, but have <strong>not arrived</strong> at the clinic yet.
-                      </div>
-                    )}
                     {displayedPatients.map(appt => {
                       const isSelected = selectedAppt?.id === appt.id;
                       const isInChair = appt.status === 'IN_CHAIR';
                       const isCheckedIn = appt.status === 'CHECKED_IN';
                       const isCalled = appt.status === 'CALLED';
+                      const isBooked = appt.hasBookedSlot !== undefined ? appt.hasBookedSlot : (appt.arrivalType === 'ONLINE_BOOKING' || (!appt.reason?.toLowerCase().includes('walk-in') && appt.source !== 'SELF_QR'));
+                      const tokenNum = appt.tokenNumber || 1;
+                      const displayToken = appt.displayToken || `${isBooked ? 'A' : 'W'}${String(tokenNum).padStart(3, '0')}`;
 
                       return (
                         <div
@@ -1107,29 +1244,39 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
                         >
                           <div className="flex items-center justify-between">
                             <span className="font-black text-slate-900 text-sm truncate mr-2">{appt.patientName}</span>
-                            <span className={`font-mono text-xs px-2 py-0.5 rounded-md font-black shrink-0 ${
-                              isInChair
-                                ? 'bg-teal-600 text-white shadow-2xs'
-                                : isCheckedIn
-                                ? 'bg-amber-400 text-slate-950 shadow-2xs'
-                                : isCalled
-                                ? 'bg-cyan-500 text-slate-950'
-                                : 'bg-slate-100 text-slate-700 border border-slate-300'
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className={`font-mono text-xs px-2 py-0.5 rounded-md font-black shadow-2xs ${
+                                isBooked
+                                  ? 'bg-teal-700 text-white'
+                                  : 'bg-amber-400 text-slate-950'
+                              }`}>
+                                {displayToken}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                            <span className={`text-[10px] font-black uppercase px-1.5 py-0.2 rounded-md ${
+                              isBooked
+                                ? 'bg-blue-50 text-blue-900 border border-blue-200'
+                                : 'bg-amber-50 text-amber-900 border border-amber-200'
                             }`}>
-                              TOKEN #{appt.tokenNumber || '—'}
+                              {isBooked ? '🌐 Online Booking' : '🚶 Walk-In'}
+                            </span>
+                            <span className="text-[11px] text-slate-600 font-mono font-bold">
+                              Chair {totalChairs === 1 ? 1 : (appt.chairNumber || 1)} • {appt.patientUhid}
                             </span>
                           </div>
-                          <div className="text-xs text-slate-600 font-mono font-bold mt-1">
-                            Chair {totalChairs === 1 ? 1 : (appt.chairNumber || 1)} • {appt.patientUhid}
-                          </div>
+
                           <div className="text-xs text-slate-700 font-medium mt-1 line-clamp-1">
                             {appt.reason || 'General Dental Consultation'}
                           </div>
+
                           <div className="mt-2.5 pt-2 border-t border-slate-200 flex items-center justify-between text-xs">
                             <span className={`font-extrabold ${
                               isInChair ? 'text-teal-700 font-black' : isCalled ? 'text-cyan-700 font-black' : isCheckedIn ? 'text-amber-800' : 'text-slate-600'
                             }`}>
-                              {isInChair ? '🟢 IN CHAIR' : isCalled ? '🔔 CALLED' : isCheckedIn ? '🟡 IN LOBBY' : appt.status}
+                              {isInChair ? '🟢 IN CHAIR' : isCalled ? '🔔 CALLED' : isCheckedIn ? '🟡 IN LOBBY' : appt.status === 'SCHEDULED' ? '📅 UPCOMING' : appt.status}
                             </span>
                             <div className="flex items-center gap-1.5">
                               {isCheckedIn && (
@@ -1139,7 +1286,7 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
                                     e.stopPropagation();
                                     handleNotifyPatient(appt);
                                   }}
-                                  className="px-2 py-0.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded text-[10px] font-black transition cursor-pointer"
+                                  className="px-2 py-0.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded text-[10px] font-black transition cursor-pointer shadow-2xs"
                                   title="Call/Notify Patient"
                                 >
                                   📢 Call
@@ -1152,7 +1299,7 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
                                     e.stopPropagation();
                                     handleSeatPatient(appt);
                                   }}
-                                  className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-black transition cursor-pointer"
+                                  className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-black transition cursor-pointer shadow-2xs"
                                   title="Seat Patient in Chair"
                                 >
                                   💺 Seat

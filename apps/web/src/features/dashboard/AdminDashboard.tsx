@@ -51,7 +51,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [chairStatus, setChairStatus] = useState<Record<number, boolean>>({ 1: true, 2: true, 3: true });
   const [togglingChair, setTogglingChair] = useState<number | null>(null);
   const [showQrModal, setShowQrModal] = useState<boolean>(false);
-  const [qrModalTab, setQrModalTab] = useState<'BOTH' | 'CHECKIN' | 'WALKIN'>('BOTH');
+  const [qrModalTab, setQrModalTab] = useState<'UNIFIED' | 'BOTH' | 'CHECKIN' | 'WALKIN'>('UNIFIED');
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
   const [reconsultModalOpen, setReconsultModalOpen] = useState<boolean>(false);
   const [lobbyCode, setLobbyCode] = useState<string>('');
@@ -238,10 +238,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <button
             onClick={() => setShowQrModal(true)}
             className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-teal-300 font-bold text-xs flex items-center gap-1.5 border border-slate-700 cursor-pointer transition-all shadow-xs"
-            title="Hospital Lobby Dual Standee QR Codes (Booked Check-in & Walk-in)"
+            title="Hospital Lobby Standee QR Code (Unified Check-in & Walk-in)"
           >
             <QrCode className="w-4 h-4 text-teal-400" />
-            <span>Dual Standee QRs</span>
+            <span>Lobby Standee QR</span>
           </button>
           <button
             onClick={() => fetchDashboardData()}
@@ -1013,7 +1013,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
 
             {/* Tab Selector */}
-            <div className="flex items-center justify-center gap-2 mt-4 p-1 bg-slate-100 rounded-xl max-w-md mx-auto text-xs font-extrabold">
+            <div className="flex items-center justify-center gap-1.5 mt-4 p-1 bg-slate-100 rounded-xl max-w-lg mx-auto text-xs font-extrabold">
+              <button
+                type="button"
+                onClick={() => setQrModalTab('UNIFIED')}
+                className={`flex-1 py-1.5 px-3 rounded-lg transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                  qrModalTab === 'UNIFIED' ? 'bg-white text-teal-950 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span>⭐ One Permanent QR</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setQrModalTab('BOTH')}
@@ -1021,7 +1030,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   qrModalTab === 'BOTH' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Dual Standee (Both QRs)
+                Dual QRs
               </button>
               <button
                 type="button"
@@ -1030,7 +1039,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   qrModalTab === 'CHECKIN' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                1. Booked Check-in
+                1. Booked Only
               </button>
               <button
                 type="button"
@@ -1039,12 +1048,50 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   qrModalTab === 'WALKIN' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                2. Walk-in Registration
+                2. Walk-in Only
               </button>
             </div>
 
             {/* QR Display Area */}
             <div className="mt-5">
+              {qrModalTab === 'UNIFIED' && (
+                <div className="p-6 bg-slate-50 rounded-2xl border-2 border-teal-200/80 text-center max-w-sm mx-auto shadow-xs">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-teal-100 text-teal-900 rounded-full text-[11px] font-black uppercase tracking-wider mb-2">
+                    ⭐ Recommended: One Permanent Clinic QR
+                  </div>
+                  <p className="text-xs text-slate-600 mb-3 font-medium">
+                    Patients scan this single code at reception. Dentrinqo resolves your clinic and lets them choose <strong>"I Have a Booking"</strong> or <strong>"I Am a Walk-In"</strong> on the same screen.
+                  </p>
+                  <img
+                    src={checkinQrUrl}
+                    alt="Permanent Clinic Check-In Standee QR"
+                    className="w-52 h-52 mx-auto rounded-xl object-contain bg-white p-3 shadow-xs border border-slate-200"
+                  />
+                  <div className="mt-3 flex items-center justify-center gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(checkInUrl);
+                        setCopiedLink('unified');
+                        setTimeout(() => setCopiedLink(null), 2000);
+                      }}
+                      className="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-800 font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      {copiedLink === 'unified' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedLink === 'unified' ? 'Copied Link!' : 'Copy Standee Link'}</span>
+                    </button>
+                    <a
+                      href={checkInUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded-lg shadow-xs"
+                    >
+                      Open Live Page
+                    </a>
+                  </div>
+                </div>
+              )}
+
               {(qrModalTab === 'BOTH' || qrModalTab === 'CHECKIN') && (
                 <div className={`p-4 bg-slate-50 rounded-2xl border border-slate-200 inline-block m-2 text-center ${qrModalTab === 'BOTH' ? 'w-full sm:w-[46%]' : 'w-full sm:w-80'}`}>
                   <span className="text-xs font-black text-teal-900 uppercase tracking-wide block mb-1">

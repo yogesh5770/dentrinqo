@@ -57,6 +57,9 @@ interface Appointment {
   checkInTime?: string | null;
   isConfirmedAtDesk?: boolean;
   tokenNumber?: number;
+  displayToken?: string;
+  arrivalType?: string;
+  hasBookedSlot?: boolean;
   trackingCode?: string;
   expectedChairNumber?: number;
   needsVerification?: boolean;
@@ -69,6 +72,21 @@ interface ReceptionDashboardProps {
 }
 
 export type QueueTab = 'WAITING_LOBBY' | 'IN_TREATMENT' | 'READY_BILLING' | 'SCHEDULED' | 'COMPLETED' | 'ALL';
+
+export const getDisplayToken = (appt: Appointment | any) => {
+  if (appt?.displayToken) return appt.displayToken;
+  const isBooked = appt?.hasBookedSlot !== undefined
+    ? Boolean(appt.hasBookedSlot)
+    : (appt?.arrivalType === 'ONLINE_BOOKING' || (!appt?.reason?.toLowerCase().includes('walk-in') && appt?.source !== 'SELF_QR'));
+  const num = appt?.tokenNumber || 1;
+  return `${isBooked ? 'A' : 'W'}${String(num).padStart(3, '0')}`;
+};
+
+export const isBookedAppt = (appt: Appointment | any) => {
+  return appt?.hasBookedSlot !== undefined
+    ? Boolean(appt.hasBookedSlot)
+    : (appt?.arrivalType === 'ONLINE_BOOKING' || (!appt?.reason?.toLowerCase().includes('walk-in') && appt?.source !== 'SELF_QR'));
+};
 
 export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
   onOpenNewPatient,
@@ -946,13 +964,13 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
             const isToggling = togglingChair === num;
             const currentPatient = appointments.find(a => a.status === 'IN_CHAIR' && (totalChairs === 1 || a.chairNumber === num));
             const calledPatient = appointments.find(a => a.status === 'CALLED' && (totalChairs === 1 || a.chairNumber === num));
-            const currentTokenIdx = currentPatient?.tokenNumber || (currentPatient ? sortedFiltered.findIndex(a => a.id === currentPatient.id) + 1 : null);
-            const calledTokenIdx = calledPatient?.tokenNumber || (calledPatient ? sortedFiltered.findIndex(a => a.id === calledPatient.id) + 1 : null);
+            const currentTokenIdx = currentPatient ? getDisplayToken(currentPatient) : null;
+            const calledTokenIdx = calledPatient ? getDisplayToken(calledPatient) : null;
             const waitingLobby = appointments
               .filter(a => a.status === 'CHECKED_IN' && (totalChairs === 1 || a.chairNumber === num || !a.chairNumber))
               .sort((a, b) => (a.tokenNumber || 0) - (b.tokenNumber || 0));
             const nextWaiting = waitingLobby[0];
-            const nextWaitingToken = nextWaiting?.tokenNumber;
+            const nextWaitingToken = nextWaiting ? getDisplayToken(nextWaiting) : null;
             const chairActiveQueue = appointments.filter(a => (totalChairs === 1 || a.chairNumber === num) && ['CHECKED_IN', 'CALLED', 'IN_CHAIR'].includes(a.status)).length;
 
             // Check if next waiting patient requested a specific doctor
@@ -1035,7 +1053,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                     <div className="space-y-1.5 bg-white p-2.5 rounded-xl border border-amber-300 shadow-2xs">
                       <div className="flex items-center justify-between">
                         <span className="font-mono font-black text-[11px] bg-amber-500 text-slate-950 px-1.5 py-0.5 rounded animate-pulse">
-                          PAGED TOKEN #{calledTokenIdx}
+                          PAGED TOKEN {calledTokenIdx}
                         </span>
                         <span className="text-[10px] font-bold text-amber-900">
                           Walking in from lobby
@@ -1054,8 +1072,10 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                   ) : currentPatient ? (
                     <div className="space-y-1.5 bg-white p-2.5 rounded-xl border border-rose-200/80 shadow-2xs">
                       <div className="flex items-center justify-between">
-                        <span className="font-mono font-black text-[11px] bg-slate-900 text-white px-1.5 py-0.5 rounded">
-                          TOKEN #{currentTokenIdx}
+                        <span className={`font-mono font-black text-[11px] px-1.5 py-0.5 rounded ${
+                          isBookedAppt(currentPatient) ? 'bg-teal-700 text-white' : 'bg-amber-400 text-slate-950'
+                        }`}>
+                          TOKEN {currentTokenIdx}
                         </span>
                         <span className="text-[10px] font-bold text-slate-500">
                           Dr. {currentPatient.dentistName}
@@ -1079,7 +1099,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                       </p>
                       <p className="text-[11px] text-slate-500 font-medium mt-0.5">
                         {nextWaiting
-                          ? `Next waiting in lobby: ${nextWaiting.patientName} (Token #${nextWaitingToken})`
+                          ? `Next waiting in lobby: ${nextWaiting.patientName} (${nextWaitingToken})`
                           : 'No patients waiting in lobby right now.'}
                       </p>
                     </div>
@@ -1219,14 +1239,19 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                     <div className="text-sm font-black text-white flex items-center gap-1.5 flex-wrap">
                       {inChairAppt ? (
                         <>
-                          <span className="text-amber-400 font-mono">TOKEN #{inChairAppt.tokenNumber || '—'}</span>
+                          <span className={`font-mono text-xs px-2 py-0.5 rounded font-black ${
+                            isBookedAppt(inChairAppt) ? 'bg-teal-700 text-white' : 'bg-amber-400 text-slate-950'
+                          }`}>
+                            {getDisplayToken(inChairAppt)}
+                          </span>
                           <span>• {inChairAppt.patientName}</span>
-                          <span className="text-xs text-slate-400 font-medium">(Chair #{inChairAppt.chairNumber})</span>
+                          <span className="text-xs text-slate-400 font-medium">({isBookedAppt(inChairAppt) ? '🌐 Online Booking' : '🏥 Walk-In'} • Chair #{inChairAppt.chairNumber})</span>
                         </>
                       ) : calledAppt ? (
                         <>
-                          <span className="text-amber-400 font-mono animate-pulse">CALLING TOKEN #{calledAppt.tokenNumber || '—'}</span>
+                          <span className="text-amber-400 font-mono animate-pulse">CALLING TOKEN {getDisplayToken(calledAppt)}</span>
                           <span>• {calledAppt.patientName}</span>
+                          <span className="text-xs text-slate-400 font-medium">({isBookedAppt(calledAppt) ? '🌐 Online Booking' : '🏥 Walk-In'})</span>
                         </>
                       ) : (
                         <span className="text-emerald-400">🟢 Operatory Chair Free & Sanitized</span>
@@ -1249,10 +1274,19 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                     <div className="text-sm font-black text-white flex items-center gap-1.5 flex-wrap">
                       {nextUp ? (
                         <>
-                          <span className="bg-amber-400 text-slate-950 font-mono font-black text-xs px-2 py-0.5 rounded">
-                            TOKEN #{nextUp.tokenNumber || '—'}
+                          <span className={`font-mono font-black text-xs px-2 py-0.5 rounded ${
+                            isBookedAppt(nextUp) ? 'bg-teal-700 text-white' : 'bg-amber-400 text-slate-950'
+                          }`}>
+                            {getDisplayToken(nextUp)}
                           </span>
                           <span className="text-white">{nextUp.patientName}</span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            isBookedAppt(nextUp)
+                              ? 'bg-teal-900/60 text-teal-300 border border-teal-500/30'
+                              : 'bg-amber-900/60 text-amber-300 border border-amber-500/30'
+                          }`}>
+                            {isBookedAppt(nextUp) ? '🌐 Online Booking' : '🚶 Walk-In'}
+                          </span>
                           <span className="text-xs text-emerald-400 font-bold bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-full">
                             #1 in Queue
                           </span>
@@ -1273,7 +1307,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                     className="px-4 py-2 bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-600 hover:to-emerald-700 text-slate-950 font-black text-xs rounded-xl shadow-md transition cursor-pointer flex items-center gap-1.5 active:scale-95"
                   >
                     <Armchair className="w-4 h-4" />
-                    <span>📢 Call Token #{nextUp.tokenNumber} to Chair</span>
+                    <span>📢 Call Token {getDisplayToken(nextUp)} to Chair</span>
                   </button>
                 )}
                 <span className="text-xs font-bold text-slate-300 bg-white/5 border border-white/10 px-3 py-1.5 rounded-xl">
@@ -1466,8 +1500,17 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-900 text-white font-mono font-black text-[11px] shadow-2xs">
-                            TOKEN #{appt.tokenNumber || (idx + 1)}
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-md font-mono font-black text-[11px] shadow-2xs ${
+                            isBookedAppt(appt) ? 'bg-teal-700 text-white' : 'bg-amber-400 text-slate-950'
+                          }`}>
+                            {getDisplayToken(appt)}
+                          </span>
+                          <span className={`px-1.5 py-0.2 rounded-md font-black text-[10px] uppercase ${
+                            isBookedAppt(appt)
+                              ? 'bg-blue-100 text-blue-900 border border-blue-300'
+                              : 'bg-amber-100 text-amber-900 border border-amber-300'
+                          }`}>
+                            {isBookedAppt(appt) ? '🌐 Online' : '🚶 Walk-In'}
                           </span>
                           {appt.status === 'CHECKED_IN' && (() => {
                             const waitingList = appointments
@@ -1506,15 +1549,6 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                         </div>
                         <div className="text-xs text-slate-500 font-mono font-bold mt-0.5 flex items-center gap-2 flex-wrap">
                           <span>{appt.patientUhid} • {appt.patientPhone}</span>
-                          {isWalkin ? (
-                            <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-black text-[10px]">
-                              🏥 WALK-IN
-                            </span>
-                          ) : (
-                            <span className="px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-900 border border-blue-300 font-black text-[10px]">
-                              🌐 ONLINE
-                            </span>
-                          )}
                           {appt.needsVerification && (
                             <button
                               onClick={() => setVerifyPatientModal({
@@ -1729,8 +1763,17 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                       >
                         <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
                           <div className="flex items-center gap-2">
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-900 text-white font-mono font-black text-xs shadow-2xs">
-                              TOKEN #{appt.tokenNumber || (idx + 1)}
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-md font-mono font-black text-xs shadow-2xs ${
+                              isBookedAppt(appt) ? 'bg-teal-700 text-white' : 'bg-amber-400 text-slate-950'
+                            }`}>
+                              {getDisplayToken(appt)}
+                            </span>
+                            <span className={`px-1.5 py-0.2 rounded-md font-sans font-black text-[10px] uppercase ${
+                              isBookedAppt(appt)
+                                ? 'bg-blue-100 text-blue-900 border border-blue-300'
+                                : 'bg-amber-100 text-amber-900 border border-amber-300'
+                            }`}>
+                              {isBookedAppt(appt) ? '🌐 Online' : '🚶 Walk-In'}
                             </span>
                             {appt.status === 'CHECKED_IN' && (() => {
                               const waitingList = appointments
@@ -1751,7 +1794,7 @@ export const ReceptionDashboard: React.FC<ReceptionDashboardProps> = ({
                           </div>
                           <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
                             <span className="text-[11px] text-slate-500 font-sans font-medium">
-                              {appt.durationMinutes}m • {isWalkin ? '🏥 Walk-In' : '🌐 Online'}
+                              {appt.durationMinutes}m • {appt.reason || 'General Dental Consultation'}
                             </span>
                             {isOverdue && (
                               <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-black animate-pulse">

@@ -462,6 +462,7 @@ export class PatientsService {
           reason: data.reason || `Archived Patient Return (Card Sl. No: ${patient.legacySlNo || 'N/A'})`,
           status: 'CHECKED_IN',
           checkInTime: now,
+          hasBookedSlot: false,
           isReappearance: true,
           legacySlNo: patient.legacySlNo || null,
           notes: data.notes || `Reappeared from physical archives on ${now.toISOString().split('T')[0]}`,

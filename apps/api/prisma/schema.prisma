@@ -257,6 +257,7 @@ model Appointment {
   confirmedAtDeskAt DateTime?
   confirmedByStaffId String?
   checkInSource   String?  @default("DESK") // "SELF_QR", "DESK", "PHONE"
+  hasBookedSlot   Boolean  @default(false)
   tokenNumber     Int?
   trackingCode    String?   @unique
   expectedChairNumber Int?

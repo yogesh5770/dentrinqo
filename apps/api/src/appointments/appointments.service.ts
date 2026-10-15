@@ -538,6 +538,7 @@ export class AppointmentsService {
               reason: dto.reason.trim(),
               status: dto.status || 'SCHEDULED',
               checkInTime: dto.status === 'CHECKED_IN' ? new Date() : null,
+              hasBookedSlot: dto.status !== 'CHECKED_IN',
               notes: dto.notes,
             },
             include: {
@@ -640,6 +641,7 @@ export class AppointmentsService {
                 reason: dto.reason.trim(),
                 status: dto.status || 'SCHEDULED',
                 checkInTime: dto.status === 'CHECKED_IN' ? new Date() : null,
+                hasBookedSlot: dto.status !== 'CHECKED_IN',
                 notes: dto.notes,
               },
               include: {
@@ -1109,6 +1111,14 @@ export class AppointmentsService {
       }
     };
 
+    const isBooked = a.hasBookedSlot !== undefined 
+      ? Boolean(a.hasBookedSlot) 
+      : (a.checkInSource !== 'SELF_QR' && !a.reason?.toLowerCase().includes('walk-in'));
+    const tokenNum = a.tokenNumber || 1;
+    const prefix = isBooked ? 'A' : 'W';
+    const displayToken = `${prefix}${String(tokenNum).padStart(3, '0')}`;
+    const arrivalType = isBooked ? 'ONLINE_BOOKING' : 'WALK_IN';
+
     return {
       id: a.id,
       clinicId: a.clinicId,
@@ -1127,6 +1137,9 @@ export class AppointmentsService {
       chairNumber: a.chairNumber,
       expectedChairNumber: a.expectedChairNumber,
       tokenNumber: a.tokenNumber,
+      displayToken: a.tokenNumber ? displayToken : null,
+      hasBookedSlot: isBooked,
+      arrivalType,
       trackingCode: a.trackingCode,
       preferredDentistId: a.preferredDentistId,
       isConfirmedAtDesk: a.isConfirmedAtDesk || false,
@@ -1510,6 +1523,7 @@ export class AppointmentsService {
                 : `[Public Request] ${dto.service} (${dto.preferredSlot})`,
               status: initialStatus,
               checkInTime,
+              hasBookedSlot: !isWalkin,
               isConfirmedAtDesk: isWalkin,
               checkInSource: isWalkin ? 'SELF_QR' : 'ONLINE',
               tokenNumber,
@@ -1872,6 +1886,7 @@ export class AppointmentsService {
           reason: dto.reason || 'General Dental Consultation',
           status: 'CHECKED_IN',
           checkInTime: now,
+          hasBookedSlot: false,
           isConfirmedAtDesk: true,
           confirmedAtDeskAt: now,
           confirmedByStaffId: staffUser.userId || staffUser.id,
@@ -1885,11 +1900,16 @@ export class AppointmentsService {
       const shortId = appt.id.replace(/-/g, '').substring(0, 5).toUpperCase();
       const reference = `${clinic?.code || 'AKS'}-${now.getFullYear()}-${shortId}`;
 
+      const displayToken = `W${String(tokenNumber).padStart(3, '0')}`;
+
       return {
         success: true,
         appointmentId: appt.id,
         reference,
         tokenNumber,
+        displayToken,
+        arrivalType: 'WALK_IN',
+        hasBookedSlot: false,
         trackingCode,
         trackingUrl: `/track/${trackingCode}`,
         chairNumber: isImmediateSeat ? expectedChair : null,
@@ -2746,12 +2766,18 @@ export class AppointmentsService {
         isCalling: ic.status === 'CALLED',
       }));
 
+      const tokenNum = tokenNumber || 1;
+      const displayToken = `A${String(tokenNum).padStart(3, '0')}`;
+
       return {
         success: true,
         alreadyCheckedIn: isLockedAlreadyCheckedIn,
         status: finalAppt.status,
         reference: ref,
         tokenNumber,
+        displayToken,
+        arrivalType: 'ONLINE_BOOKING',
+        hasBookedSlot: true,
         currentlyAhead,
         activeChairsServing,
         checkInSource: 'SELF_QR',
@@ -2768,8 +2794,8 @@ export class AppointmentsService {
         clinicPhone: finalAppt.clinic?.phone || '',
         intakeToken: this.generateIntakeToken(clinic.id, finalAppt.patient.id, finalAppt.id),
         message: isLockedAlreadyCheckedIn
-          ? `You are already checked in! Your Token is #${tokenNumber}. Please take a seat in the waiting lobby.`
-          : `Check-in successful! Your Token is #${tokenNumber}. Please take a seat in the waiting lobby.`,
+          ? `You are already checked in! Your Token is ${displayToken}. Please take a seat in the waiting lobby.`
+          : `Check-in successful! Your Token is ${displayToken}. Please take a seat in the waiting lobby.`,
       };
     });
   }
@@ -2899,11 +2925,17 @@ export class AppointmentsService {
           const shortId = existingActiveAppt.id.replace(/-/g, '').substring(0, 5).toUpperCase();
           const reference = `${clinic.code}-${now.getFullYear()}-${shortId}`;
 
+          const tokenNum = existingActiveAppt.tokenNumber || 1;
+          const displayToken = `W${String(tokenNum).padStart(3, '0')}`;
+
           return {
             success: true,
             alreadyCheckedIn: true,
             reference,
             tokenNumber: existingActiveAppt.tokenNumber,
+            displayToken,
+            arrivalType: 'WALK_IN',
+            hasBookedSlot: false,
             trackingCode: existingActiveAppt.trackingCode,
             trackingUrl: existingActiveAppt.trackingCode ? `/track/${existingActiveAppt.trackingCode}` : undefined,
             chairNumber: existingActiveAppt.chairNumber || 1,
@@ -2918,7 +2950,7 @@ export class AppointmentsService {
             clinicName: clinic.name,
             clinicPhone: clinic.phone,
             clinicAddress: clinic.address,
-            message: `Welcome back to ${clinic.name}! You are already registered and checked in. Your Token is #${existingActiveAppt.tokenNumber}. Please take a seat in the waiting lobby.`,
+            message: `Welcome back to ${clinic.name}! You are already registered and checked in. Your Token is ${displayToken}. Please take a seat in the waiting lobby.`,
           };
         }
       }
@@ -3091,6 +3123,7 @@ export class AppointmentsService {
           reason,
           status: 'CHECKED_IN',
           checkInTime: now,
+          hasBookedSlot: false,
           isConfirmedAtDesk: true,
           checkInSource: 'SELF_QR',
           tokenNumber,
@@ -3118,11 +3151,15 @@ export class AppointmentsService {
 
       const shortId = appt.id.replace(/-/g, '').substring(0, 5).toUpperCase();
       const reference = `${clinic.code}-${now.getFullYear()}-${shortId}`;
+      const displayToken = `W${String(tokenNumber).padStart(3, '0')}`;
 
       return {
         success: true,
         reference,
         tokenNumber,
+        displayToken,
+        arrivalType: 'WALK_IN',
+        hasBookedSlot: false,
         trackingCode,
         trackingUrl: `/track/${trackingCode}`,
         chairNumber: expectedChair,
@@ -3138,7 +3175,7 @@ export class AppointmentsService {
         clinicPhone: clinic.phone,
         clinicAddress: clinic.address,
         intakeToken: this.generateIntakeToken(clinic.id, patient.id, appt.id),
-        message: `Welcome to ${clinic.name}! Walk-in check-in successful. Your Token is #${tokenNumber}. Please take a seat in the waiting lobby.`,
+        message: `Welcome to ${clinic.name}! Walk-in check-in successful. Your Token is ${displayToken}. Please take a seat in the waiting lobby.`,
       };
     });
   }
