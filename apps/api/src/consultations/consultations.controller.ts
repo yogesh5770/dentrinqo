@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { ConsultationsService } from './consultations.service';
 import { CreateConsultationDto, AmendConsultationDto } from './consultation.dto';
@@ -27,6 +27,7 @@ export class ConsultationsController {
   }
 
   @Post(':id/finalize')
+  @Patch(':id/finalize')
   @Roles('DENTIST', 'CLINIC_ADMIN')
   @ApiOperation({ summary: 'Finalize and lock a consultation against direct edits' })
   async finalize(@CurrentUser() user: any, @Param('id') id: string) {

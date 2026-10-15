@@ -17,6 +17,53 @@ export class ConsultationsService {
       });
       if (!patient) throw new NotFoundException('Patient record not found');
 
+      // If linked to an appointment, check if draft already exists
+      if (dto.appointmentId) {
+        const existing = await tx.consultation.findUnique({
+          where: { appointmentId: dto.appointmentId },
+          include: {
+            dentist: { select: { fullName: true } },
+            patient: { select: { fullName: true, uhid: true } },
+          },
+        });
+
+        if (existing) {
+          if (existing.isFinalized) {
+            throw new BadRequestException('Consultation record is already finalized. Please submit an amendment instead.');
+          }
+
+          const updated = await tx.consultation.update({
+            where: { id: existing.id },
+            data: {
+              chiefComplaint: dto.chiefComplaint.trim(),
+              clinicalExamination: dto.clinicalExamination.trim(),
+              diagnosis: dto.diagnosis.trim(),
+              clinicalNotes: dto.clinicalNotes?.trim() || null,
+            },
+            include: {
+              dentist: { select: { fullName: true } },
+              patient: { select: { fullName: true, uhid: true } },
+            },
+          });
+
+          await this.auditService.log({
+            clinicId,
+            actorId: actor.userId || actor.id,
+            actorRole: actor.role || 'DENTIST',
+            action: 'CONSULTATION_UPDATED',
+            entityType: 'Consultation',
+            entityId: updated.id,
+            details: {
+              patientUhid: updated.patient.uhid,
+              dentist: updated.dentist.fullName,
+              diagnosis: updated.diagnosis,
+            },
+          }, tx);
+
+          return updated;
+        }
+      }
+
       const consultation = await tx.consultation.create({
         data: {
           clinicId,

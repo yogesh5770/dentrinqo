@@ -30,6 +30,12 @@ export class AuthGuard implements CanActivate {
     // Attach user payload to request
     (request as any).user = payload;
 
+    // Verify account active status to prevent deactivated staff retaining access until JWT expiration (SEC-07)
+    const isUserActive = await this.authService.isAccountActive(payload.userId, payload.clinicId);
+    if (!isUserActive) {
+      throw new UnauthorizedException('Account deactivated or disabled. Session revoked.');
+    }
+
     // Tenant mismatch check: Ensure user session clinic matches host-resolved tenant
     const hostClinicId = (request as any).clinicId || ((request as any).tenantClinic && (request as any).tenantClinic.id);
     if (hostClinicId && payload.clinicId && hostClinicId !== payload.clinicId) {

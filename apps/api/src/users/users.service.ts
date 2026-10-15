@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { AuthService } from '../auth/auth.service';
 import { hash } from '@node-rs/argon2';
 import * as crypto from 'crypto';
 
@@ -84,6 +85,7 @@ export class UsersService {
           employeeId: true,
           licenseNumber: true,
           specialization: true,
+          assignedChairNumber: true,
           mustChangePassword: true,
           isActive: true,
           lastLoginAt: true,
@@ -116,6 +118,7 @@ export class UsersService {
           employeeId: true,
           licenseNumber: true,
           specialization: true,
+          assignedChairNumber: true,
           mustChangePassword: true,
           isActive: true,
           lastLoginAt: true,
@@ -319,6 +322,7 @@ export class UsersService {
           employeeId: data.employeeId?.trim(),
           licenseNumber: data.licenseNumber?.trim(),
           specialization: data.specialization?.trim(),
+          ...(data.assignedChairNumber !== undefined ? { assignedChairNumber: data.assignedChairNumber } : {}),
           ...(data.permissions !== undefined
             ? {
                 permissions: Array.isArray(data.permissions)
@@ -338,10 +342,16 @@ export class UsersService {
           designation: true,
           department: true,
           employeeId: true,
+          licenseNumber: true,
+          specialization: true,
+          assignedChairNumber: true,
           isActive: true,
           mustChangePassword: true,
         },
       });
+
+      // Invalidate cached authorization status on role/permission updates
+      AuthService.invalidateUserStatus(id);
 
       await this.auditService.log({
         clinicId,
@@ -388,6 +398,9 @@ export class UsersService {
         },
       });
 
+      // Immediately invalidate cached authorization status for this user
+      AuthService.invalidateUserStatus(id);
+
       await this.auditService.log({
         clinicId,
         actorId: actor.userId || actor.id,
@@ -399,6 +412,62 @@ export class UsersService {
       }, tx);
 
       return updated;
+    });
+  }
+
+  /**
+   * Assign a default operatory chair to a clinical dentist.
+   */
+  async assignChair(clinicId: string, id: string, assignedChairNumber: number | null, actor: any) {
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      const user = await tx.user.findFirst({ where: { id, clinicId } });
+      if (!user) throw new NotFoundException('Staff member not found');
+
+      if (user.role !== 'DENTIST' && user.role !== 'CLINIC_ADMIN') {
+        throw new BadRequestException('Chairs can only be assigned to clinical dentists');
+      }
+
+      const clinic = await tx.clinic.findUnique({ where: { id: clinicId } });
+      const maxChairs = clinic?.chairCount || 3;
+
+      if (assignedChairNumber !== null && assignedChairNumber !== undefined) {
+        if (assignedChairNumber < 1 || assignedChairNumber > maxChairs) {
+          throw new BadRequestException(`Operatory chair number must be between 1 and ${maxChairs}`);
+        }
+      }
+
+      const updated = await tx.user.update({
+        where: { id },
+        data: { assignedChairNumber: assignedChairNumber || null },
+        select: {
+          id: true,
+          fullName: true,
+          role: true,
+          specialization: true,
+          assignedChairNumber: true,
+        },
+      });
+
+      await this.auditService.log({
+        clinicId,
+        actorId: actor?.userId || actor?.id,
+        actorRole: actor?.role || 'STAFF',
+        action: 'DENTIST_CHAIR_ASSIGNED',
+        entityType: 'User',
+        entityId: id,
+        details: {
+          dentistName: user.fullName,
+          assignedChairNumber: assignedChairNumber || null,
+        },
+      }, tx);
+
+      return {
+        success: true,
+        message: assignedChairNumber
+          ? `Chair #${assignedChairNumber} successfully assigned to Dr. ${user.fullName}`
+          : `Chair assignment cleared for Dr. ${user.fullName}`,
+        dentist: updated,
+      };
     });
   }
 }

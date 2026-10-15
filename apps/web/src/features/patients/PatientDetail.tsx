@@ -47,9 +47,22 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
   const [patient, setPatient] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Active Tab - 6 clinical tabs including Physical Archive
+  // Active Tab - 6 clinical tabs including Physical Archive with 0ms Keep-Alive caching
   const [activeTab, setActiveTab] = useState<'clinical' | 'archive' | 'imaging' | 'prescriptions' | 'billing' | 'consent'>('clinical');
+  const [visitedTabs, setVisitedTabs] = useState<Record<string, boolean>>({ clinical: true });
+
+  const handleTabChange = (tab: 'clinical' | 'archive' | 'imaging' | 'prescriptions' | 'billing' | 'consent') => {
+    setActiveTab(tab);
+    setVisitedTabs(prev => prev[tab] ? prev : { ...prev, [tab]: true });
+  };
+
   const [clinicalSubTab, setClinicalSubTab] = useState<'chart' | 'plans' | 'procedures' | 'consultations' | 'appointments'>('chart');
+  const [visitedSubTabs, setVisitedSubTabs] = useState<Record<string, boolean>>({ chart: true });
+
+  const handleSubTabChange = (subTab: 'chart' | 'plans' | 'procedures' | 'consultations' | 'appointments') => {
+    setClinicalSubTab(subTab);
+    setVisitedSubTabs(prev => prev[subTab] ? prev : { ...prev, [subTab]: true });
+  };
 
   // Billing state
   const [billingData, setBillingData] = useState<any | null>(null);
@@ -92,7 +105,7 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
       fetchPatient(true);
       fetchBilling();
     }
-  });
+  }, { enablePolling: false });
 
   if (loading) {
     return <div className="p-12 text-center text-xs font-bold text-slate-500">Loading patient medical chart...</div>;
@@ -219,8 +232,8 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
       <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-slate-100 rounded-2xl border border-slate-200 mb-4">
         <button
           type="button"
-          onClick={() => setActiveTab('clinical')}
-          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+          onClick={() => handleTabChange('clinical')}
+          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-colors cursor-pointer ${
             activeTab === 'clinical'
               ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
@@ -232,8 +245,8 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
 
         <button
           type="button"
-          onClick={() => setActiveTab('archive')}
-          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+          onClick={() => handleTabChange('archive')}
+          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-colors cursor-pointer ${
             activeTab === 'archive'
               ? 'bg-amber-500 text-white shadow-xs font-black'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
@@ -250,8 +263,8 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
 
         <button
           type="button"
-          onClick={() => setActiveTab('imaging')}
-          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+          onClick={() => handleTabChange('imaging')}
+          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-colors cursor-pointer ${
             activeTab === 'imaging'
               ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
@@ -263,8 +276,8 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
 
         <button
           type="button"
-          onClick={() => setActiveTab('prescriptions')}
-          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+          onClick={() => handleTabChange('prescriptions')}
+          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-colors cursor-pointer ${
             activeTab === 'prescriptions'
               ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
@@ -276,8 +289,8 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
 
         <button
           type="button"
-          onClick={() => setActiveTab('billing')}
-          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+          onClick={() => handleTabChange('billing')}
+          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-colors cursor-pointer ${
             activeTab === 'billing'
               ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
@@ -289,8 +302,8 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
 
         <button
           type="button"
-          onClick={() => setActiveTab('consent')}
-          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+          onClick={() => handleTabChange('consent')}
+          className={`flex items-center gap-1.5 py-2 px-3 sm:px-3.5 rounded-xl text-xs font-black transition-colors cursor-pointer ${
             activeTab === 'consent'
               ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
@@ -301,15 +314,15 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
         </button>
       </div>
 
-      {/* TAB 1: Clinical Care & Procedures (Sub-grouped) */}
-      {activeTab === 'clinical' && (
-        <div className="space-y-4">
+      {/* TAB 1: Clinical Care & Procedures (Sub-grouped with 0ms Keep-Alive) */}
+      {visitedTabs.clinical && (
+        <div className={activeTab === 'clinical' ? 'space-y-4' : 'hidden'}>
           {/* Sub-tab pills - Fully Responsive */}
           <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-200 text-xs font-black mb-4">
             <button
               type="button"
-              onClick={() => setClinicalSubTab('chart')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              onClick={() => handleSubTabChange('chart')}
+              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
                 clinicalSubTab === 'chart'
                   ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80 font-black'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
@@ -319,8 +332,8 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
             </button>
             <button
               type="button"
-              onClick={() => setClinicalSubTab('plans')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              onClick={() => handleSubTabChange('plans')}
+              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
                 clinicalSubTab === 'plans'
                   ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80 font-black'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
@@ -330,8 +343,8 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
             </button>
             <button
               type="button"
-              onClick={() => setClinicalSubTab('procedures')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              onClick={() => handleSubTabChange('procedures')}
+              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
                 clinicalSubTab === 'procedures'
                   ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80 font-black'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
@@ -341,8 +354,8 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
             </button>
             <button
               type="button"
-              onClick={() => setClinicalSubTab('consultations')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              onClick={() => handleSubTabChange('consultations')}
+              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
                 clinicalSubTab === 'consultations'
                   ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80 font-black'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
@@ -352,8 +365,8 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
             </button>
             <button
               type="button"
-              onClick={() => setClinicalSubTab('appointments')}
-              className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+              onClick={() => handleSubTabChange('appointments')}
+              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
                 clinicalSubTab === 'appointments'
                   ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80 font-black'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
@@ -363,8 +376,8 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
             </button>
           </div>
 
-          {clinicalSubTab === 'chart' && (
-            <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs">
+          {visitedSubTabs.chart && (
+            <div className={`clinic-card p-6 bg-white border border-slate-200 shadow-xs ${clinicalSubTab === 'chart' ? 'block' : 'hidden'}`}>
               <FdiDentalChart
                 patientId={patient.id}
                 readOnly={false}
@@ -372,20 +385,20 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
             </div>
           )}
 
-          {clinicalSubTab === 'plans' && (
-            <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs">
+          {visitedSubTabs.plans && (
+            <div className={`clinic-card p-6 bg-white border border-slate-200 shadow-xs ${clinicalSubTab === 'plans' ? 'block' : 'hidden'}`}>
               <TreatmentPlanManager
                 patientId={patient.id}
                 onProcedureCompleted={() => {
-                  fetchPatient();
+                  fetchPatient(true);
                   fetchBilling();
                 }}
               />
             </div>
           )}
 
-          {clinicalSubTab === 'procedures' && (
-            <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs">
+          {visitedSubTabs.procedures && (
+            <div className={`clinic-card p-6 bg-white border border-slate-200 shadow-xs ${clinicalSubTab === 'procedures' ? 'block' : 'hidden'}`}>
               <ProcedureLogger
                 patientId={patient.id}
                 onOpenBillingWithProcedures={() => {
@@ -395,8 +408,8 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
             </div>
           )}
 
-          {clinicalSubTab === 'consultations' && (
-            <div className="space-y-4">
+          {visitedSubTabs.consultations && (
+            <div className={`space-y-4 ${clinicalSubTab === 'consultations' ? 'block' : 'hidden'}`}>
               {(!patient.consultations || patient.consultations.length === 0) ? (
                 <div className="clinic-card p-8 text-center text-xs text-slate-500 font-semibold bg-white border border-slate-200">
                   No previous clinical consultations recorded for this patient.
@@ -448,8 +461,8 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
             </div>
           )}
 
-          {clinicalSubTab === 'appointments' && (
-            <div className="clinic-card bg-white border border-slate-200 overflow-hidden shadow-xs">
+          {visitedSubTabs.appointments && (
+            <div className={`clinic-card bg-white border border-slate-200 overflow-hidden shadow-xs ${clinicalSubTab === 'appointments' ? 'block' : 'hidden'}`}>
               {(!patient.appointments || patient.appointments.length === 0) ? (
                 <div className="p-8 text-center text-xs text-slate-500 font-semibold">
                   No appointments found for this patient.
@@ -490,38 +503,44 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
       )}
 
       {/* TAB 2: Physical Paper Case Sheet Archive & Reappearance */}
-      {activeTab === 'archive' && (
-        <CaseSheetPhysicalArchive
-          patient={patient}
-          onRefreshPatient={() => {
-            fetchPatient();
-            fetchBilling();
-          }}
-        />
-      )}
-
-      {/* TAB 3: Digital Dental Imaging & X-Rays */}
-      {activeTab === 'imaging' && (
-        <MedicalFilesGallery
-          patientId={patient.id}
-          patientName={patient.fullName}
-          patientUhid={patient.uhid}
-        />
-      )}
-
-      {/* TAB 4: Prescriptions */}
-      {activeTab === 'prescriptions' && (
-        <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs">
-          <PrescriptionDesk
-            patientId={patient.id}
-            patientAllergies={patient.allergies}
+      {visitedTabs.archive && (
+        <div className={activeTab === 'archive' ? 'block' : 'hidden'}>
+          <CaseSheetPhysicalArchive
+            patient={patient}
+            onRefreshPatient={() => {
+              fetchPatient(true);
+              fetchBilling();
+            }}
           />
         </div>
       )}
 
-      {/* TAB 4: Billing & Financial Ledger */}
-      {activeTab === 'billing' && (
-        <div className="space-y-6">
+      {/* TAB 3: Digital Dental Imaging & X-Rays */}
+      {visitedTabs.imaging && (
+        <div className={activeTab === 'imaging' ? 'block' : 'hidden'}>
+          <MedicalFilesGallery
+            patientId={patient.id}
+            patientName={patient.fullName}
+            patientUhid={patient.uhid}
+          />
+        </div>
+      )}
+
+      {/* TAB 4: Prescriptions */}
+      {visitedTabs.prescriptions && (
+        <div className={activeTab === 'prescriptions' ? 'block' : 'hidden'}>
+          <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs">
+            <PrescriptionDesk
+              patientId={patient.id}
+              patientAllergies={patient.allergies}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: Billing & Financial Ledger */}
+      {visitedTabs.billing && (
+        <div className={activeTab === 'billing' ? 'space-y-6' : 'hidden'}>
           {/* Patient Outstanding Ledger Card */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="clinic-card p-5 bg-blue-50/60 border border-blue-200 text-blue-950">
@@ -641,15 +660,17 @@ export const PatientDetail: React.FC<{ onOpenBookingForPatient?: (patient: any) 
         </div>
       )}
 
-      {/* TAB 5: Digital Informed Consent Forms */}
-      {activeTab === 'consent' && (
-        <PatientConsentDesk
-          patientId={patient.id}
-          patientName={patient.fullName}
-          patientUhid={patient.uhid}
-          patientPhone={patient.phone}
-          clinicName={patient.clinic?.name || user?.clinic?.name || 'Dental Clinic'}
-        />
+      {/* TAB 6: Digital Informed Consent Forms */}
+      {visitedTabs.consent && (
+        <div className={activeTab === 'consent' ? 'block' : 'hidden'}>
+          <PatientConsentDesk
+            patientId={patient.id}
+            patientName={patient.fullName}
+            patientUhid={patient.uhid}
+            patientPhone={patient.phone}
+            clinicName={patient.clinic?.name || user?.clinic?.name || 'Dental Clinic'}
+          />
+        </div>
       )}
 
       {/* Global Modals for Patient */}

@@ -41,10 +41,12 @@ export class PatientAuthService {
   ) {
     const secret = process.env.SESSION_SECRET;
     if (!secret || secret.trim().length < 32) {
-      this.secretKey = 'aks-elite-jwt-secure-super-key-madurai-2026-production';
-    } else {
-      this.secretKey = secret.trim();
+      this.logger.error('CRITICAL: SESSION_SECRET is missing or insufficiently random (minimum 32 characters required).');
+      throw new Error(
+        'FATAL SECURITY CONFIGURATION ERROR: SESSION_SECRET environment variable is missing or insufficiently random (minimum 32 characters required). The application refuses to start in an insecure state.'
+      );
     }
+    this.secretKey = secret.trim();
   }
 
   // Dedicated Patient JWT (HMAC-SHA256 with role 'PATIENT')

@@ -99,6 +99,16 @@ export class TreatmentPlansService {
         throw new NotFoundException('Treatment plan not found');
       }
 
+      if (dto.status === 'COMPLETED') {
+        const items = await tx.treatmentPlanItem.findMany({
+          where: { treatmentPlanId: id },
+        });
+        const hasUnperformed = items.length === 0 || items.some(it => it.status !== 'COMPLETED' && it.status !== 'CANCELLED');
+        if (hasUnperformed) {
+          throw new BadRequestException('Cannot mark treatment plan COMPLETED while procedures remain planned or unperformed');
+        }
+      }
+
       const updated = await tx.treatmentPlan.update({
         where: { id },
         data: { status: dto.status as any },
@@ -181,10 +191,20 @@ export class TreatmentPlansService {
     return this.prisma.forTenant(clinicId, async (tx) => {
       const item = await tx.treatmentPlanItem.findUnique({
         where: { id: itemId },
-        include: { treatmentPlan: { include: { patient: true } } },
+        include: { treatmentPlan: { include: { patient: true } }, completedProcedure: true },
       });
       if (!item || item.clinicId !== clinicId) {
         throw new NotFoundException('Treatment plan item not found');
+      }
+
+      if (item.completedProcedure) {
+        if (dto.procedureName || dto.toothNumber !== undefined || (dto.status && dto.status !== item.status)) {
+          throw new BadRequestException('Cannot modify clinical procedure, tooth, or status of an item that has already been performed in the chair');
+        }
+      }
+
+      if (dto.status === 'COMPLETED' && !item.completedProcedure) {
+        throw new BadRequestException('A treatment plan item can only be marked COMPLETED by recording the completed clinical procedure.');
       }
 
       const updateData: any = {};

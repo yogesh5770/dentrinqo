@@ -81,6 +81,7 @@ model Clinic {
   clinicSequences       ClinicSequence[]
   closures              ClinicClosure[]
   customWorkingHours    ClinicWorkingHour[]
+  dentistUnavailabilities DentistUnavailability[]
 }
 
 model User {
@@ -95,6 +96,7 @@ model User {
   phone               String?
   licenseNumber       String?
   specialization      String?
+  assignedChairNumber Int?      // Dentist's default operatory chair (1..Clinic.chairCount); null = auto-assign
   designation         String?
   department          String?
   employeeId          String?
@@ -115,6 +117,8 @@ model User {
   auditLogs           AuditLog[]
   createdClosures     ClinicClosure[] @relation("CreatedClosures")
   endedClosures       ClinicClosure[] @relation("EndedClosures")
+  unavailabilities        DentistUnavailability[] @relation("DentistUnavailabilities")
+  createdUnavailabilities DentistUnavailability[] @relation("CreatedDentistUnavailabilities")
 
   @@unique([clinicId, username])
   @@index([clinicId, role])
@@ -784,4 +788,24 @@ model ClinicWorkingHour {
   @@unique([clinicId, dayOfWeek])
   @@index([clinicId])
 }
+
+model DentistUnavailability {
+  id          String   @id @default(uuid())
+  clinicId    String
+  clinic      Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  dentistId   String
+  dentist     User     @relation("DentistUnavailabilities", fields: [dentistId], references: [id], onDelete: Cascade)
+  startAt     DateTime
+  endAt       DateTime
+  reason      String   // HOLIDAY, SICK_LEAVE, EMERGENCY, PERSONAL, TEMPORARY_UNAVAILABILITY
+  notes       String?
+  createdById String
+  createdBy   User     @relation("CreatedDentistUnavailabilities", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([clinicId, dentistId, startAt, endAt])
+  @@index([clinicId, startAt, endAt])
+}
+
 

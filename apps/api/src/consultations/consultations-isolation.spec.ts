@@ -93,4 +93,46 @@ describe('Task 3: Clinic Isolation - Consultations Authorization', () => {
       expect(mockPrisma.consultationAmendment.create).not.toHaveBeenCalled();
     });
   });
+
+  describe('Draft Consultation Upsert & Idempotency', () => {
+    it('MUST update existing unfinalized consultation draft instead of throwing unique constraint error', async () => {
+      mockPrisma.patient.findFirst.mockResolvedValue({ id: 'pat-1', uhid: 'AKS-001', clinicId: CLINIC_A });
+      mockPrisma.consultation.findUnique.mockResolvedValue({
+        id: 'consult-draft-1',
+        isFinalized: false,
+        dentist: { fullName: 'Dr. Jacob' },
+        patient: { fullName: 'Kavitha', uhid: 'AKS-001' },
+      });
+      mockPrisma.consultation.update.mockResolvedValue({
+        id: 'consult-draft-1',
+        chiefComplaint: 'Toothache on 46',
+        diagnosis: 'Pulpitis 46',
+        isFinalized: false,
+        dentist: { fullName: 'Dr. Jacob' },
+        patient: { fullName: 'Kavitha', uhid: 'AKS-001' },
+      });
+
+      const res = await consultationsService.create(
+        CLINIC_A,
+        {
+          patientId: 'pat-1',
+          appointmentId: 'appt-1',
+          chiefComplaint: 'Toothache on 46',
+          clinicalExamination: 'Deep occlusal pit',
+          diagnosis: 'Pulpitis 46',
+          clinicalNotes: 'Advised RCT',
+        },
+        { userId: 'u1', role: 'DENTIST' },
+      );
+
+      expect(res.id).toBe('consult-draft-1');
+      expect(mockPrisma.consultation.update).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'consult-draft-1' },
+        data: expect.objectContaining({
+          chiefComplaint: 'Toothache on 46',
+          diagnosis: 'Pulpitis 46',
+        }),
+      }));
+    });
+  });
 });

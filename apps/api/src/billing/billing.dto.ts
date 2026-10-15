@@ -27,6 +27,15 @@ export class CreateInvoiceItemDto {
   @IsInt()
   @Min(0)
   unitPricePaise: number;
+
+  @ApiPropertyOptional({ example: false, description: 'True if deliberately provided at no charge' })
+  @IsOptional()
+  isComplimentary?: boolean;
+
+  @ApiPropertyOptional({ example: 'Post-op courtesy follow-up', description: 'Mandatory reason if unitPricePaise is 0' })
+  @IsOptional()
+  @IsString()
+  zeroFeeReason?: string;
 }
 
 export class CreateInvoiceDto {

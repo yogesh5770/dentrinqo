@@ -22,6 +22,7 @@ import { InvoiceModal } from '../billing/InvoiceModal';
 import { PaymentModal } from '../billing/PaymentModal';
 import { InvoicePrintModal } from '../billing/InvoicePrintModal';
 import { useClinicSync, triggerClinicSync } from '../../lib/sync';
+import { useAuth } from '../../hooks/useAuth';
 
 interface TreatmentPlanItem {
   id: string;
@@ -60,6 +61,7 @@ export const TreatmentPlanManager: React.FC<TreatmentPlanManagerProps> = ({
   onProcedureCompleted,
   patientName: propPatientName,
 }) => {
+  const { user } = useAuth();
   const [plans, setPlans] = useState<TreatmentPlan[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -414,7 +416,7 @@ export const TreatmentPlanManager: React.FC<TreatmentPlanManagerProps> = ({
         patientName: resolvedPatientName,
         patientId,
         patientUhid: patientInfo?.uhid,
-        doctorName: 'Dr. Khalidh Khan',
+        doctorName: user?.fullName || 'Attending Doctor',
         procedureName: item.procedureName,
         toothNumber,
         feeRupees: Number(feeRupees),

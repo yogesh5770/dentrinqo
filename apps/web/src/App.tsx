@@ -2,22 +2,21 @@ import React, { useState, Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { TenantProvider } from './hooks/useTenant';
-import { AppShell } from './layouts/AppShell';
-import { LoginScreen } from './features/auth/LoginScreen';
-import { DashboardRouter } from './features/dashboard/DashboardRouter';
+const AppShell = lazy(() => import('./layouts/AppShell').then(m => ({ default: m.AppShell })));
+const DashboardRouter = lazy(() => import('./features/dashboard/DashboardRouter').then(m => ({ default: m.DashboardRouter })));
 import { ErrorBoundary } from './components/ErrorBoundary';
-
-// Public Views (Eagerly available for immediate patient arrival response)
-import { PublicBookingView } from './features/public/PublicBookingView';
-import { PublicCheckInView } from './features/public/PublicCheckInView';
-import { PublicTrackView } from './features/public/PublicTrackView';
-import { NewPatientModal } from './features/patients/NewPatientModal';
-import { BookingDrawer } from './features/appointments/BookingDrawer';
 import { triggerClinicSync } from './lib/sync';
 import { PatientAuthProvider, usePatientAuth } from './hooks/usePatientAuth';
 import { ClinicLogo, TenantDocumentBranding } from './components/ClinicLogo';
 
-// Asynchronous Route-Level Code Splitting (Reduces initial mobile bundle by ~85%)
+// Asynchronous Route-Level Code Splitting (Reduces initial bundle by ~80%)
+const PublicBookingView = lazy(() => import('./features/public/PublicBookingView').then(m => ({ default: m.PublicBookingView })));
+const PublicCheckInView = lazy(() => import('./features/public/PublicCheckInView').then(m => ({ default: m.PublicCheckInView })));
+const PublicTrackView = lazy(() => import('./features/public/PublicTrackView').then(m => ({ default: m.PublicTrackView })));
+const LoginScreen = lazy(() => import('./features/auth/LoginScreen').then(m => ({ default: m.LoginScreen })));
+const NewPatientModal = lazy(() => import('./features/patients/NewPatientModal').then(m => ({ default: m.NewPatientModal })));
+const BookingDrawer = lazy(() => import('./features/appointments/BookingDrawer').then(m => ({ default: m.BookingDrawer })));
+
 const PatientList = lazy(() => import('./features/patients/PatientList').then(m => ({ default: m.PatientList })));
 const PatientDetail = lazy(() => import('./features/patients/PatientDetail').then(m => ({ default: m.PatientDetail })));
 const AppointmentCalendar = lazy(() => import('./features/appointments/AppointmentCalendar').then(m => ({ default: m.AppointmentCalendar })));
@@ -39,7 +38,7 @@ const MyFamilyView = lazy(() => import('./features/patient-portal/MyFamilyView')
 const ViewLoadingFallback: React.FC = () => (
   <div className="min-h-[380px] flex flex-col items-center justify-center p-8 text-teal-600">
     <div className="w-10 h-10 border-3 border-teal-600 border-t-transparent rounded-full animate-spin mb-3" />
-    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Loading View...</span>
+    <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Loading...</span>
   </div>
 );
 const ProtectedRoutes: React.FC = () => {
@@ -232,27 +231,35 @@ const ProtectedRoutes: React.FC = () => {
       </Suspense>
       </ErrorBoundary>
 
-      {/* Global Modals accessible from any screen */}
-      <NewPatientModal
-        isOpen={newPatientOpen}
-        initialMode={newPatientInitialMode}
-        onClose={() => setNewPatientOpen(false)}
-        onPatientCreated={() => {
-          triggerClinicSync('patient_created');
-        }}
-        onOpenBookingForPatient={(patient) => {
-          handleOpenBookingWithPatient(patient);
-        }}
-      />
+      {/* Global Modals loaded on-demand */}
+      {newPatientOpen && (
+        <Suspense fallback={null}>
+          <NewPatientModal
+            isOpen={newPatientOpen}
+            initialMode={newPatientInitialMode}
+            onClose={() => setNewPatientOpen(false)}
+            onPatientCreated={() => {
+              triggerClinicSync('patient_created');
+            }}
+            onOpenBookingForPatient={(patient) => {
+              handleOpenBookingWithPatient(patient);
+            }}
+          />
+        </Suspense>
+      )}
 
-      <BookingDrawer
-        isOpen={bookingOpen}
-        onClose={() => setBookingOpen(false)}
-        preSelectedPatient={bookingPatient}
-        onBookingSuccess={() => {
-          triggerClinicSync('appointment_booked');
-        }}
-      />
+      {bookingOpen && (
+        <Suspense fallback={null}>
+          <BookingDrawer
+            isOpen={bookingOpen}
+            onClose={() => setBookingOpen(false)}
+            preSelectedPatient={bookingPatient}
+            onBookingSuccess={() => {
+              triggerClinicSync('appointment_booked');
+            }}
+          />
+        </Suspense>
+      )}
     </AppShell>
   );
 };

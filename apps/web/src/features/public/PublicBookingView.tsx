@@ -118,6 +118,7 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
   // Confirmation state
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [bookingRef, setBookingRef] = useState<string | null>(null);
+  const [intakeToken, setIntakeToken] = useState<string | null>(null);
   const [tokenNumber, setTokenNumber] = useState<number | null>(null);
   const [patientUhid, setPatientUhid] = useState<string | null>(null);
   const [trackingCode, setTrackingCode] = useState<string | null>(null);
@@ -263,10 +264,6 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
       alert('Please enter a valid 10-digit mobile number.');
       return;
     }
-    if (!customMessage.trim()) {
-      alert('Please describe your problem or enter a message for the doctor.');
-      return;
-    }
 
     if (visitType === 'ONLINE_BOOKING') {
       const chairBooked = bookedSlotsByChair[selectedChair] || [];
@@ -291,7 +288,8 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
         ? `[HOSPITAL WALK-IN] ${reasonLabel}` 
         : `[ONLINE] ${reasonLabel}`;
 
-      const combinedNotes = `Visit Mode: ${visitType === 'WALK_IN' ? 'Hospital Lobby Walk-In (Patient at Clinic)' : 'Online Advance Booking'}\nPatient Message / Problem: ${customMessage.trim()}\nAffected Area: ${selectedToothArea}\nSlot: ${effectiveSlot}`;
+      const messageLine = customMessage.trim() ? `\nPatient Message / Problem: ${customMessage.trim()}` : '';
+      const combinedNotes = `Visit Mode: ${visitType === 'WALK_IN' ? 'Hospital Lobby Walk-In (Patient at Clinic)' : 'Online Advance Booking'}${messageLine}\nAffected Area: ${selectedToothArea}\nSlot: ${effectiveSlot}`;
 
       const res = await apiRequest<{ reference: string; uhid?: string; tokenNumber?: number }>('/appointments/public-request', {
         method: 'POST',
@@ -317,6 +315,7 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
         if (res.tokenNumber) setTokenNumber(res.tokenNumber);
         if (res.uhid) setPatientUhid(res.uhid);
         if ((res as any).trackingCode) setTrackingCode((res as any).trackingCode);
+        if ((res as any).intakeToken) setIntakeToken((res as any).intakeToken);
         setStep(3);
         window.scrollTo({ top: 0, behavior: 'smooth' });
       } else {
@@ -349,7 +348,7 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
       `💺 *Operatory:* Chair #${selectedChair} (${chairs.find(c => c.chairNumber === selectedChair)?.doctorName || 'Doctor Room'})\n` +
       (tokenNumber ? `🔖 *Daily Token:* #${tokenNumber}\n` : `🔖 *Queue Token:* Generated upon QR scan at clinic\n`) +
       `🩺 *Concern / Problem:* ${reasonLabel}\n` +
-      `💬 *Message for Doctor:* ${customMessage}\n` +
+      (customMessage.trim() ? `💬 *Message for Doctor:* ${customMessage.trim()}\n` : '') +
       `🔖 *Reference:* ${bookingRef || 'NEW'}\n\n` +
       `_I have registered via the clinic portal. Please confirm my appointment. Thank you!_`
     );
@@ -359,7 +358,8 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
   const getGoogleCalendarLink = () => {
     const reasonObj = COMMON_REASONS.find((r) => r.id === selectedReason);
     const title = `Dental Appointment - ${clinicName}`;
-    const details = `Appointment at ${clinicName} for ${fullName}.\nBooking Ref: ${bookingRef}\nProblem: ${customMessage}\nClinic Phone: ${clinicPhone}`;
+    const problemLine = customMessage.trim() ? `\nProblem: ${customMessage.trim()}` : '';
+    const details = `Appointment at ${clinicName} for ${fullName}.\nBooking Ref: ${bookingRef}${problemLine}\nClinic Phone: ${clinicPhone}`;
 
     const d = new Date(selectedDate);
     const match = selectedSlot.match(/(\d+):(\d+)\s*(AM|PM)/i);
@@ -427,7 +427,9 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
     try {
       await apiRequest(`/appointments/public-intake/${bookingRef}`, {
         method: 'POST',
+        headers: intakeToken ? { 'x-intake-token': intakeToken } : undefined,
         body: JSON.stringify({
+          intakeToken: intakeToken || undefined,
           diabetic,
           hypertension,
           cardiac,
@@ -731,21 +733,20 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
                 </div>
               </div>
 
-              {/* Custom Message / Problem Description Box (Prominent & Required) */}
+              {/* Custom Message / Problem Description Box (Optional) */}
               <div>
                 <label className="block text-xs font-black text-slate-800 uppercase tracking-wider mb-1.5">
-                  Describe Your Problem / Message for the Doctor *
+                  Describe Your Problem / Message for the Doctor (Optional)
                 </label>
                 <textarea
                   rows={3}
-                  required
                   value={customMessage}
                   onChange={(e) => setCustomMessage(e.target.value)}
-                  placeholder="e.g. Severe throbbing toothache on my lower right side since yesterday, pain worsens with cold water, need consultation..."
+                  placeholder="e.g. Severe throbbing toothache on my lower right side, pain worsens with cold water, or any notes for the doctor (optional)..."
                   className="w-full p-3.5 bg-slate-50 border border-slate-300 rounded-2xl text-xs sm:text-sm font-semibold text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-teal-600 focus:outline-none transition-all shadow-inner"
                 />
                 <span className="text-[11px] text-slate-500 mt-1 block">
-                  The doctor will read this message before examining you in the chair.
+                  Optional: If provided, the doctor will review this message before examining you in the chair.
                 </span>
               </div>
 
@@ -1074,10 +1075,6 @@ export const PublicBookingView: React.FC<PublicBookingViewProps> = ({
                   const isSelectedChairOff = !chairs.find(c => c.chairNumber === selectedChair)?.isActive;
                   if (visitType === 'ONLINE_BOOKING' && isSelectedChairOff) {
                     alert('The doctor for this operatory room is currently off duty. Please select another room above.');
-                    return;
-                  }
-                  if (!customMessage.trim()) {
-                    alert('Please enter a description of your problem or message for the doctor.');
                     return;
                   }
                   setStep(2);

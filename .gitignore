@@ -8,3 +8,9 @@ build/
 *.db
 *.db-journal
 *.tsbuildinfo
+ 
+# Offline cryptographic vaults
+vault/
+*.pem
+*.key
+

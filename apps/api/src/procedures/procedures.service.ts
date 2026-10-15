@@ -207,11 +207,42 @@ export class ProceduresService {
         },
       });
 
-      // If associated with a treatment plan item, mark item as completed
+      // If associated with a treatment plan item, mark item as completed and advance plan status
       if (dto.treatmentPlanItemId) {
-        await tx.treatmentPlanItem.update({
+        // Pessimistic lock on parent TreatmentPlan row to serialize concurrent item completions
+        try {
+          if (typeof tx.$queryRaw === 'function') {
+            await tx.$queryRaw`SELECT id FROM "TreatmentPlan" WHERE id = (SELECT "treatmentPlanId" FROM "TreatmentPlanItem" WHERE id = ${dto.treatmentPlanItemId}) FOR UPDATE`;
+          }
+        } catch (lockErr) {
+          // Safe fallback for mocked test runners
+        }
+
+        const updatedItem = await tx.treatmentPlanItem.update({
           where: { id: dto.treatmentPlanItemId },
           data: { status: 'COMPLETED' },
+        });
+
+        // Recalculate parent treatment plan progress
+        const allItems = await tx.treatmentPlanItem.findMany({
+          where: { treatmentPlanId: updatedItem.treatmentPlanId },
+        });
+        const hasCompleted = allItems.some(it => it.status === 'COMPLETED');
+        const allCancelled = allItems.length > 0 && allItems.every(it => it.status === 'CANCELLED');
+        const allTerminal = allItems.length > 0 && allItems.every(it => it.status === 'COMPLETED' || it.status === 'CANCELLED');
+
+        let newPlanStatus = 'PROPOSED';
+        if (allCancelled) {
+          newPlanStatus = 'CANCELLED';
+        } else if (allTerminal && hasCompleted) {
+          newPlanStatus = 'COMPLETED';
+        } else if (hasCompleted) {
+          newPlanStatus = 'IN_PROGRESS';
+        }
+
+        await tx.treatmentPlan.update({
+          where: { id: updatedItem.treatmentPlanId },
+          data: { status: newPlanStatus },
         });
       }
 

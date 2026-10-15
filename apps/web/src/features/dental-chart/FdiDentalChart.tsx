@@ -26,6 +26,7 @@ interface FdiDentalChartProps {
   consultationId?: string;
   readOnly?: boolean;
   onConditionUpdated?: () => void;
+  onApplyConditionToDiagnosis?: (toothNumber: number, condition: string, surface: string) => void;
 }
 
 // Dental tooth names
@@ -102,6 +103,7 @@ export const FdiDentalChart: React.FC<FdiDentalChartProps> = ({
   consultationId,
   readOnly = false,
   onConditionUpdated,
+  onApplyConditionToDiagnosis,
 }) => {
   const [entries, setEntries] = useState<DentalChartEntry[]>([]);
   const [isPediatric, setIsPediatric] = useState(false);
@@ -657,18 +659,35 @@ export const FdiDentalChart: React.FC<FdiDentalChartProps> = ({
               </div>
             </div>
 
-            <div className="mt-4 flex items-center justify-between pt-3 border-t border-slate-200 text-xs">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-200 text-xs">
               <span className="text-slate-600 font-semibold">
                 Instant autosave to chart
               </span>
-              <button
-                type="button"
-                onClick={() => handleApplyCondition()}
-                disabled={saving}
-                className="bg-teal-600 hover:bg-teal-700 text-white font-extrabold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
-              >
-                {saving ? 'Saving...' : 'Apply Finding to Chart'}
-              </button>
+              <div className="flex items-center gap-2">
+                {onApplyConditionToDiagnosis && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (selectedTooth) {
+                        onApplyConditionToDiagnosis(selectedTooth, selectedCondition, selectedSurface);
+                        showToast(`Copied #${selectedTooth} to Consultation Diagnosis`);
+                      }
+                    }}
+                    className="bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 font-extrabold px-3 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                    title="Copy this finding into consultation diagnosis"
+                  >
+                    <span>📋 Add to Diagnosis</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => handleApplyCondition()}
+                  disabled={saving}
+                  className="bg-teal-600 hover:bg-teal-700 text-white font-extrabold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                >
+                  {saving ? 'Saving...' : 'Apply Finding to Chart'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

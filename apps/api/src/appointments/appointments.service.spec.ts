@@ -348,6 +348,7 @@ describe('AppointmentsService', () => {
         clinic: { name: 'AKS Elite Dental Clinic', code: 'AKS' },
       };
 
+      jest.spyOn(prisma.clinic, 'findFirst').mockResolvedValueOnce(mockAppt.clinic as any);
       jest.spyOn(prisma.appointment, 'findFirst').mockResolvedValueOnce(mockAppt as any);
       const updateSpy = jest.spyOn(prisma.appointment, 'update').mockResolvedValueOnce({
         ...mockAppt,
@@ -356,7 +357,7 @@ describe('AppointmentsService', () => {
       } as any);
       jest.spyOn(prisma.appointment, 'findMany').mockResolvedValueOnce([{ id: 'appt-self-1', status: 'CHECKED_IN' }] as any);
 
-      const res = await service.publicSelfCheckIn('9876543210');
+      const res = await service.publicSelfCheckIn('9876543210', 'AKS');
       expect(res.success).toBe(true);
       expect(res.status).toBe('CHECKED_IN');
       expect(res.tokenNumber).toBe(1);

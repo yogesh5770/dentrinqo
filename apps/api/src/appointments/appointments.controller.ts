@@ -155,9 +155,10 @@ export class AppointmentsController {
   @Throttle({ default: { limit: 60, ttl: 60000 } })
   @Header('Referrer-Policy', 'no-referrer')
   @Header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
+  @Header('Pragma', 'no-cache')
   @ApiOperation({ summary: 'Public tracking of queue position and assigned chair by 128-bit unguessable code' })
   async trackByCode(@Param('code') code: string, @Req() req: any) {
-    const hostClinicId = req.clinicId || (req.tenantClinic && req.tenantClinic.id);
+    const hostClinicId = req.clinicId || (req.tenantClinic && req.tenantClinic.id) || req.query?.clinicCode;
     const forwarded = req.headers ? req.headers['x-forwarded-for'] : undefined;
     const clientIp = typeof forwarded === 'string' ? forwarded.split(',')[0].trim() : (req.ip || (req.socket && req.socket.remoteAddress) || '127.0.0.1');
     return this.appointmentsService.trackByCode(code, hostClinicId, clientIp);
@@ -167,6 +168,7 @@ export class AppointmentsController {
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Header('Referrer-Policy', 'no-referrer')
   @Header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
+  @Header('Pragma', 'no-cache')
   @ApiOperation({ summary: 'Safe rate-limited public queue lookup by mobile number and optional token' })
   async publicLookup(@Body() dto: PublicLookupDto, @Req() req: any) {
     const forwarded = req.headers['x-forwarded-for'];
@@ -188,6 +190,8 @@ export class AppointmentsController {
 
   @Get('public-status/:identifier')
   @Throttle({ default: { limit: 60, ttl: 60000 } })
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, private')
+  @Header('Pragma', 'no-cache')
   @ApiOperation({ summary: 'Query appointment status and queue token by public reference' })
   async publicStatus(@Param('identifier') identifier: string, @Req() req: any) {
     const clinicId = req.clinicId || (req.tenantClinic && req.tenantClinic.id);
@@ -238,9 +242,15 @@ export class AppointmentsController {
 
   @Post('public-intake/:reference')
   @Throttle({ default: { limit: 10, ttl: 60000 } })
-  @ApiOperation({ summary: 'Submit pre-visit digital medical intake form' })
-  async publicIntake(@Param('reference') reference: string, @Body() body: any) {
-    return this.appointmentsService.submitPublicIntake(reference, body);
+  @ApiOperation({ summary: 'Submit pre-visit digital medical intake form (Requires signed intake token or patient auth)' })
+  async publicIntake(
+    @Param('reference') reference: string,
+    @Body() body: any,
+    @Headers('x-intake-token') headerToken?: string,
+    @Req() req?: any,
+  ) {
+    const token = body?.intakeToken || headerToken || (req?.headers && req.headers['x-intake-token']);
+    return this.appointmentsService.submitPublicIntake(reference, body, token, req?.user);
   }
 
   @Post()
@@ -291,5 +301,28 @@ export class AppointmentsController {
     @Body() dto: RescheduleAppointmentDto,
   ) {
     return this.appointmentsService.reschedule(user.clinicId, id, dto, user);
+  }
+
+  @Get('chair-gaps')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('CLINIC_ADMIN', 'RECEPTIONIST', 'DENTIST')
+  @ApiOperation({ summary: 'Calculate real-time treatment gaps before next booking for all chairs' })
+  async getChairGaps(
+    @CurrentUser() user: any,
+    @Query('date') date?: string,
+  ) {
+    return this.appointmentsService.calculateAvailableGaps(user.clinicId, date);
+  }
+
+  @Patch(':id/release-late-slot')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('CLINIC_ADMIN', 'RECEPTIONIST', 'DENTIST')
+  @ApiOperation({ summary: 'Release chair capacity when patient is absent past arrival grace period' })
+  async releaseLateSlot(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() body?: { reason?: string },
+  ) {
+    return this.appointmentsService.releaseLateSlot(user.clinicId, id, body?.reason || 'Late arrival grace period expired', user);
   }
 }

@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  ConflictException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -1014,6 +1015,255 @@ export class ClinicHoursService {
         patientName: appt.patient.fullName,
         strikeCounted: false,
       };
+    });
+  }
+
+  /**
+   * Create a dentist unavailability window (holiday, sick leave, personal) and flag overlapping appointments.
+   */
+  async createDentistUnavailability(
+    clinicId: string,
+    data: {
+      dentistId: string;
+      startAt: string | Date;
+      endAt: string | Date;
+      reason: string;
+      notes?: string;
+    },
+    actor: any,
+  ) {
+    const start = new Date(data.startAt);
+    const end = new Date(data.endAt);
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      throw new BadRequestException('Invalid start or end date for dentist unavailability');
+    }
+    if (start >= end) {
+      throw new BadRequestException('Unavailability start date must be before end date');
+    }
+
+    return this.runInTenant(clinicId, undefined, async (tx) => {
+      const dentist = await tx.user.findFirst({
+        where: { id: data.dentistId, clinicId },
+      });
+      if (!dentist) {
+        throw new NotFoundException('Dentist record not found in this clinic');
+      }
+      if (dentist.role !== 'DENTIST' && dentist.role !== 'CLINIC_ADMIN') {
+        throw new BadRequestException('Unavailability can only be recorded for clinical dentists');
+      }
+
+      // Check for overlapping unavailability for the same dentist
+      const existingOverlap = await tx.dentistUnavailability.findFirst({
+        where: {
+          clinicId,
+          dentistId: data.dentistId,
+          AND: [
+            { startAt: { lt: end } },
+            { endAt: { gt: start } },
+          ],
+        },
+      });
+      if (existingOverlap) {
+        throw new ConflictException(
+          `Dr. ${dentist.fullName} already has a recorded leave (${existingOverlap.reason}) overlapping this period (${new Date(existingOverlap.startAt).toLocaleDateString()} to ${new Date(existingOverlap.endAt).toLocaleDateString()})`,
+        );
+      }
+
+      const unavailability = await tx.dentistUnavailability.create({
+        data: {
+          clinicId,
+          dentistId: data.dentistId,
+          startAt: start,
+          endAt: end,
+          reason: data.reason.trim(),
+          notes: data.notes?.trim() || null,
+          createdById: actor?.userId || actor?.id,
+        },
+        include: {
+          dentist: { select: { fullName: true, specialization: true } },
+        },
+      });
+
+      // Find and flag overlapping active appointments
+      const overlappingAppointments = await tx.appointment.findMany({
+        where: {
+          clinicId,
+          dentistId: data.dentistId,
+          status: { in: ['SCHEDULED', 'CONFIRMED'] },
+          AND: [
+            { scheduledStart: { lt: end } },
+            { scheduledEnd: { gt: start } },
+          ],
+        },
+        include: {
+          patient: { select: { fullName: true, phone: true, uhid: true } },
+        },
+        orderBy: { scheduledStart: 'asc' },
+      });
+
+      const dPrefix = dentist.fullName.startsWith('Dr.') ? dentist.fullName : `Dr. ${dentist.fullName}`;
+      const alertTag = `[ACTION REQUIRED: ${dPrefix} on leave (${data.reason}) from ${start.toLocaleDateString('en-IN')} to ${end.toLocaleDateString('en-IN')}]`;
+      for (const appt of overlappingAppointments) {
+        const existingNotes = appt.notes || '';
+        if (!existingNotes.includes('ACTION REQUIRED: Dr.')) {
+          await tx.appointment.update({
+            where: { id: appt.id },
+            data: {
+              notes: `${existingNotes}\n${alertTag}`.trim(),
+            },
+          });
+        }
+      }
+
+      await this.auditService.log({
+        clinicId,
+        actorId: actor?.userId || actor?.id,
+        actorRole: actor?.role || 'STAFF',
+        action: 'DENTIST_UNAVAILABILITY_CREATED',
+        entityType: 'DentistUnavailability',
+        entityId: unavailability.id,
+        details: {
+          dentistName: dentist.fullName,
+          reason: data.reason,
+          startAt: start,
+          endAt: end,
+          impactedAppointmentsCount: overlappingAppointments.length,
+        },
+      }, tx);
+
+      return {
+        ...unavailability,
+        impactedCount: overlappingAppointments.length,
+        impactedAppointments: overlappingAppointments.map((a: any) => ({
+          id: a.id,
+          patientName: a.patient?.fullName,
+          patientPhone: a.patient?.phone,
+          scheduledStart: a.scheduledStart,
+          scheduledEnd: a.scheduledEnd,
+          chairNumber: a.chairNumber,
+          status: a.status,
+        })),
+      };
+    });
+  }
+
+  /**
+   * List dentist unavailabilities for the clinic with optional dentist and date filters.
+   */
+  async listDentistUnavailabilities(
+    clinicId: string,
+    query?: { dentistId?: string; from?: string; to?: string },
+  ) {
+    return this.runInTenant(clinicId, undefined, async (tx) => {
+      const where: any = { clinicId };
+      if (query?.dentistId) {
+        where.dentistId = query.dentistId;
+      }
+      if (query?.from || query?.to) {
+        where.AND = [];
+        if (query.from) {
+          where.AND.push({ endAt: { gte: new Date(query.from) } });
+        }
+        if (query.to) {
+          where.AND.push({ startAt: { lte: new Date(query.to) } });
+        }
+      }
+
+      return tx.dentistUnavailability.findMany({
+        where,
+        include: {
+          dentist: { select: { id: true, fullName: true, specialization: true, assignedChairNumber: true } },
+          createdBy: { select: { fullName: true, role: true } },
+        },
+        orderBy: { startAt: 'asc' },
+      });
+    });
+  }
+
+  /**
+   * Delete / cancel a dentist unavailability window.
+   */
+  async deleteDentistUnavailability(clinicId: string, id: string, actor: any) {
+    return this.runInTenant(clinicId, undefined, async (tx) => {
+      const record = await tx.dentistUnavailability.findFirst({
+        where: { id, clinicId },
+        include: { dentist: { select: { fullName: true } } },
+      });
+      if (!record) {
+        throw new NotFoundException('Dentist unavailability record not found');
+      }
+
+      await tx.dentistUnavailability.delete({ where: { id } });
+
+      await this.auditService.log({
+        clinicId,
+        actorId: actor?.userId || actor?.id,
+        actorRole: actor?.role || 'STAFF',
+        action: 'DENTIST_UNAVAILABILITY_DELETED',
+        entityType: 'DentistUnavailability',
+        entityId: id,
+        details: {
+          dentistName: record.dentist?.fullName,
+          reason: record.reason,
+          startAt: record.startAt,
+          endAt: record.endAt,
+        },
+      }, tx);
+
+      return { success: true, id, message: 'Dentist unavailability record cancelled successfully' };
+    });
+  }
+
+  /**
+   * Quick check whether a dentist is unavailable during a specific time slot.
+   */
+  async isDentistUnavailable(
+    clinicId: string,
+    dentistId: string,
+    start: Date,
+    end: Date,
+    txClient?: any,
+  ): Promise<boolean> {
+    return this.runInTenant(clinicId, txClient, async (tx) => {
+      const leave = await tx.dentistUnavailability.findFirst({
+        where: {
+          clinicId,
+          dentistId,
+          AND: [
+            { startAt: { lt: end } },
+            { endAt: { gt: start } },
+          ],
+        },
+      });
+      return Boolean(leave);
+    });
+  }
+
+  /**
+   * Get active leave record for a dentist during a specific time slot if any.
+   */
+  async getDentistLeaveForSlot(
+    clinicId: string,
+    dentistId: string,
+    start: Date,
+    end: Date,
+    txClient?: any,
+  ): Promise<any> {
+    return this.runInTenant(clinicId, txClient, async (tx) => {
+      return tx.dentistUnavailability.findFirst({
+        where: {
+          clinicId,
+          dentistId,
+          AND: [
+            { startAt: { lt: end } },
+            { endAt: { gt: start } },
+          ],
+        },
+        include: {
+          dentist: { select: { fullName: true, specialization: true } },
+        },
+      });
     });
   }
 }

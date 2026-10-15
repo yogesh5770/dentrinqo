@@ -184,8 +184,74 @@ export class AuthService {
     };
   }
 
+  // Status cache for authenticated staff to enforce immediate revocation upon deactivation without DB overload (SEC-07)
+  private static readonly userStatusCache = new Map<string, { isActive: boolean; expiresAt: number }>();
+
+  async isAccountActive(userId: string, clinicId?: string): Promise<boolean> {
+    const now = Date.now();
+    const cached = AuthService.userStatusCache.get(userId);
+    if (cached && cached.expiresAt > now) {
+      return cached.isActive;
+    }
+
+    try {
+      if (!this.prisma) {
+        return true;
+      }
+
+      const fetchUser = (tx: any) =>
+        tx.user.findUnique({
+          where: { id: userId },
+          select: { id: true, isActive: true, clinicId: true },
+        });
+
+      let user: any = null;
+
+      if (clinicId && typeof (this.prisma as any).forTenant === 'function') {
+        user = await (this.prisma as any).forTenant(clinicId, fetchUser);
+      } else if (typeof (this.prisma as any).forTenant === 'function' && typeof (this.prisma as any).clinic?.findMany === 'function') {
+        const clinics = await (this.prisma as any).clinic.findMany({ select: { id: true } });
+        for (const c of clinics) {
+          user = await (this.prisma as any).forTenant(c.id, fetchUser);
+          if (user) break;
+        }
+      } else if (typeof (this.prisma as any).user?.findUnique === 'function') {
+        user = await (this.prisma as any).user.findUnique({
+          where: { id: userId },
+          select: { id: true, isActive: true, clinicId: true },
+        });
+      }
+
+      if (!user) {
+        AuthService.userStatusCache.set(userId, { isActive: false, expiresAt: now + 30000 });
+        return false;
+      }
+
+      const active = Boolean(user.isActive);
+      AuthService.userStatusCache.set(userId, { isActive: active, expiresAt: now + 30000 });
+      return active;
+    } catch {
+      // Fail closed on database verification error
+      return false;
+    }
+  }
+
+  static invalidateUserStatus(userId: string): void {
+    AuthService.userStatusCache.delete(userId);
+  }
+
+  static clearUserStatusCache(): void {
+    AuthService.userStatusCache.clear();
+  }
+
   async forgotPassword(email: string) {
     const cleanEmail = (email || '').toLowerCase().trim();
+    if (!cleanEmail) {
+      return {
+        message: 'If an active account exists with this email address, password reset instructions have been generated.',
+      };
+    }
+
     const clinics = await this.prisma.clinic.findMany({ select: { id: true } });
     let user: any = null;
     let userClinicId: string | null = null;
@@ -200,33 +266,70 @@ export class AuthService {
       }
     }
 
-    // To prevent email enumeration attacks, always return generic message
+    // Generic response regardless of whether user exists to prevent email enumeration (SEC-04)
     if (!user || !userClinicId) {
       return {
         message: 'If an active account exists with this email address, password reset instructions have been generated.',
       };
     }
 
-    const resetToken = crypto.randomBytes(32).toString('hex');
+    // Cryptographically secure 256-bit token
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    // Store only the cryptographic SHA-256 hash in the database
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     const resetExpiry = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
     await this.prisma.forTenant(userClinicId, async (tx) => {
       return tx.user.update({
         where: { id: user.id },
         data: {
-          resetPasswordToken: resetToken,
+          resetPasswordToken: tokenHash,
           resetPasswordExpiry: resetExpiry,
         },
       });
     });
 
-    this.logger.log(`Password reset token generated for ${user.email}: ${resetToken}`);
+    // CRITICAL: Raw token and reset URL are strictly omitted from logs and error output (SEC-04)
+    this.logger.log(`Password reset requested for email hash: ${crypto.createHash('sha256').update(user.email).digest('hex').substring(0, 10)}`);
 
     return {
       message: 'If an active account exists with this email address, password reset instructions have been generated.',
-      // In development or if needed for direct access
-      resetToken: process.env.NODE_ENV !== 'production' ? resetToken : undefined,
     };
+  }
+
+  // Internal test helper to retrieve raw token for automated integration test suites without exposing it via API
+  async createTestPasswordResetToken(email: string): Promise<string | null> {
+    const cleanEmail = (email || '').toLowerCase().trim();
+    const clinics = await this.prisma.clinic.findMany({ select: { id: true } });
+    let user: any = null;
+    let userClinicId: string | null = null;
+    for (const c of clinics) {
+      const u = await this.prisma.forTenant(c.id, async (tx) => {
+        return tx.user.findFirst({ where: { email: cleanEmail } });
+      });
+      if (u) {
+        user = u;
+        userClinicId = c.id;
+        break;
+      }
+    }
+    if (!user || !userClinicId) return null;
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const resetExpiry = new Date(Date.now() + 60 * 60 * 1000);
+
+    await this.prisma.forTenant(userClinicId, async (tx) => {
+      return tx.user.update({
+        where: { id: user.id },
+        data: {
+          resetPasswordToken: tokenHash,
+          resetPasswordExpiry: resetExpiry,
+        },
+      });
+    });
+
+    return rawToken;
   }
 
   async resetPasswordWithToken(token: string, newPass: string) {
@@ -235,6 +338,9 @@ export class AuthService {
       throw new BadRequestException('New password must be at least 6 characters long');
     }
 
+    // Compute cryptographic SHA-256 hash of provided raw token
+    const tokenHash = crypto.createHash('sha256').update(token.trim()).digest('hex');
+
     const clinics = await this.prisma.clinic.findMany({ select: { id: true } });
     let user: any = null;
     let userClinicId: string | null = null;
@@ -242,7 +348,7 @@ export class AuthService {
       const u = await this.prisma.forTenant(c.id, async (tx) => {
         return tx.user.findFirst({
           where: {
-            resetPasswordToken: token,
+            resetPasswordToken: tokenHash,
             resetPasswordExpiry: { gt: new Date() },
           },
         });
@@ -260,7 +366,22 @@ export class AuthService {
 
     const newPasswordHash = await hash(newPass);
 
+    // Atomic consumption inside tenant transaction with row locking to prevent replay / concurrent race conditions
     await this.prisma.forTenant(userClinicId, async (tx) => {
+      if (typeof (tx as any).$executeRaw === 'function') {
+        await (tx as any).$executeRaw`SELECT id FROM "User" WHERE id = ${user.id} FOR UPDATE`;
+      }
+
+      // Re-verify after acquiring row lock that token has not already been consumed
+      const freshUser = await tx.user.findUnique({
+        where: { id: user.id },
+        select: { resetPasswordToken: true, resetPasswordExpiry: true },
+      });
+
+      if (!freshUser || freshUser.resetPasswordToken !== tokenHash || !freshUser.resetPasswordExpiry || freshUser.resetPasswordExpiry <= new Date()) {
+        throw new BadRequestException('Password reset link is invalid or has already been used.');
+      }
+
       return tx.user.update({
         where: { id: user.id },
         data: {

@@ -69,4 +69,15 @@ export class UsersController {
   async resetPassword(@CurrentUser() user: any, @Param('id') id: string) {
     return this.usersService.resetStaffPassword(user.clinicId, id, user);
   }
+
+  @Patch(':id/chair')
+  @Roles('CLINIC_ADMIN', 'RECEPTIONIST')
+  @ApiOperation({ summary: 'Assign or clear default operatory chair for a clinical dentist (Admin or Receptionist)' })
+  async assignChair(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body('assignedChairNumber') assignedChairNumber: number | null,
+  ) {
+    return this.usersService.assignChair(user.clinicId, id, assignedChairNumber, user);
+  }
 }

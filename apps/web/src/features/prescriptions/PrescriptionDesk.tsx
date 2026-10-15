@@ -44,6 +44,15 @@ export const PrescriptionDesk: React.FC<PrescriptionDeskProps> = ({
 
   const [submitting, setSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [idempotencyKey, setIdempotencyKey] = useState<string>('');
+
+  const openCreateModal = () => {
+    const newKey = typeof crypto !== 'undefined' && crypto.randomUUID 
+      ? crypto.randomUUID() 
+      : `idem-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    setIdempotencyKey(newKey);
+    setShowCreateModal(true);
+  };
 
   const fetchPrescriptions = async (silent = false) => {
     try {
@@ -106,10 +115,50 @@ export const PrescriptionDesk: React.FC<PrescriptionDeskProps> = ({
     setItems(items.filter((_, i) => i !== index));
   };
 
+  const checkDrugAllergyConflict = (medName: string, allergies: string[]) => {
+    if (!medName || !allergies || allergies.length === 0) return null;
+    const lower = medName.toLowerCase();
+    for (const a of allergies) {
+      const al = a.toLowerCase();
+      if (al.includes('penicillin') || al.includes('amoxicillin')) {
+        if (lower.includes('amox') || lower.includes('augmentin') || lower.includes('penicillin') || lower.includes('ampicillin') || lower.includes('clav')) {
+          return `Penicillin / Beta-Lactam allergy: "${a}"`;
+        }
+      }
+      if (al.includes('sulfa') || al.includes('sulfonamide')) {
+        if (lower.includes('sulfa') || lower.includes('bactrim') || lower.includes('septra')) {
+          return `Sulfa allergy: "${a}"`;
+        }
+      }
+      if (al.includes('nsaid') || al.includes('aspirin') || al.includes('ibuprofen')) {
+        if (lower.includes('ibuprofen') || lower.includes('aspirin') || lower.includes('diclofenac') || lower.includes('zerodol') || lower.includes('ketorol') || lower.includes('aceclofenac') || lower.includes('naproxen')) {
+          return `NSAID / Analgesic allergy: "${a}"`;
+        }
+      }
+      if (lower.includes(al) || al.includes(lower)) {
+        return `Documented allergy: "${a}"`;
+      }
+    }
+    return null;
+  };
+
   const handleCreatePrescription = async (e: React.FormEvent) => {
     e.preventDefault();
     if (items.length === 0) return;
+
+    // Check allergy contraindications
+    const conflicts = items.map(it => checkDrugAllergyConflict(it.medicineName, patientAllergies)).filter(Boolean);
+    if (conflicts.length > 0) {
+      if (!window.confirm(`⚠️ DRUG ALLERGY WARNING:\n\n${conflicts.join('\n')}\n\nThe patient has documented allergies matching these prescribed medicines. Are you sure you wish to proceed?`)) {
+        return;
+      }
+    }
+
     setSubmitting(true);
+    const activeIdemKey = idempotencyKey || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `idem-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`);
+    if (!idempotencyKey) {
+      setIdempotencyKey(activeIdemKey);
+    }
 
     try {
       const created = await apiRequest<any>('/prescriptions', {
@@ -117,6 +166,7 @@ export const PrescriptionDesk: React.FC<PrescriptionDeskProps> = ({
         body: JSON.stringify({
           patientId,
           consultationId,
+          idempotencyKey: activeIdemKey,
           instructions: instructions.trim() || undefined,
           dietAdvice: dietAdvice.trim() || undefined,
           items: items.map(item => ({
@@ -127,6 +177,7 @@ export const PrescriptionDesk: React.FC<PrescriptionDeskProps> = ({
       });
 
       setShowCreateModal(false);
+      setIdempotencyKey('');
       await fetchPrescriptions();
       triggerClinicSync('prescription_created');
       showToast('Prescription generated successfully!');
@@ -166,7 +217,7 @@ export const PrescriptionDesk: React.FC<PrescriptionDeskProps> = ({
 
         {!readOnly && (
           <button
-            onClick={() => setShowCreateModal(true)}
+            onClick={openCreateModal}
             className="flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-xs py-2 px-4 rounded-xl shadow-xs transition-all cursor-pointer"
           >
             <Plus className="w-4 h-4" />
@@ -290,6 +341,24 @@ export const PrescriptionDesk: React.FC<PrescriptionDeskProps> = ({
               </button>
             </div>
 
+            {/* Documented Allergies Clinical Safety Banner */}
+            {patientAllergies.length > 0 ? (
+              <div className="mb-4 p-3 bg-rose-50 border border-rose-300 rounded-xl text-rose-900 text-xs font-semibold flex items-start gap-2.5">
+                <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="block text-rose-950 font-black">DOCUMENTED DRUG ALLERGIES: {patientAllergies.join(', ')}</strong>
+                  <span className="text-[11px] text-rose-800">
+                    Cross-reference all medications, active salts, and excipients. This automated warning is an assistive clinical advisory and does not substitute for qualified clinical evaluation.
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="mb-4 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-600 text-[11px] flex items-center gap-2">
+                <span className="font-semibold text-slate-700">Allergy Status:</span>
+                <span>No documented drug allergies on record. Always confirm with the patient verbally before prescribing.</span>
+              </div>
+            )}
+
             {/* Template Quick Loader */}
             {templates.length > 0 && (
               <div className="mb-4 p-3 bg-slate-50 rounded-xl border border-slate-200">
@@ -359,6 +428,16 @@ export const PrescriptionDesk: React.FC<PrescriptionDeskProps> = ({
                           }}
                           className="w-full border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white font-bold"
                         />
+                        {(() => {
+                          const conflict = checkDrugAllergyConflict(item.medicineName, patientAllergies);
+                          if (!conflict) return null;
+                          return (
+                            <div className="mt-1 flex items-center gap-1 text-[10px] font-black text-rose-700 bg-rose-50 border border-rose-300 rounded px-1.5 py-0.5 animate-pulse">
+                              <ShieldAlert className="w-3 h-3 text-rose-600 shrink-0" />
+                              <span>⚠️ CONTRAINDICATION: {conflict}</span>
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       <div className="sm:col-span-2">
@@ -489,7 +568,10 @@ export const PrescriptionDesk: React.FC<PrescriptionDeskProps> = ({
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
                 <button
                   type="button"
-                  onClick={() => setShowCreateModal(false)}
+                  onClick={() => {
+                    setShowCreateModal(false);
+                    setIdempotencyKey('');
+                  }}
                   className="px-4 py-2 border border-slate-300 text-slate-600 text-xs font-semibold rounded-xl hover:bg-slate-50 cursor-pointer"
                 >
                   Cancel

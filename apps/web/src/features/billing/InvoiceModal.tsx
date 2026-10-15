@@ -77,7 +77,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
 
   // Helper to extract procedure price from treatment plan or catalogue
   const getPrice = (p: any) => {
-    if (p.feePaise !== undefined && p.feePaise !== null && p.feePaise > 0) {
+    if (p.feePaise !== undefined && p.feePaise !== null) {
       return Math.round(p.feePaise / 100);
     }
     if (p.treatmentPlanItem?.estimatedCostPaise !== undefined && p.treatmentPlanItem?.estimatedCostPaise !== null) {
@@ -88,10 +88,10 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
            c.name.toLowerCase() === (p.procedureName || '').toLowerCase() ||
            (p.procedureName || '').toLowerCase().includes(c.name.toLowerCase())
     );
-    if (match && match.standardFeePaise) {
+    if (match && match.standardFeePaise !== undefined && match.standardFeePaise !== null) {
       return Math.round(match.standardFeePaise / 100);
     }
-    return 500;
+    return 0; // Explicit 0 for unpriced / pending fee procedures (no arbitrary fallback)
   };
 
   // Load unbilled procedures & active treatment plans when patient changes
@@ -200,9 +200,17 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
       setError('Please select a patient');
       return;
     }
-    if (items.length === 0) {
-      setError('Please add at least one line item to the invoice');
+    const validItems = items.filter(i => i.description && i.description.trim());
+    if (validItems.length === 0) {
+      setError('Please add at least one line item with a valid procedure or consultation description');
       return;
+    }
+
+    if (totalRupees <= 0) {
+      const allowZero = window.confirm(
+        'Notice: The net invoice total is ₹0. Confirm only if this visit is genuinely a complimentary or zero-fee consultation.'
+      );
+      if (!allowZero) return;
     }
 
     setSubmitting(true);
@@ -220,6 +228,8 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
             toothNumber: item.toothNumber ? Number(item.toothNumber) : undefined,
             quantity: Number(item.quantity) || 1,
             unitPricePaise: Math.round(Number(item.unitPriceRupees) * 100),
+            isComplimentary: Number(item.unitPriceRupees) === 0,
+            zeroFeeReason: Number(item.unitPriceRupees) === 0 ? 'Complimentary / Pro-Bono Care' : undefined,
           })),
         }),
       });

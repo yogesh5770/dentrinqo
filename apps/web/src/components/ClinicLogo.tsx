@@ -22,7 +22,7 @@ export const useClinicBranding = () => {
   const name: string = source?.name || 'Dental Clinic';
   const code: string = (source?.code || '').toLowerCase();
   const logoCandidates = useMemo(
-    () => [source?.logoUrl, code ? `/brand/${code}.png` : null].filter(Boolean) as string[],
+    () => [source?.logoUrl, code ? `/brand/${code}.webp` : null, code ? `/brand/${code}.png` : null].filter(Boolean) as string[],
     [source?.logoUrl, code],
   );
   const initials = name

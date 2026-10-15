@@ -21,6 +21,16 @@ export class BillingService {
         throw new BadRequestException('At least one billable item is required');
       }
 
+      // Explicit fee states validation:
+      // Verify that unpriced procedures cannot silently be invoiced for ₹0 without conscious approval.
+      for (const item of dto.items) {
+        if (item.unitPricePaise === 0 && !item.isComplimentary && !item.zeroFeeReason) {
+          throw new BadRequestException(
+            `Item "${item.description}" has a zero fee. You must provide an approved fee or explicitly specify zeroFeeReason (e.g. Complimentary / Pro-Bono).`,
+          );
+        }
+      }
+
       const subtotalPaise = dto.items.reduce(
         (sum, item) => sum + (item.unitPricePaise * (item.quantity || 1)),
         0,
@@ -566,15 +576,22 @@ export class BillingService {
         }
 
         const pEntry = patientMap.get(pid);
-        let feePaise = proc.treatmentPlanItem?.estimatedCostPaise || 0;
-        if (!feePaise && proc.procedureCode) {
+        let feePaise = 0;
+        let feeState: 'BILLABLE' | 'FREE_APPROVED' | 'UNPRICED' = 'UNPRICED';
+
+        if (proc.treatmentPlanItem && proc.treatmentPlanItem.estimatedCostPaise !== undefined && proc.treatmentPlanItem.estimatedCostPaise !== null) {
+          feePaise = proc.treatmentPlanItem.estimatedCostPaise;
+          feeState = feePaise > 0 ? 'BILLABLE' : 'FREE_APPROVED';
+        } else if (proc.procedureCode && catalogMap.has(proc.procedureCode.toUpperCase())) {
           feePaise = catalogMap.get(proc.procedureCode.toUpperCase()) || 0;
-        }
-        if (!feePaise && proc.procedureName) {
+          feeState = feePaise > 0 ? 'BILLABLE' : 'FREE_APPROVED';
+        } else if (proc.procedureName && catalogMap.has(proc.procedureName.toLowerCase())) {
           feePaise = catalogMap.get(proc.procedureName.toLowerCase()) || 0;
-        }
-        if (!feePaise) {
-          feePaise = 50000; // default ₹500
+          feeState = feePaise > 0 ? 'BILLABLE' : 'FREE_APPROVED';
+        } else {
+          // Explicitly mark unpriced procedures so reception knows an approved fee must be assigned
+          feePaise = 0;
+          feeState = 'UNPRICED';
         }
 
         pEntry.procedures.push({
@@ -584,6 +601,7 @@ export class BillingService {
           toothNumber: proc.toothNumber,
           performedAt: proc.performedAt,
           feePaise,
+          feeState,
           notes: proc.notes,
         });
         pEntry.totalEstimatedPaise += feePaise;
@@ -599,15 +617,10 @@ export class BillingService {
         }
 
         if (!patientMap.has(pid)) {
-          let feePaise = 0;
-          for (const [key, fee] of catalogMap.entries()) {
-            if (appt.reason && appt.reason.toLowerCase().includes(key)) {
-              feePaise = fee;
-              break;
-            }
-          }
-          if (!feePaise) feePaise = 30000; // ₹300 consultation fee
-
+          // If the patient has no doctor-completed procedures recorded yet:
+          // Do NOT manufacture a phantom ₹300 consultation procedure!
+          // While the patient is IN_CHAIR or CHECKED_IN, the doctor is currently examining
+          // the patient and will write the treatment plan / complete procedures.
           patientMap.set(pid, {
             patientId: pid,
             patientName: appt.patient.fullName,
@@ -617,18 +630,9 @@ export class BillingService {
             status: appt.status,
             appointmentId: appt.id,
             chairNumber: appt.chairNumber,
-            procedures: [
-              {
-                id: null,
-                procedureCode: 'CONSULTATION',
-                procedureName: appt.reason || 'General Dental Consultation',
-                toothNumber: null,
-                performedAt: appt.scheduledStart,
-                feePaise,
-                notes: appt.notes,
-              },
-            ],
-            totalEstimatedPaise: feePaise,
+            reason: appt.reason || 'General Dental Consultation',
+            procedures: [],
+            totalEstimatedPaise: 0,
             source: 'APPOINTMENT',
             latestActivityAt: appt.scheduledStart,
           });

@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString, IsInt, IsOptional, IsArray, ValidateNested, Min } from 'class-validator';
+import { IsNotEmpty, IsString, IsInt, IsOptional, IsArray, ValidateNested, Min, ArrayMinSize } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -60,8 +60,14 @@ export class CreatePrescriptionDto {
   @IsString()
   dietAdvice?: string;
 
+  @ApiPropertyOptional({ example: 'idem_req_9876543210' })
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
+
   @ApiProperty({ type: [PrescriptionItemDto] })
   @IsArray()
+  @ArrayMinSize(1, { message: 'A prescription must contain at least one prescribed medication.' })
   @ValidateNested({ each: true })
   @Type(() => PrescriptionItemDto)
   items: PrescriptionItemDto[];

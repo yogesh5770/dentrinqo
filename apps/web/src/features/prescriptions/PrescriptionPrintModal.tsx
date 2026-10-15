@@ -52,10 +52,10 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
   const handleShareWhatsApp = () => {
     const rawItems = prescription.items || [];
     const meds = rawItems.map((item: any) => ({
-      name: item.medicationName || item.name,
+      name: item.medicineName || item.medicationName || item.name || 'Medicine',
       dosage: item.dosage,
       frequency: item.frequency,
-      duration: item.duration,
+      duration: item.durationDays ? `${item.durationDays} Days` : (item.duration || '5 Days'),
       instructions: item.instructions,
     }));
 
@@ -155,7 +155,7 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
                 Reg No: <strong>{doctor.licenseNumber}</strong>
               </p>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                Dental Council of Tamil Nadu
+                {doctor.stateCouncil || (clinic.state ? `Dental Council of ${clinic.state}` : 'State Dental Council')}
               </p>
             </div>
           </div>
@@ -275,7 +275,7 @@ export const PrescriptionPrintModal: React.FC<PrescriptionPrintModalProps> = ({
 
             <div className="text-center min-w-[200px]">
               <div className="h-14 border-b border-dashed border-slate-400 mb-1 flex items-end justify-center pb-1 text-teal-800 font-serif italic font-bold">
-                Dr. A. K. Saravanan
+                {doctor.fullName}
               </div>
               <p className="font-bold text-slate-900 text-xs">{doctor.fullName}</p>
               <p className="text-[10px] text-slate-500">Authorized Signature & Seal</p>

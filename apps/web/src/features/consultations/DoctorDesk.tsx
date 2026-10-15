@@ -11,6 +11,8 @@ import {
   History,
   FileText,
   ShieldCheck,
+  ShieldAlert,
+  HeartPulse,
   PlusCircle,
   Save,
   Armchair,
@@ -53,6 +55,13 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
   const doctorDisplayName = user?.fullName || 'Attending Doctor';
   const [todayPatients, setTodayPatients] = useState<any[]>([]);
   const [selectedAppt, setSelectedAppt] = useState<any | null>(null);
+  const [patientProfile, setPatientProfile] = useState<any | null>(null);
+  const [editAlertsModalOpen, setEditAlertsModalOpen] = useState(false);
+  const [editAllergies, setEditAllergies] = useState('');
+  const [editConditions, setEditConditions] = useState('');
+  const [editMedications, setEditMedications] = useState('');
+  const [editBloodGroup, setEditBloodGroup] = useState('');
+  const [savingAlerts, setSavingAlerts] = useState(false);
   const [loading, setLoading] = useState(true);
   const [mobileQueueOpen, setMobileQueueOpen] = useState(false);
 
@@ -70,19 +79,26 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
     setQuickSerialInput('');
   };
 
-  // Minimalist Operatory Tabs (4 Clean Modes)
+  // Minimalist Operatory Tabs (4 Clean Modes with 0ms Keep-Alive)
   const [operatoryTab, setOperatoryTab] = useState<
     'treatment' | 'chart' | 'prescriptions' | 'records'
   >('treatment');
   const [showFullPlanManager, setShowFullPlanManager] = useState(false);
   const [showProcedureLogger, setShowProcedureLogger] = useState(false);
+  const [visitedOperatoryTabs, setVisitedOperatoryTabs] = useState<Record<string, boolean>>({
+    treatment: true,
+  });
+
+  const handleOperatoryTabChange = (tab: 'treatment' | 'chart' | 'prescriptions' | 'records') => {
+    setOperatoryTab(tab);
+    setVisitedOperatoryTabs(prev => (prev[tab] ? prev : { ...prev, [tab]: true }));
+  };
 
   useEffect(() => {
     if (defaultTab) {
-      if (defaultTab === 'chart') setOperatoryTab('chart');
-      else if (defaultTab === 'prescriptions') setOperatoryTab('prescriptions');
-      else if (defaultTab === 'imaging' || defaultTab === 'records') setOperatoryTab('records');
-      else setOperatoryTab('treatment');
+      const tab = defaultTab === 'chart' ? 'chart' : defaultTab === 'prescriptions' ? 'prescriptions' : (defaultTab === 'imaging' || defaultTab === 'records') ? 'records' : 'treatment';
+      setOperatoryTab(tab);
+      setVisitedOperatoryTabs(prev => ({ ...prev, [tab]: true }));
     }
   }, [defaultTab]);
 
@@ -275,17 +291,20 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
 
   const selectPatient = async (appt: any) => {
     setSelectedAppt(appt);
+    setVisitedOperatoryTabs({ [operatoryTab]: true });
     setMessage(null);
     setLoading(true);
 
     try {
-      const [consults, plans, unbilled] = await Promise.all([
+      const [consults, plans, unbilled, profile] = await Promise.all([
         apiRequest<any[]>(`/consultations/patient/${appt.patientId}`).catch(() => []),
         apiRequest<any[]>(`/treatment-plans/patient/${appt.patientId}`).catch(() => []),
         apiRequest<any[]>(`/procedures/patient/${appt.patientId}?unbilledOnly=true`).catch(() => []),
+        apiRequest<any>(`/patients/${appt.patientId}`).catch(() => null),
       ]);
       setPatientPlans(plans || []);
       setUnbilledProcedures(unbilled || []);
+      setPatientProfile(profile);
       const matching = consults?.find(c => c.appointmentId === appt.id) || consults?.[0];
 
       if (matching) {
@@ -312,6 +331,7 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
 
   const clearChairScreen = () => {
     setSelectedAppt(null);
+    setPatientProfile(null);
     setConsultationId(null);
     setChiefComplaint('');
     setClinicalExamination('');
@@ -320,6 +340,44 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
     setIsFinalized(false);
     setUnbilledProcedures([]);
     setMessage(null);
+  };
+
+  const handleSaveAlerts = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedAppt) return;
+    setSavingAlerts(true);
+    try {
+      const allergyArr = editAllergies.split(',').map(s => s.trim()).filter(Boolean);
+      const condArr = editConditions.split(',').map(s => s.trim()).filter(Boolean);
+      const medArr = editMedications.split(',').map(s => s.trim()).filter(Boolean);
+      const blood = editBloodGroup.trim() || undefined;
+
+      const updated = await apiRequest<any>(`/patients/${selectedAppt.patientId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          allergies: allergyArr,
+          medicalConditions: condArr,
+          currentMedications: medArr,
+          bloodGroup: blood,
+        }),
+      });
+
+      setPatientProfile(updated);
+      setSelectedAppt((prev: any) => ({
+        ...prev,
+        patientAllergies: allergyArr,
+        patientMedicalConditions: condArr,
+        patientCurrentMedications: medArr,
+        patientBloodGroup: blood,
+      }));
+      setEditAlertsModalOpen(false);
+      setMessage('✅ Patient medical alerts updated successfully.');
+      triggerClinicSync('patient_updated');
+    } catch (err: any) {
+      alert(err?.message || 'Failed to update medical alerts');
+    } finally {
+      setSavingAlerts(false);
+    }
   };
 
   const handleSaveConsultation = async () => {
@@ -1172,6 +1230,79 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
                       <p className="text-xs text-slate-600 font-semibold mt-1">
                         Phone: <a href={`tel:${selectedAppt.patientPhone}`} className="font-mono text-teal-700 hover:underline font-bold">{selectedAppt.patientPhone}</a> • Operatory Chair #{totalChairs === 1 ? 1 : (selectedAppt.chairNumber || 1)} • Time: {new Date(selectedAppt.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </p>
+
+                      {/* Critical Medical Alerts Bar */}
+                      {(() => {
+                        const p = patientProfile || {};
+                        const rawAllergies = p.allergies || selectedAppt.patientAllergies || [];
+                        const allergies = Array.isArray(rawAllergies) ? rawAllergies : (typeof rawAllergies === 'string' && rawAllergies ? [rawAllergies] : []);
+                        
+                        const rawConds = p.medicalConditions || selectedAppt.patientMedicalConditions || [];
+                        const conds = Array.isArray(rawConds) ? rawConds : (typeof rawConds === 'string' && rawConds ? [rawConds] : []);
+                        
+                        const rawMeds = p.currentMedications || selectedAppt.patientCurrentMedications || [];
+                        const meds = Array.isArray(rawMeds) ? rawMeds : (typeof rawMeds === 'string' && rawMeds ? [rawMeds] : []);
+                        
+                        const blood = p.bloodGroup || selectedAppt.patientBloodGroup;
+                        const age = p.age || selectedAppt.patientAge;
+                        const gender = p.gender || selectedAppt.patientGender;
+
+                        return (
+                          <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+                            {/* Demographics Pill */}
+                            {(age || gender || blood) && (
+                              <span className="text-[11px] font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2.5 py-0.5 rounded-md">
+                                {age ? `${age}y` : ''}{gender ? ` • ${gender}` : ''}{blood ? ` • Blood: ${blood}` : ''}
+                              </span>
+                            )}
+
+                            {/* Drug Allergies Alert */}
+                            {allergies.length > 0 ? (
+                              <span className="flex items-center gap-1 text-[11px] font-black text-rose-950 bg-rose-100 border border-rose-300 px-2.5 py-0.5 rounded-md shadow-2xs animate-pulse">
+                                <ShieldAlert className="w-3.5 h-3.5 text-rose-700 shrink-0" />
+                                <span>ALLERGIES: {allergies.join(', ')}</span>
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold text-slate-500 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-md">
+                                No drug allergies recorded
+                              </span>
+                            )}
+
+                            {/* Systemic Medical Conditions */}
+                            {conds.length > 0 && (
+                              <span className="flex items-center gap-1 text-[11px] font-black text-amber-950 bg-amber-100 border border-amber-300 px-2.5 py-0.5 rounded-md shadow-2xs">
+                                <HeartPulse className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                                <span>CONDITIONS: {conds.join(', ')}</span>
+                              </span>
+                            )}
+
+                            {/* Current Medications */}
+                            {meds.length > 0 && (
+                              <span className="flex items-center gap-1 text-[11px] font-bold text-sky-950 bg-sky-100 border border-sky-300 px-2.5 py-0.5 rounded-md">
+                                <Activity className="w-3.5 h-3.5 text-sky-700 shrink-0" />
+                                <span>Meds: {meds.join(', ')}</span>
+                              </span>
+                            )}
+
+                            {/* Chairside Edit Button */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditAllergies(allergies.join(', '));
+                                setEditConditions(conds.join(', '));
+                                setEditMedications(meds.join(', '));
+                                setEditBloodGroup(blood || '');
+                                setEditAlertsModalOpen(true);
+                              }}
+                              className="text-[10px] font-black text-teal-800 hover:text-teal-950 bg-teal-50 hover:bg-teal-100 border border-teal-300 px-2 py-0.5 rounded-md flex items-center gap-1 transition cursor-pointer"
+                              title="Update Patient Medical Alerts & Allergies"
+                            >
+                              <Edit3 className="w-3 h-3 text-teal-700" />
+                              <span>Edit Alerts</span>
+                            </button>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
 
@@ -1347,12 +1478,12 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
                 </div>
               )}
 
-              {/* Operatory Sub-Tabs - 4 Clean, Focused Modes */}
+              {/* Operatory Sub-Tabs - 4 Clean, Focused Modes (0ms Instant Switching) */}
               <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-slate-100 rounded-2xl border border-slate-200 mb-4">
                 <button
                   type="button"
-                  onClick={() => setOperatoryTab('treatment')}
-                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-4 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  onClick={() => handleOperatoryTabChange('treatment')}
+                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-4 rounded-xl text-xs font-black transition-colors cursor-pointer ${
                     operatoryTab === 'treatment'
                       ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
@@ -1364,8 +1495,8 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
 
                 <button
                   type="button"
-                  onClick={() => setOperatoryTab('chart')}
-                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-4 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  onClick={() => handleOperatoryTabChange('chart')}
+                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-4 rounded-xl text-xs font-black transition-colors cursor-pointer ${
                     operatoryTab === 'chart'
                       ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
@@ -1377,8 +1508,8 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
 
                 <button
                   type="button"
-                  onClick={() => setOperatoryTab('prescriptions')}
-                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-4 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  onClick={() => handleOperatoryTabChange('prescriptions')}
+                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-4 rounded-xl text-xs font-black transition-colors cursor-pointer ${
                     operatoryTab === 'prescriptions'
                       ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
@@ -1390,8 +1521,8 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
 
                 <button
                   type="button"
-                  onClick={() => setOperatoryTab('records')}
-                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-4 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  onClick={() => handleOperatoryTabChange('records')}
+                  className={`flex items-center gap-1.5 py-2 px-3 sm:px-4 rounded-xl text-xs font-black transition-colors cursor-pointer ${
                     operatoryTab === 'records'
                       ? 'bg-white text-teal-800 shadow-xs border border-slate-200/80'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 font-bold'
@@ -1403,8 +1534,8 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
               </div>
 
               {/* TAB 1: Treatment & Clinical Notes */}
-              {operatoryTab === 'treatment' && (
-                <div className="space-y-4">
+              {visitedOperatoryTabs.treatment && (
+                <div className={operatoryTab === 'treatment' ? 'space-y-4' : 'hidden'}>
                   {/* Chairside Treatment Plan Items (if any planned items exist) */}
                   {(() => {
                     const uncompletedItems: any[] = [];
@@ -1718,31 +1849,40 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
                 </div>
               )}
 
-              {/* TAB 2: Dental Chart (FDI Odontogram) */}
-              {operatoryTab === 'chart' && (
-                <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs rounded-2xl">
+              {/* TAB 2: Dental Chart (FDI Odontogram - 0ms Keep-Alive) */}
+              {visitedOperatoryTabs.chart && (
+                <div className={`clinic-card p-6 bg-white border border-slate-200 shadow-xs rounded-2xl ${operatoryTab === 'chart' ? 'block' : 'hidden'}`}>
                   <FdiDentalChart
                     patientId={selectedAppt.patientId}
                     consultationId={consultationId || undefined}
                     readOnly={false}
+                    onConditionUpdated={() => {
+                      fetchDoctorQueue(true);
+                    }}
+                    onApplyConditionToDiagnosis={(tooth, cond, surf) => {
+                      const entry = `Tooth #${tooth} (${surf}): ${cond}`;
+                      setDiagnosis(prev => prev ? (prev.includes(entry) ? prev : `${prev}, ${entry}`) : entry);
+                      setMessage(`📋 Added "${entry}" to Consultation Diagnosis.`);
+                    }}
                   />
                 </div>
               )}
 
-              {/* TAB 3: Prescriptions (Rx) */}
-              {operatoryTab === 'prescriptions' && (
-                <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs rounded-2xl">
+              {/* TAB 3: Prescriptions (Rx - 0ms Keep-Alive) */}
+              {visitedOperatoryTabs.prescriptions && (
+                <div className={`clinic-card p-6 bg-white border border-slate-200 shadow-xs rounded-2xl ${operatoryTab === 'prescriptions' ? 'block' : 'hidden'}`}>
                   <PrescriptionDesk
                     patientId={selectedAppt.patientId}
                     consultationId={consultationId || undefined}
+                    patientAllergies={Array.isArray(patientProfile?.allergies || selectedAppt.patientAllergies) ? (patientProfile?.allergies || selectedAppt.patientAllergies) : []}
                     readOnly={false}
                   />
                 </div>
               )}
 
-              {/* TAB 4: X-rays & Documents */}
-              {operatoryTab === 'records' && (
-                <div className="clinic-card p-6 bg-white border border-slate-200 shadow-xs rounded-2xl">
+              {/* TAB 4: X-rays & Documents (0ms Keep-Alive) */}
+              {visitedOperatoryTabs.records && (
+                <div className={`clinic-card p-6 bg-white border border-slate-200 shadow-xs rounded-2xl ${operatoryTab === 'records' ? 'block' : 'hidden'}`}>
                   <MedicalFilesGallery
                     patientId={selectedAppt.patientId}
                     patientName={selectedAppt.patientName}
@@ -2152,6 +2292,115 @@ export const DoctorDesk: React.FC<DoctorDeskProps> = ({ defaultTab = 'treatment'
           fetchDoctorQueue(true);
         }}
       />
+
+      {/* Chairside Edit Medical Alerts Modal */}
+      {editAlertsModalOpen && selectedAppt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
+          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-2xl max-w-lg w-full space-y-4 text-xs">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-rose-100 text-rose-800 rounded-xl">
+                  <ShieldAlert className="w-5 h-5 text-rose-700" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">Patient Medical Alerts</h3>
+                  <p className="text-slate-600 font-semibold">{selectedAppt.patientName} • {selectedAppt.patientUhid}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditAlertsModalOpen(false)}
+                className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-500 hover:text-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveAlerts} className="space-y-3.5">
+              <div>
+                <label className="block font-black text-slate-800 mb-1 flex items-center gap-1">
+                  <span className="text-rose-600 font-black">⚠️</span>
+                  <span>Drug Allergies (comma-separated)</span>
+                </label>
+                <input
+                  type="text"
+                  value={editAllergies}
+                  onChange={e => setEditAllergies(e.target.value)}
+                  placeholder="e.g. Penicillin, Sulfa, Amoxicillin, NSAIDs/Aspirin"
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-slate-900 font-semibold focus:outline-none focus:border-rose-600 focus:bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block font-black text-slate-800 mb-1 flex items-center gap-1">
+                  <HeartPulse className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Systemic Medical Conditions (comma-separated)</span>
+                </label>
+                <input
+                  type="text"
+                  value={editConditions}
+                  onChange={e => setEditConditions(e.target.value)}
+                  placeholder="e.g. Hypertension, Type 2 Diabetes, Bleeding Tendency, Asthma"
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-slate-900 font-semibold focus:outline-none focus:border-amber-600 focus:bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block font-black text-slate-800 mb-1 flex items-center gap-1">
+                  <Activity className="w-3.5 h-3.5 text-sky-600" />
+                  <span>Current Medications (comma-separated)</span>
+                </label>
+                <input
+                  type="text"
+                  value={editMedications}
+                  onChange={e => setEditMedications(e.target.value)}
+                  placeholder="e.g. Aspirin 75mg OD, Metformin 500mg, Amlodipine 5mg"
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-slate-900 font-semibold focus:outline-none focus:border-sky-600 focus:bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block font-black text-slate-800 mb-1">
+                  Blood Group
+                </label>
+                <select
+                  value={editBloodGroup}
+                  onChange={e => setEditBloodGroup(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-slate-900 font-semibold focus:outline-none focus:border-teal-600 focus:bg-white cursor-pointer"
+                >
+                  <option value="">Not Recorded</option>
+                  <option value="A+">A+</option>
+                  <option value="A-">A-</option>
+                  <option value="B+">B+</option>
+                  <option value="B-">B-</option>
+                  <option value="AB+">AB+</option>
+                  <option value="AB-">AB-</option>
+                  <option value="O+">O+</option>
+                  <option value="O-">O-</option>
+                </select>
+              </div>
+
+              <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditAlertsModalOpen(false)}
+                  className="px-4 py-2 font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingAlerts}
+                  className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white font-black rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{savingAlerts ? 'Saving...' : 'Save Medical Alerts'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

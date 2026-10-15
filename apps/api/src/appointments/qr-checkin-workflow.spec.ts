@@ -244,6 +244,68 @@ describe('Dentrinqo Fixed Clinic QR Check-In & Queue Token Architecture', () => 
       expect(res.tokenNumber).toBe(7);
       expect(mockPrisma.dailyQueueSequence.upsert).not.toHaveBeenCalled();
     });
+
+    it('Scenario 7B: Scheduled check-in MUST fail closed if $executeRaw is unavailable', async () => {
+      const scheduledNow = new Date();
+      const initialAppt = {
+        id: 'appt-rowlock-fail-1',
+        clinicId: CLINIC_AKS_ID,
+        status: 'CONFIRMED',
+        tokenNumber: null,
+        scheduledStart: scheduledNow,
+        createdAt: new Date(),
+        patient: { id: 'p1', fullName: 'Radha Mohan', phone: '+919876543210', uhid: 'AKS-2026-0004' },
+        dentist: { fullName: 'Dr. Khalidh' },
+        clinic: clinicAks,
+      };
+
+      mockPrisma.appointment.findMany.mockResolvedValueOnce([initialAppt]);
+
+      const originalExecuteRaw = mockPrisma.$executeRaw;
+      delete (mockPrisma as any).$executeRaw;
+
+      try {
+        await expect(
+          service.publicSelfCheckIn({
+            identifier: '9876543210',
+            clinicCode: 'AKS',
+          }),
+        ).rejects.toThrow('Transaction execution engine does not support raw SQL row-lock acquisition');
+
+        expect(mockPrisma.appointment.update).not.toHaveBeenCalled();
+        expect(mockPrisma.dailyQueueSequence.upsert).not.toHaveBeenCalled();
+      } finally {
+        mockPrisma.$executeRaw = originalExecuteRaw;
+      }
+    });
+
+    it('Scenario 7C: Scheduled check-in row lock SQL failure MUST abort transaction immediately', async () => {
+      const scheduledNow = new Date();
+      const initialAppt = {
+        id: 'appt-rowlock-fail-2',
+        clinicId: CLINIC_AKS_ID,
+        status: 'CONFIRMED',
+        tokenNumber: null,
+        scheduledStart: scheduledNow,
+        createdAt: new Date(),
+        patient: { id: 'p1', fullName: 'Radha Mohan', phone: '+919876543210', uhid: 'AKS-2026-0004' },
+        dentist: { fullName: 'Dr. Khalidh' },
+        clinic: clinicAks,
+      };
+
+      mockPrisma.appointment.findMany.mockResolvedValueOnce([initialAppt]);
+      mockPrisma.$executeRaw.mockRejectedValueOnce(new Error('PostgreSQL Error: row lock acquisition failed or deadlock'));
+
+      await expect(
+        service.publicSelfCheckIn({
+          identifier: '9876543210',
+          clinicCode: 'AKS',
+        }),
+      ).rejects.toThrow('PostgreSQL Error: row lock acquisition failed or deadlock');
+
+      expect(mockPrisma.appointment.update).not.toHaveBeenCalled();
+      expect(mockPrisma.dailyQueueSequence.upsert).not.toHaveBeenCalled();
+    });
   });
 
   describe('5. Early & Late Arrival Rules', () => {
@@ -375,6 +437,87 @@ describe('Dentrinqo Fixed Clinic QR Check-In & Queue Token Architecture', () => 
       expect(res.tokenNumber).toBe(4);
       expect(mockPrisma.appointment.create).not.toHaveBeenCalled();
       expect(mockPrisma.dailyQueueSequence.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.$executeRaw).toHaveBeenCalled();
+    });
+
+    it('Scenario 11B: Should acquire transaction-level PostgreSQL advisory lock on clinic and normalized phone', async () => {
+      mockPrisma.patient.findMany.mockResolvedValueOnce([]);
+      mockPrisma.patient.create.mockResolvedValueOnce({
+        id: 'new-p1',
+        fullName: 'New WalkIn Patient',
+        phone: '+919876543210',
+      });
+      mockPrisma.appointment.create.mockResolvedValueOnce({
+        id: 'new-appt-1',
+        clinicId: CLINIC_AKS_ID,
+        patientId: 'new-p1',
+        status: 'CHECKED_IN',
+        tokenNumber: 5,
+        scheduledStart: new Date(),
+        scheduledEnd: new Date(),
+        durationMinutes: 30,
+        chairNumber: 1,
+        trackingCode: 'track-new-1',
+      });
+      mockPrisma.dailyQueueSequence.upsert.mockResolvedValueOnce({ lastSequence: 5 });
+
+      const res = await service.publicWalkInCheckIn(
+        {
+          patientName: 'New WalkIn Patient',
+          patientPhone: '9876543210',
+          clinicCode: 'AKS',
+        },
+        '127.0.0.1',
+        CLINIC_AKS_ID,
+      );
+
+      expect(res.success).toBe(true);
+      expect(res.tokenNumber).toBe(5);
+      expect(mockPrisma.$executeRaw).toHaveBeenCalled();
+    });
+
+    it('Scenario 11C: Lock acquisition failure MUST abort immediately without creating patient or appointment', async () => {
+      mockPrisma.$executeRaw.mockRejectedValueOnce(new Error('PostgreSQL Error: Lock acquisition timeout or deadlock detected'));
+
+      await expect(
+        service.publicWalkInCheckIn(
+          {
+            patientName: 'Lock Fail Patient',
+            patientPhone: '9876543210',
+            clinicCode: 'AKS',
+          },
+          '127.0.0.1',
+          CLINIC_AKS_ID,
+        ),
+      ).rejects.toThrow('PostgreSQL Error: Lock acquisition timeout or deadlock detected');
+
+      // Verify that appointment was NEVER created and sequence was NEVER incremented
+      expect(mockPrisma.appointment.create).not.toHaveBeenCalled();
+      expect(mockPrisma.dailyQueueSequence.upsert).not.toHaveBeenCalled();
+    });
+
+    it('Scenario 11D: Walk-in check-in MUST fail closed if $executeRaw is unavailable', async () => {
+      const originalExecuteRaw = mockPrisma.$executeRaw;
+      delete (mockPrisma as any).$executeRaw;
+
+      try {
+        await expect(
+          service.publicWalkInCheckIn(
+            {
+              patientName: 'No Engine Patient',
+              patientPhone: '9876543210',
+              clinicCode: 'AKS',
+            },
+            '127.0.0.1',
+            CLINIC_AKS_ID,
+          ),
+        ).rejects.toThrow('Transaction execution engine does not support raw SQL lock acquisition');
+
+        expect(mockPrisma.appointment.create).not.toHaveBeenCalled();
+        expect(mockPrisma.dailyQueueSequence.upsert).not.toHaveBeenCalled();
+      } finally {
+        mockPrisma.$executeRaw = originalExecuteRaw;
+      }
     });
   });
 

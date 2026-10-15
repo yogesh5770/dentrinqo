@@ -330,7 +330,7 @@ export const BillingDesk: React.FC = () => {
       list.push({
         ...appt,
         procedures: [],
-        totalEstimatedPaise: 30000,
+        totalEstimatedPaise: 0,
         source: 'APPOINTMENT',
       });
       patientIdsAdded.add(appt.patientId);
@@ -759,7 +759,13 @@ export const BillingDesk: React.FC = () => {
                                     </span>
                                   ) : null}
                                   <span>{p.procedureName}</span>
-                                  <span className="text-teal-950 font-black">₹{Math.round((p.feePaise || 0) / 100)}</span>
+                                  {p.feeState === 'FREE_APPROVED' ? (
+                                    <span className="text-emerald-700 font-extrabold bg-emerald-100/90 px-1 rounded text-[10px]">Free (₹0 Approved)</span>
+                                  ) : p.feeState === 'UNPRICED' ? (
+                                    <span className="text-amber-800 font-extrabold bg-amber-100/90 px-1 rounded text-[10px]">Fee Pending</span>
+                                  ) : (
+                                    <span className="text-teal-950 font-black">₹{Math.round((p.feePaise || 0) / 100)}</span>
+                                  )}
                                 </span>
                               ))}
                             </div>
@@ -770,8 +776,22 @@ export const BillingDesk: React.FC = () => {
                             )}
                           </div>
                         ) : (
-                          <div className="text-slate-600">
-                            <strong>Reason:</strong> {appt.reason || 'General Consultation'}
+                          <div className="space-y-0.5 text-slate-600">
+                            <div><strong>Reason:</strong> {appt.reason || 'General Consultation'}</div>
+                            {appt.status === 'IN_CHAIR' ? (
+                              <div className="text-[11px] font-semibold text-teal-700 flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse"></span>
+                                <span>In Operatory • Doctor treatment plan in progress</span>
+                              </div>
+                            ) : appt.status === 'CHECKED_IN' ? (
+                              <div className="text-[11px] font-medium text-amber-700">
+                                In lobby • Awaiting doctor consultation
+                              </div>
+                            ) : (
+                              <div className="text-[11px] font-medium text-slate-500">
+                                Consultation only • No procedures recorded
+                              </div>
+                            )}
                           </div>
                         )}
                         <div className="text-slate-500 font-mono text-[11px]">
@@ -783,13 +803,17 @@ export const BillingDesk: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => handleStartBillingForPatient(appt)}
-                          className="flex-1 py-2.5 px-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs transition-colors cursor-pointer shadow-xs flex items-center justify-center gap-1.5"
+                          className={`flex-1 py-2.5 px-3.5 rounded-xl font-black text-xs transition-colors cursor-pointer shadow-xs flex items-center justify-center gap-1.5 ${
+                            appt.totalEstimatedPaise > 0
+                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                              : 'bg-slate-700 hover:bg-slate-800 text-white'
+                          }`}
                         >
                           <Receipt className="w-4 h-4" />
                           <span>
                             {appt.totalEstimatedPaise > 0
                               ? `⚡ Bill & Collect (₹${Math.round(appt.totalEstimatedPaise / 100).toLocaleString('en-IN')})`
-                              : '⚡ Bill & Checkout'}
+                              : 'Create Bill'}
                           </span>
                         </button>
 
@@ -861,7 +885,13 @@ export const BillingDesk: React.FC = () => {
                                         </span>
                                       ) : null}
                                       <span>{p.procedureName}</span>
-                                      <span className="text-teal-950 font-black">₹{Math.round((p.feePaise || 0) / 100)}</span>
+                                      {p.feeState === 'FREE_APPROVED' ? (
+                                        <span className="text-emerald-700 font-extrabold bg-emerald-100/90 px-1 rounded text-[10px]">Free (₹0 Approved)</span>
+                                      ) : p.feeState === 'UNPRICED' ? (
+                                        <span className="text-amber-800 font-extrabold bg-amber-100/90 px-1 rounded text-[10px]">Fee Pending</span>
+                                      ) : (
+                                        <span className="text-teal-950 font-black">₹{Math.round((p.feePaise || 0) / 100)}</span>
+                                      )}
                                     </span>
                                   ))}
                                 </div>
@@ -872,7 +902,23 @@ export const BillingDesk: React.FC = () => {
                                 )}
                               </div>
                             ) : (
-                              <span className="font-medium text-slate-700">{appt.reason || 'General Consultation'}</span>
+                              <div className="space-y-0.5">
+                                <div className="font-semibold text-slate-800 text-xs">{appt.reason || 'General Consultation'}</div>
+                                {appt.status === 'IN_CHAIR' ? (
+                                  <div className="text-[11px] font-semibold text-teal-700 flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse"></span>
+                                    <span>In Operatory • Doctor treatment plan pending</span>
+                                  </div>
+                                ) : appt.status === 'CHECKED_IN' ? (
+                                  <div className="text-[11px] font-medium text-amber-700">
+                                    In lobby • Awaiting doctor consultation
+                                  </div>
+                                ) : (
+                                  <div className="text-[11px] font-medium text-slate-500">
+                                    Consultation only • No procedures recorded
+                                  </div>
+                                )}
+                              </div>
                             )}
                           </td>
 
@@ -902,17 +948,32 @@ export const BillingDesk: React.FC = () => {
 
                           <td className="py-3.5 px-4 text-right">
                             <div className="flex items-center justify-end gap-1.5">
+                              {appt.status === 'IN_CHAIR' && (!appt.procedures || appt.procedures.length === 0) && (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-teal-50 text-teal-800 border border-teal-200 text-[11px] font-bold" title="Patient is actively in operatory chair. Doctor is writing treatment plan.">
+                                  <Armchair className="w-3 h-3 text-teal-600 animate-pulse" />
+                                  <span>In Treatment</span>
+                                </span>
+                              )}
+
                               <button
                                 type="button"
                                 onClick={() => handleStartBillingForPatient(appt)}
-                                className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs transition-colors cursor-pointer shadow-xs flex items-center gap-1.5"
-                                title="Open invoice modal and collect payment"
+                                className={`px-3.5 py-1.5 rounded-xl font-black text-xs transition-colors cursor-pointer shadow-xs flex items-center gap-1.5 ${
+                                  appt.totalEstimatedPaise > 0
+                                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                                    : 'bg-slate-700 hover:bg-slate-800 text-white'
+                                }`}
+                                title={
+                                  appt.status === 'IN_CHAIR' && (!appt.procedures || appt.procedures.length === 0)
+                                    ? "Open invoice draft (Doctor has not recorded procedures yet)"
+                                    : "Open invoice modal and collect payment"
+                                }
                               >
                                 <Receipt className="w-3.5 h-3.5" />
                                 <span>
                                   {appt.totalEstimatedPaise > 0
                                     ? `⚡ Bill & Collect (₹${Math.round(appt.totalEstimatedPaise / 100).toLocaleString('en-IN')})`
-                                    : '⚡ Bill & Checkout'}
+                                    : 'Create Bill'}
                                 </span>
                               </button>
 

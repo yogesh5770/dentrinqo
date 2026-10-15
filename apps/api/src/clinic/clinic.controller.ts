@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Patch, Body, Query, Param, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Body, Query, Param, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { ClinicService } from './clinic.service';
 import { ClinicHoursService } from './clinic-hours.service';
@@ -160,5 +160,45 @@ export class ClinicController {
     @Body() body: { isOnLeave: boolean; leaveReason?: string },
   ) {
     return this.clinicService.toggleLeave(user.clinicId, body.isOnLeave, body.leaveReason, user);
+  }
+
+  @Post('dentist-unavailability')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('CLINIC_ADMIN', 'RECEPTIONIST', 'DENTIST')
+  @ApiOperation({ summary: 'Record dentist holiday, leave, or temporary unavailability with appointment impact alerts' })
+  async createDentistUnavailability(
+    @CurrentUser() user: any,
+    @Body() body: {
+      dentistId: string;
+      startAt: string;
+      endAt: string;
+      reason: string;
+      notes?: string;
+    },
+  ) {
+    return this.clinicHoursService.createDentistUnavailability(user.clinicId, body, user);
+  }
+
+  @Get('dentist-unavailability')
+  @UseGuards(AuthGuard)
+  @ApiOperation({ summary: 'List dentist unavailabilities for the clinic' })
+  async listDentistUnavailability(
+    @CurrentUser() user: any,
+    @Query('dentistId') dentistId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.clinicHoursService.listDentistUnavailabilities(user.clinicId, { dentistId, from, to });
+  }
+
+  @Delete('dentist-unavailability/:id')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('CLINIC_ADMIN', 'RECEPTIONIST')
+  @ApiOperation({ summary: 'Cancel/remove a dentist unavailability window' })
+  async deleteDentistUnavailability(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+  ) {
+    return this.clinicHoursService.deleteDentistUnavailability(user.clinicId, id, user);
   }
 }

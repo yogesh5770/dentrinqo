@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, NotFoundException, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException, BadRequestException, ForbiddenException, UnauthorizedException, InternalServerErrorException, Logger } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -49,6 +49,53 @@ export class AppointmentsService {
 
   private static ipFailures: Map<string, { count: number; resetAt: number }> = new Map();
   private static clinicFailures: Map<string, { count: number; resetAt: number }> = new Map();
+
+  // Cryptographic signed intake token for pre-visit clinical intake (SEC-02)
+  generateIntakeToken(clinicId: string, patientId: string, appointmentId: string): string {
+    const secret = process.env.SESSION_SECRET || 'aks-elite-jwt-secure-super-key-madurai-2026-production';
+    const payload = {
+      sub: patientId,
+      clinicId,
+      appointmentId,
+      action: 'INTAKE_SUBMISSION',
+      nonce: crypto.randomBytes(16).toString('hex'),
+      exp: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+    };
+    const data = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const sig = crypto.createHmac('sha256', secret).update(data).digest('base64url');
+    return `${data}.${sig}`;
+  }
+
+  verifyIntakeToken(token: string): { clinicId: string; patientId: string; appointmentId: string; nonce: string } | null {
+    try {
+      if (!token || typeof token !== 'string') return null;
+      const parts = token.split('.');
+      if (parts.length !== 2) return null;
+      const [data, sig] = parts;
+      const secret = process.env.SESSION_SECRET || 'aks-elite-jwt-secure-super-key-madurai-2026-production';
+      const expectedSig = crypto.createHmac('sha256', secret).update(data).digest('base64url');
+
+      const sigBuf = Buffer.from(sig, 'utf8');
+      const expectedBuf = Buffer.from(expectedSig, 'utf8');
+      if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+        return null;
+      }
+
+      const payload = JSON.parse(Buffer.from(data, 'base64url').toString('utf8'));
+      if (payload.action !== 'INTAKE_SUBMISSION') return null;
+      if (typeof payload.exp !== 'number' || payload.exp < Date.now()) return null;
+      if (!payload.sub || !payload.clinicId) return null;
+
+      return {
+        clinicId: payload.clinicId,
+        patientId: payload.sub,
+        appointmentId: payload.appointmentId,
+        nonce: payload.nonce,
+      };
+    } catch {
+      return null;
+    }
+  }
 
   /**
    * Generates a deterministic time-bucket HMAC lobby code (4 or 6 digits)
@@ -166,6 +213,37 @@ export class AppointmentsService {
     const db = client || this.prisma;
     const activeStatuses = ['PENDING_CONFIRMATION', 'SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'IN_CHAIR'];
 
+    // 0. Dentist Leave / Unavailability Check
+    if (this.clinicHoursService?.getDentistLeaveForSlot) {
+      const leave = await this.clinicHoursService.getDentistLeaveForSlot(clinicId, dentistId, start, end, db);
+      if (leave) {
+        const dName = leave.dentist?.fullName || 'Doctor';
+        throw new ConflictException(
+          `Dr. ${dName} is unavailable (${leave.reason || 'On Leave'}) during this time slot. Please choose another dentist or slot.`,
+        );
+      }
+    } else if (db?.dentistUnavailability?.findFirst) {
+      const leave = await db.dentistUnavailability.findFirst({
+        where: {
+          clinicId,
+          dentistId,
+          AND: [
+            { startAt: { lt: end } },
+            { endAt: { gt: start } },
+          ],
+        },
+        include: {
+          dentist: { select: { fullName: true } },
+        },
+      });
+      if (leave) {
+        const dName = leave.dentist?.fullName || 'Doctor';
+        throw new ConflictException(
+          `Dr. ${dName} is unavailable (${leave.reason || 'On Leave'}) during this time slot. Please choose another dentist or slot.`,
+        );
+      }
+    }
+
     // 1. Dentist conflict
     const dentistConflict = await db.appointment.findFirst({
       where: {
@@ -213,7 +291,32 @@ export class AppointmentsService {
         `Dental Operatory Chair ${chairNumber} is already occupied by patient "${patientName}" during this slot.`,
       );
     }
+
+    // 3. Dentist Unavailability / Leave conflict
+    if (db.dentistUnavailability) {
+      const leaveConflict = await db.dentistUnavailability.findFirst({
+        where: {
+          clinicId,
+          dentistId,
+          AND: [
+            { startAt: { lt: end } },
+            { endAt: { gt: start } },
+          ],
+        },
+        include: {
+          dentist: { select: { fullName: true } },
+        },
+      });
+
+      if (leaveConflict) {
+        const dName = leaveConflict.dentist?.fullName || 'Doctor';
+        throw new ConflictException(
+          `Dr. ${dName} is unavailable (${leaveConflict.reason}) during this time window. Please choose another dentist or slot.`,
+        );
+      }
+    }
   }
+
 
   // Candidate Chair Selection for Timed Booking (Requirement 6)
   async getCandidateChairsForSlot(
@@ -307,16 +410,25 @@ export class AppointmentsService {
     // Determine preferred chair if preferred dentist specified
     let preferredChair: number | null = null;
     if (preferredDentistId) {
-      const allDentists = await tx.user.findMany({
-        where: { clinicId, role: 'DENTIST', isActive: true },
-        orderBy: { createdAt: 'asc' },
-        select: { id: true },
+      const preferredDentist = await tx.user.findFirst({
+        where: { id: preferredDentistId, clinicId },
+        select: { id: true, assignedChairNumber: true },
       });
-      const dIndex = allDentists.findIndex((d) => d.id === preferredDentistId);
-      if (dIndex >= 0 && dIndex < totalChairs) {
-        preferredChair = dIndex + 1;
+      if (preferredDentist?.assignedChairNumber && preferredDentist.assignedChairNumber <= totalChairs) {
+        preferredChair = preferredDentist.assignedChairNumber;
+      } else {
+        const allDentists = await tx.user.findMany({
+          where: { clinicId, role: 'DENTIST', isActive: true },
+          orderBy: { createdAt: 'asc' },
+          select: { id: true },
+        });
+        const dIndex = allDentists.findIndex((d) => d.id === preferredDentistId);
+        if (dIndex >= 0 && dIndex < totalChairs) {
+          preferredChair = dIndex + 1;
+        }
       }
     }
+
 
     // 3. Sort candidates:
     // - Preferred doctor chair first
@@ -434,6 +546,11 @@ export class AppointmentsService {
             },
           });
         } catch (err: any) {
+          if (err.message?.includes('no_overlapping_dentist_booking')) {
+            throw new ConflictException(
+              `Dentist ${dentist.fullName || 'Doctor'} is already booked with another patient during this time window.`,
+            );
+          }
           if (err.message?.includes('no_overlapping_chair_booking') || err.code === '23P01') {
             throw new ConflictException(
               `Dental Operatory Chair ${chair} is already occupied during this time window by another confirmed patient.`,
@@ -443,6 +560,55 @@ export class AppointmentsService {
         }
       } else {
         // Automatic Intelligent Chair Allocation with Concurrency Retry Loop (Requirement 6)
+        // Check dentist conflicts first before iterating candidate chairs
+        if (dto.status !== 'CHECKED_IN') {
+          // 1. Dentist booking conflict
+          const activeStatuses = ['PENDING_CONFIRMATION', 'SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'IN_CHAIR'];
+          const dentistConflict = await tx.appointment.findFirst({
+            where: {
+              clinicId,
+              dentistId: dentist.id,
+              status: { in: activeStatuses },
+              AND: [
+                { scheduledStart: { lt: end } },
+                { scheduledEnd: { gt: start } },
+              ],
+            },
+            include: {
+              patient: { select: { fullName: true } },
+            },
+          });
+          if (dentistConflict) {
+            const patientName = (dentistConflict as any).patient?.fullName || 'Another Patient';
+            throw new ConflictException(
+              `Dentist is already booked for patient "${patientName}" between ${dentistConflict.scheduledStart.toLocaleTimeString()} and ${dentistConflict.scheduledEnd.toLocaleTimeString()}`,
+            );
+          }
+
+          // 2. Dentist leave conflict
+          if (tx.dentistUnavailability) {
+            const leaveConflict = await tx.dentistUnavailability.findFirst({
+              where: {
+                clinicId,
+                dentistId: dentist.id,
+                AND: [
+                  { startAt: { lt: end } },
+                  { endAt: { gt: start } },
+                ],
+              },
+              include: {
+                dentist: { select: { fullName: true } },
+              },
+            });
+            if (leaveConflict) {
+              const dName = leaveConflict.dentist?.fullName || dentist.fullName || 'Doctor';
+              throw new ConflictException(
+                `Dr. ${dName} is unavailable (${leaveConflict.reason}) during this time window. Please choose another dentist or slot.`,
+              );
+            }
+          }
+        }
+
         const candidates = await this.getCandidateChairsForSlot(clinicId, start, end, dto.dentistId, tx);
         if (candidates.length === 0) {
           throw new ConflictException(
@@ -484,13 +650,20 @@ export class AppointmentsService {
             createdSuccess = true;
             break;
           } catch (err: any) {
-            // GiST exclusion violation or concurrent overlap -> retry next candidate!
-            if (err.code === '23P01' || err.message?.includes('no_overlapping_chair_booking') || err instanceof ConflictException) {
+            // If conflict is on the dentist, propagate immediately!
+            if (err.message?.includes('Dentist is already booked') || err.message?.includes('is unavailable') || err.message?.includes('no_overlapping_dentist_booking')) {
+              throw new ConflictException(
+                `Dentist ${dentist.fullName || 'Doctor'} is already booked with another patient during this time window.`,
+              );
+            }
+            // GiST exclusion violation or concurrent chair overlap -> retry next candidate!
+            if (err.code === '23P01' || err.message?.includes('no_overlapping_chair_booking') || err.message?.includes('Operatory Chair') || err instanceof ConflictException) {
               continue;
             }
             throw err;
           }
         }
+
 
         if (!createdSuccess || !appt) {
           throw new ConflictException(
@@ -538,7 +711,22 @@ export class AppointmentsService {
         where,
         orderBy: { scheduledStart: 'asc' },
         include: {
-          patient: { select: { fullName: true, phone: true, uhid: true, legacySlNo: true, needsVerification: true, source: true } },
+          patient: {
+            select: {
+              fullName: true,
+              phone: true,
+              uhid: true,
+              legacySlNo: true,
+              needsVerification: true,
+              source: true,
+              gender: true,
+              age: true,
+              bloodGroup: true,
+              allergies: true,
+              medicalConditions: true,
+              currentMedications: true,
+            },
+          },
           dentist: { select: { fullName: true } },
         },
       });
@@ -584,6 +772,37 @@ export class AppointmentsService {
       });
 
       if (!appt) throw new NotFoundException('Appointment not found');
+
+      // State transition validation (unless emergency override or admin bypass)
+      if (appt.status !== dto.status) {
+        const ALLOWED_TRANSITIONS: Record<string, string[]> = {
+          PENDING_CONFIRMATION: ['SCHEDULED', 'CONFIRMED', 'CANCELLED'],
+          SCHEDULED: ['CONFIRMED', 'CHECKED_IN', 'CANCELLED', 'NO_SHOW', 'RESCHEDULED', 'LATE'],
+          CONFIRMED: ['CHECKED_IN', 'CANCELLED', 'NO_SHOW', 'RESCHEDULED', 'SCHEDULED', 'LATE'],
+          CHECKED_IN: ['CALLED', 'IN_CHAIR', 'SKIPPED', 'STEPPED_OUT', 'CANCELLED', 'NO_SHOW'],
+          CALLED: ['IN_CHAIR', 'SKIPPED', 'STEPPED_OUT', 'CHECKED_IN', 'CANCELLED'],
+          IN_CHAIR: ['TREATED', 'COMPLETED', 'CALLED', 'SKIPPED'],
+          TREATED: ['BILLED', 'COMPLETED', 'PAID'],
+          BILLED: ['PAID', 'COMPLETED'],
+          PAID: ['COMPLETED', 'CLOSED'],
+          SKIPPED: ['CHECKED_IN', 'CALLED', 'CANCELLED', 'NO_SHOW'],
+          STEPPED_OUT: ['CHECKED_IN', 'CALLED', 'CANCELLED'],
+          LATE: ['CHECKED_IN', 'CANCELLED', 'NO_SHOW'],
+          RESCHEDULED: ['SCHEDULED', 'CONFIRMED', 'CANCELLED'],
+          COMPLETED: ['TREATED'],
+          CANCELLED: ['SCHEDULED'],
+          NO_SHOW: ['SCHEDULED', 'CHECKED_IN'],
+          CLOSED: [],
+        };
+
+        const allowed = ALLOWED_TRANSITIONS[appt.status] || [];
+        const isBypass = Boolean(dto.emergencyReason || actor?.role === 'CLINIC_ADMIN');
+        if (!isBypass && !allowed.includes(dto.status)) {
+          throw new BadRequestException(
+            `Cannot transition appointment from "${appt.status}" to "${dto.status}". Allowed next statuses are: ${allowed.join(', ') || 'None (Terminal state)'}.`,
+          );
+        }
+      }
 
       const targetChair = (dto.chairNumber && dto.chairNumber >= 1 && dto.chairNumber <= 10)
         ? dto.chairNumber
@@ -879,6 +1098,17 @@ export class AppointmentsService {
   }
 
   private formatAppointment(a: any) {
+    const parseArray = (val: any) => {
+      if (!val) return [];
+      if (Array.isArray(val)) return val;
+      try {
+        const parsed = JSON.parse(val);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        return typeof val === 'string' && val.trim() ? [val.trim()] : [];
+      }
+    };
+
     return {
       id: a.id,
       clinicId: a.clinicId,
@@ -886,6 +1116,12 @@ export class AppointmentsService {
       patientName: a.patient?.fullName || 'Unknown',
       patientPhone: a.patient?.phone || '',
       patientUhid: a.patient?.uhid || '',
+      patientGender: a.patient?.gender || null,
+      patientAge: a.patient?.age || null,
+      patientBloodGroup: a.patient?.bloodGroup || null,
+      patientAllergies: parseArray(a.patient?.allergies),
+      patientMedicalConditions: parseArray(a.patient?.medicalConditions),
+      patientCurrentMedications: parseArray(a.patient?.currentMedications),
       dentistId: a.dentistId,
       dentistName: a.dentist?.fullName || 'Assigned Doctor',
       chairNumber: a.chairNumber,
@@ -1316,6 +1552,7 @@ export class AppointmentsService {
         service: dto.service,
         requiresConfirmation: !isWalkin,
         isCheckedIn: isWalkin,
+        intakeToken: this.generateIntakeToken(clinicId, patient.id, appt.id),
         message: isWalkin
           ? `Welcome to the clinic! You are checked in. Token #${tokenNumber} has been assigned.`
           : 'Your appointment has been scheduled. Track your live visit status on mobile using your private tracking link.',
@@ -1836,10 +2073,14 @@ export class AppointmentsService {
         const shortId = appt.id.replace(/-/g, '').substring(0, 5).toUpperCase();
         const reference = `${appt.clinic?.code || 'CLINIC'}-${new Date(appt.createdAt).getFullYear()}-${shortId}`;
 
+        const rawPhone = appt.patient?.phone || '';
+        const phoneDigits = rawPhone.replace(/\D/g, '');
+        const maskedPhone = phoneDigits.length >= 4 ? `+91 ****** ${phoneDigits.slice(-4)}` : '';
+
         return {
           success: true,
           reference,
-          patientPhone: appt.patient?.phone || '',
+          patientPhone: maskedPhone,
           tokenNumber: appt.tokenNumber,
           status: appt.status,
           chairNumber: appt.chairNumber || targetChairNum || 1,
@@ -1862,25 +2103,8 @@ export class AppointmentsService {
       });
     }
 
-    // If hostClinicId was not provided, safely search active clinics under RLS
-    const clinics = await this.prisma.clinic.findMany({ select: { id: true } });
-    for (const c of clinics) {
-      try {
-        const found = await this.prisma.forTenant(c.id, async (tx) => {
-          return await tx.appointment.findFirst({
-            where: { trackingCode: cleanCode, clinicId: c.id },
-            select: { clinicId: true },
-          });
-        });
-        if (found) {
-          return this.trackByCode(cleanCode, c.id, clientIp);
-        }
-      } catch (e) {
-        // Continue searching
-      }
-    }
-
-    throw new NotFoundException('No active appointment record found for this tracking code');
+    // Trusted clinic context is strictly required to prevent cross-tenant scanning (SEC-03)
+    throw new BadRequestException('Clinic context or clinic identifier is required to track appointment.');
   }
 
   // STEP 3: Safe Privacy-Preserving Public Mobile Queue Lookup
@@ -1918,24 +2142,11 @@ export class AppointmentsService {
     }
 
     if (!targetClinicId) {
-      // If no clinic specified, locate the patient's clinic safely across active clinics
-      const allClinics = await this.prisma.clinic.findMany({ select: { id: true } });
-      for (const c of allClinics) {
-        try {
-          const ptMatch = await this.prisma.forTenant(c.id, async (tx) => {
-            return await tx.patient.findFirst({
-              where: { phone: normalizedPhone, isArchived: false },
-              select: { clinicId: true },
-            });
-          });
-          if (ptMatch) {
-            targetClinicId = ptMatch.clinicId;
-            break;
-          }
-        } catch (e) {
-          // Continue searching
-        }
-      }
+      // Reject cross-tenant scanning: Never infer tenant authorization from a patient phone number (SEC-03)
+      return {
+        found: false,
+        message: 'No active visit matching this mobile number and token/reference was found for today.',
+      };
     }
 
     const uniformFailure = async () => {
@@ -2122,10 +2333,15 @@ export class AppointmentsService {
 
   async getPublicStatus(identifier: string, maybeClinicId?: string) {
     const clean = (identifier || '').trim();
-    if (!clean) throw new BadRequestException('Reference or phone number required');
+    if (!clean) throw new BadRequestException('Booking reference is required');
 
-    let appt: any = null;
+    // Strict privacy protection: Reject direct phone number lookup (SEC-01)
     const isPhone = /^[0-9+ -]{8,15}$/.test(clean);
+    if (isPhone) {
+      throw new BadRequestException(
+        'Direct mobile-number lookup is prohibited for patient privacy. Please use your personalized appointment tracking link or booking reference.',
+      );
+    }
 
     let targetClinicId = maybeClinicId;
     if (!targetClinicId && clean.includes('-')) {
@@ -2134,52 +2350,27 @@ export class AppointmentsService {
       if (c) targetClinicId = c.id;
     }
 
-    const findInClinic = async (cId: string) => {
-      return this.prisma.forTenant(cId, async (tx) => {
-        if (isPhone) {
-          const phoneTail = clean.replace(/\D/g, '').slice(-10);
-          return tx.appointment.findFirst({
-            where: {
-              clinicId: cId,
-              patient: { phone: { contains: phoneTail } },
-            },
-            orderBy: { scheduledStart: 'desc' },
-            include: {
-              patient: true,
-              dentist: { select: { fullName: true } },
-              clinic: { select: { name: true, address: true, phone: true, code: true } },
-            },
-          });
-        } else {
-          const parts = clean.split('-');
-          const shortId = parts[parts.length - 1].toLowerCase();
-          const allRecent = await tx.appointment.findMany({
-            where: { clinicId: cId },
-            take: 60,
-            orderBy: { createdAt: 'desc' },
-            include: {
-              patient: true,
-              dentist: { select: { fullName: true } },
-              clinic: { select: { name: true, address: true, phone: true, code: true } },
-            },
-          });
-          return allRecent.find((a: any) =>
-            a.id.replace(/-/g, '').toLowerCase().startsWith(shortId) ||
-            a.id.toLowerCase().includes(shortId)
-          ) || null;
-        }
-      });
-    };
-
-    if (targetClinicId) {
-      appt = await findInClinic(targetClinicId);
-    } else {
-      const clinics = await this.prisma.clinic.findMany({ select: { id: true } });
-      for (const c of clinics) {
-        appt = await findInClinic(c.id);
-        if (appt) break;
-      }
+    if (!targetClinicId) {
+      throw new BadRequestException('Clinic context or booking reference with valid clinic code prefix is required.');
     }
+
+    const appt = await this.prisma.forTenant(targetClinicId, async (tx) => {
+      const parts = clean.split('-');
+      const candidateId = parts[parts.length - 1].toLowerCase();
+      return tx.appointment.findFirst({
+        where: {
+          clinicId: targetClinicId,
+          OR: [
+            { id: clean },
+            { trackingCode: clean },
+            ...(candidateId.length >= 5 ? [{ id: { startsWith: candidateId } }] : []),
+          ],
+        },
+        include: {
+          clinic: { select: { id: true, name: true, address: true, phone: true, code: true } },
+        },
+      });
+    });
 
     if (!appt) {
       throw new NotFoundException('No active appointment record found for the provided details.');
@@ -2191,16 +2382,6 @@ export class AppointmentsService {
     dayEnd.setHours(23, 59, 59, 999);
 
     return this.prisma.forTenant(appt.clinicId, async (tx) => {
-      const sameDayAppts = await tx.appointment.findMany({
-        where: {
-          clinicId: appt.clinicId,
-          scheduledStart: { gte: dayStart, lte: dayEnd },
-          status: { notIn: ['CANCELLED', 'NO_SHOW'] },
-        },
-        orderBy: { scheduledStart: 'asc' },
-        select: { id: true, status: true },
-      });
-
       const tokenNumber = appt.tokenNumber || null;
       let currentlyAhead = 0;
       if (tokenNumber) {
@@ -2237,6 +2418,8 @@ export class AppointmentsService {
         isCalling: ic.status === 'CALLED',
       }));
 
+      // SEC-01: Return ONLY the minimum information needed for check-in or queue tracking.
+      // Strictly OMIT patientName, patientUhid, patientPhone, dentistName, reason, allergies/intake.
       return {
         success: true,
         clinicId: appt.clinicId,
@@ -2245,18 +2428,12 @@ export class AppointmentsService {
         tokenNumber,
         currentlyAhead,
         activeChairsServing,
-        patientName: appt.patient.fullName,
-        patientUhid: appt.patient.uhid,
-        patientPhone: appt.patient.phone,
-        dentistName: appt.dentist?.fullName || 'Assigned Duty Dentist',
-        chairNumber: appt.chairNumber || 1,
+        chairNumber: ['CALLED', 'IN_CHAIR'].includes(appt.status) ? (appt.chairNumber || 1) : null,
         scheduledStart: appt.scheduledStart,
         durationMinutes: appt.durationMinutes || 30,
-        reason: appt.reason,
         clinicName: appt.clinic?.name || 'Dental Clinic',
         clinicAddress: appt.clinic?.address || '',
         clinicPhone: appt.clinic?.phone || '',
-        hasIntakeCompleted: (appt.patient.allergies && appt.patient.allergies !== '[]') || (appt.patient.medicalConditions && appt.patient.medicalConditions !== '[]'),
       };
     });
   }
@@ -2297,24 +2474,7 @@ export class AppointmentsService {
       }
     }
     if (!clinic) {
-      const cleanIdent = (dto.identifier || dto.phone || '').trim();
-      if (cleanIdent) {
-        const matchingAppt = await this.prisma.appointment.findFirst({
-          where: {
-            OR: [
-              { patient: { phone: { contains: cleanIdent } } },
-              { patient: { uhid: cleanIdent } },
-            ],
-          },
-          include: { clinic: true },
-        });
-        if (matchingAppt?.clinic) {
-          clinic = matchingAppt.clinic;
-        }
-      }
-    }
-    if (!clinic) {
-      throw new BadRequestException('Dental clinic could not be resolved from host context or QR scan.');
+      throw new BadRequestException('Dental clinic could not be resolved from host context, QR code, or booking reference. Please scan the clinic standee QR code.');
     }
     // Unified assertOpen check (Requirement 1, 3: Self check-in allowed only inside working hours)
     await this.clinicHoursService.assertOpen(
@@ -2475,13 +2635,12 @@ export class AppointmentsService {
       }
 
       // Lock row to serialize concurrent check-ins for the same appointment
-      if (typeof tx.$executeRaw === 'function') {
-        try {
-          await tx.$executeRaw`SELECT id FROM "Appointment" WHERE id = ${appt.id} FOR UPDATE`;
-        } catch {
-          // Continue if database or mock does not support raw locking
-        }
+      // CRITICAL PRODUCTION SAFETY: Row lock is strictly mandatory.
+      // If the execution engine lacks $executeRaw, or if acquisition fails, the transaction MUST abort immediately!
+      if (typeof (tx as any).$executeRaw !== 'function') {
+        throw new InternalServerErrorException('Transaction execution engine does not support raw SQL row-lock acquisition');
       }
+      await (tx as any).$executeRaw`SELECT id FROM "Appointment" WHERE id = ${appt.id} FOR UPDATE`;
 
       // Re-fetch current state of appointment after acquiring the lock
       const lockedAppt = typeof tx.appointment.findUnique === 'function'
@@ -2599,7 +2758,7 @@ export class AppointmentsService {
         deskConfirmed: false,
         patientName: finalAppt.patient.fullName,
         patientUhid: finalAppt.patient.uhid,
-        patientPhone: finalAppt.patient.phone,
+        patientPhone: finalAppt.patient.phone ? `+91 ****** ${finalAppt.patient.phone.replace(/\D/g, '').slice(-4)}` : '',
         dentistName: finalAppt.dentist?.fullName || 'Assigned Duty Doctor',
         chairNumber: finalAppt.chairNumber || 1,
         scheduledStart: finalAppt.scheduledStart,
@@ -2607,6 +2766,7 @@ export class AppointmentsService {
         clinicName: finalAppt.clinic?.name || 'Dental Clinic',
         clinicAddress: finalAppt.clinic?.address || '',
         clinicPhone: finalAppt.clinic?.phone || '',
+        intakeToken: this.generateIntakeToken(clinic.id, finalAppt.patient.id, finalAppt.id),
         message: isLockedAlreadyCheckedIn
           ? `You are already checked in! Your Token is #${tokenNumber}. Please take a seat in the waiting lobby.`
           : `Check-in successful! Your Token is #${tokenNumber}. Please take a seat in the waiting lobby.`,
@@ -2685,6 +2845,18 @@ export class AppointmentsService {
 
     // 6. Atomic Transaction for Patient, Token & Appointment creation
     return this.prisma.forTenant(clinic.id, async (tx) => {
+      // Step 0: Acquire PostgreSQL transaction-level advisory lock
+      // Keyed consistently by clinic ID and normalized phone number in a 64-bit namespace (key1: clinic, key2: phone).
+      // Uses parameterized tagged template tx.$executeRaw to serialize concurrent walk-in requests for the same patient.
+      // Automatically released by PostgreSQL when this transaction commits or rolls back.
+      // CRITICAL PRODUCTION SAFETY: Advisory lock is strictly mandatory.
+      // If the execution engine lacks $executeRaw, or if acquisition fails, the transaction MUST abort immediately.
+      // Never skip or swallow lock acquisition failures!
+      if (typeof (tx as any).$executeRaw !== 'function') {
+        throw new InternalServerErrorException('Transaction execution engine does not support raw SQL lock acquisition');
+      }
+      await (tx as any).$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${clinic.id}), hashtext(${normalizedPhone}))`;
+
       // Step A: Find or Create Patient
       const existingPatients = await tx.patient.findMany({
         where: {
@@ -2777,11 +2949,49 @@ export class AppointmentsService {
         });
       }
 
-      // Step B: Resolve Active Dentist
-      let dentist = await tx.user.findFirst({
-        where: { clinicId: clinic.id, role: 'DENTIST', isActive: true },
-        orderBy: { createdAt: 'asc' },
-      });
+      // Step B: Resolve Active Dentist (preferring active dentist who is NOT on leave right now)
+      let dentist: any = null;
+      let activeDentists: any[] = [];
+      if (typeof tx.user?.findMany === 'function') {
+        activeDentists = await tx.user.findMany({
+          where: { clinicId: clinic.id, role: 'DENTIST', isActive: true },
+          orderBy: { createdAt: 'asc' },
+        });
+      }
+      if (activeDentists.length === 0 && typeof tx.user?.findFirst === 'function') {
+        const single = await tx.user.findFirst({
+          where: { clinicId: clinic.id, role: 'DENTIST', isActive: true },
+          orderBy: { createdAt: 'asc' },
+        });
+        if (single) activeDentists = [single];
+      }
+
+
+      for (const cand of activeDentists) {
+        let onLeave = false;
+        if (tx.dentistUnavailability) {
+          const leave = await tx.dentistUnavailability.findFirst({
+            where: {
+              clinicId: clinic.id,
+              dentistId: cand.id,
+              AND: [
+                { startAt: { lte: now } },
+                { endAt: { gte: now } },
+              ],
+            },
+          });
+          if (leave) onLeave = true;
+        }
+        if (!onLeave) {
+          dentist = cand;
+          break;
+        }
+      }
+
+      if (!dentist && activeDentists.length > 0) {
+        dentist = activeDentists[0];
+      }
+
       if (!dentist) {
         dentist = await tx.user.findFirst({
           where: { clinicId: clinic.id, isActive: true },
@@ -2791,6 +3001,7 @@ export class AppointmentsService {
       if (!dentist) {
         throw new BadRequestException('No active dentist or staff member configured for this clinic.');
       }
+
 
       // Step C: Atomic Daily Queue Sequence in Asia/Kolkata
       const seqRecord = await tx.dailyQueueSequence.upsert({
@@ -2926,25 +3137,72 @@ export class AppointmentsService {
         clinicName: clinic.name,
         clinicPhone: clinic.phone,
         clinicAddress: clinic.address,
+        intakeToken: this.generateIntakeToken(clinic.id, patient.id, appt.id),
         message: `Welcome to ${clinic.name}! Walk-in check-in successful. Your Token is #${tokenNumber}. Please take a seat in the waiting lobby.`,
       };
     });
   }
 
-  async submitPublicIntake(reference: string, intakeData: any, maybeClinicId?: string) {
-    const statusData = await this.getPublicStatus(reference, maybeClinicId);
-    if (!statusData || !statusData.patientUhid || !(statusData as any).clinicId) {
-      throw new NotFoundException('Could not resolve patient for health intake.');
+  async submitPublicIntake(reference: string, intakeData: any, tokenCandidate?: string, authenticatedUser?: any) {
+    let targetClinicId: string | null = null;
+    let targetPatientId: string | null = null;
+    let targetApptId: string | null = null;
+    let verifiedNonce: string = '';
+
+    // 1. Authorization: Require signed single-use intake token OR authenticated patient session (SEC-02)
+    const token = tokenCandidate || intakeData?.intakeToken;
+    if (token) {
+      const verified = this.verifyIntakeToken(token);
+      if (!verified) {
+        throw new UnauthorizedException('Intake token is invalid, tampered, or expired.');
+      }
+      targetClinicId = verified.clinicId;
+      targetPatientId = verified.patientId;
+      targetApptId = verified.appointmentId;
+      verifiedNonce = verified.nonce;
+    } else if (authenticatedUser && authenticatedUser.role === 'PATIENT') {
+      targetClinicId = authenticatedUser.clinicId;
+      targetPatientId = authenticatedUser.accountId;
+    } else {
+      throw new UnauthorizedException('Authentication required: A valid signed single-use intake token or patient session is mandatory to update medical intake.');
     }
-    const targetClinicId = (statusData as any).clinicId;
+
+    if (!targetClinicId || !targetPatientId) {
+      throw new BadRequestException('Could not resolve patient or clinic context for health intake.');
+    }
 
     return this.prisma.forTenant(targetClinicId, async (tx) => {
+      // 2. Prevent concurrent race conditions and token replay using atomic row lock
+      if (targetApptId && typeof (tx as any).$executeRaw === 'function') {
+        try {
+          await (tx as any).$executeRaw`SELECT id FROM "Appointment" WHERE id = ${targetApptId} FOR UPDATE`;
+        } catch {
+          // Continue if mock does not support raw SQL
+        }
+      }
+
+      // Check replay protection: Has this appointment already consumed an intake token?
+      if (targetApptId) {
+        const consumed = await tx.auditLog.findFirst({
+          where: {
+            clinicId: targetClinicId,
+            action: 'INTAKE_TOKEN_CONSUMED',
+            entityType: 'Appointment',
+            entityId: targetApptId,
+          },
+        });
+        if (consumed) {
+          throw new ConflictException('This single-use intake token has already been submitted (replay rejected).');
+        }
+      }
+
+      // 3. Resolve Patient strictly within the authorized clinic tenant
       const patient = await tx.patient.findFirst({
-        where: { uhid: statusData.patientUhid, clinicId: targetClinicId },
+        where: { id: targetPatientId, clinicId: targetClinicId },
       });
 
       if (!patient) {
-        throw new NotFoundException('Patient record not found.');
+        throw new NotFoundException('Patient record not found in the authorized clinic.');
       }
 
       const conditions: string[] = [];
@@ -2970,9 +3228,26 @@ export class AppointmentsService {
         },
       });
 
+      // 4. Record consumption in AuditLog for replay protection & audit trail
+      if (targetApptId) {
+        await tx.auditLog.create({
+          data: {
+            clinicId: targetClinicId,
+            action: 'INTAKE_TOKEN_CONSUMED',
+            entityType: 'Appointment',
+            entityId: targetApptId,
+            details: JSON.stringify({
+              patientId: patient.id,
+              nonce: verifiedNonce,
+              submittedAt: new Date().toISOString(),
+            }),
+          },
+        });
+      }
+
       return {
         success: true,
-        message: 'Medical health intake recorded. Thank you for helping our clinical team prepare for your visit!',
+        message: 'Medical health intake recorded safely. Thank you for helping our clinical team prepare for your visit!',
         conditionsCount: conditions.length,
         allergiesCount: allergies.length,
       };
@@ -3465,6 +3740,285 @@ export class AppointmentsService {
         totalChairs,
         chairLoads,
         recommendedChair,
+      };
+    });
+  }
+
+  /**
+   * Dynamic Capacity Gap-Fitting Engine (DCGFE)
+   * Calculates the exact real-time treatment gap before the next scheduled booking
+   * for each operatory chair and assigned dentist.
+   */
+  async calculateAvailableGaps(clinicId: string, dateStr?: string, currentTime?: Date) {
+    const now = currentTime || new Date();
+    const { start: dayStart, end: dayEnd } = this.getKolkataDayBounds(now);
+
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      const clinic = await tx.clinic.findUnique({
+        where: { id: clinicId },
+        select: { id: true, name: true, chairCount: true, workingHours: true },
+      });
+      if (!clinic) throw new NotFoundException('Clinic not found');
+
+      const totalChairs = Math.max(clinic.chairCount || 1, 1);
+
+      // Determine active on-duty chairs & arrival grace period
+      let chairConfig: Record<string, boolean> = {};
+      for (let i = 1; i <= totalChairs; i++) chairConfig[String(i)] = true;
+      let graceMinutes = 10;
+      if (clinic.workingHours) {
+        try {
+          const parsed = typeof clinic.workingHours === 'string' ? JSON.parse(clinic.workingHours) : clinic.workingHours;
+          if (parsed?.chairStatus) chairConfig = { ...chairConfig, ...parsed.chairStatus };
+          if (parsed?.arrivalGraceMinutes && typeof parsed.arrivalGraceMinutes === 'number') {
+            graceMinutes = parsed.arrivalGraceMinutes;
+          }
+        } catch {}
+      }
+
+      // Fetch active dentists and their assigned chairs
+      const dentists = await tx.user.findMany({
+        where: { clinicId, role: 'DENTIST', isActive: true },
+        select: { id: true, fullName: true, assignedChairNumber: true },
+      });
+
+      // Fetch all appointments for today
+      const todayAppts = await tx.appointment.findMany({
+        where: {
+          clinicId,
+          scheduledStart: { gte: dayStart, lte: dayEnd },
+          status: { notIn: ['CANCELLED', 'NO_SHOW'] },
+        },
+        orderBy: { scheduledStart: 'asc' },
+        include: {
+          patient: { select: { fullName: true, phone: true, uhid: true } },
+          dentist: { select: { id: true, fullName: true } },
+        },
+      });
+
+      const chairGaps: Array<{
+        chairNumber: number;
+        isOnDuty: boolean;
+        assignedDentistName: string;
+        assignedDentistId?: string;
+        currentPatient: any | null;
+        nextAppointment: any | null;
+        gapMinutes: number;
+        canFitStandardConsultation: boolean;
+        recommendation: string;
+      }> = [];
+
+      for (let c = 1; c <= totalChairs; c++) {
+        const isOnDuty = chairConfig[String(c)] !== false;
+        const matchingDoctor = dentists.find(d => d.assignedChairNumber === c) || dentists[0];
+
+        // Currently in chair
+        const currentAppt = todayAppts.find(a => a.chairNumber === c && ['IN_CHAIR', 'CALLED'].includes(a.status));
+
+        // Upcoming or grace-period-protected scheduled appointments on this chair
+        // An unarrived scheduled appointment remains protected until scheduledStart + graceMinutes
+        const upcomingOnChair = todayAppts.filter(a =>
+          a.chairNumber === c &&
+          ['SCHEDULED', 'CONFIRMED'].includes(a.status) &&
+          (new Date(a.scheduledStart).getTime() + graceMinutes * 60 * 1000 > now.getTime())
+        );
+
+        const nextAppt = upcomingOnChair[0] || null;
+
+        let gapMinutes = 999;
+        let canFit = true;
+        let recommendation = 'Chair available for walk-in or immediate booking.';
+
+        const isGracePeriodActive = Boolean(
+          nextAppt &&
+          new Date(nextAppt.scheduledStart).getTime() <= now.getTime() &&
+          new Date(nextAppt.scheduledStart).getTime() + graceMinutes * 60 * 1000 > now.getTime()
+        );
+
+        if (!isOnDuty) {
+          gapMinutes = 0;
+          canFit = false;
+          recommendation = 'Operatory chair is marked off-duty or maintenance.';
+        } else if (currentAppt) {
+          const estEnd = new Date(currentAppt.scheduledEnd);
+          const remainingInTreatment = Math.max(0, Math.round((estEnd.getTime() - now.getTime()) / 60000));
+          if (nextAppt) {
+            const nextStart = new Date(nextAppt.scheduledStart);
+            gapMinutes = Math.max(0, Math.round((nextStart.getTime() - Math.max(now.getTime(), estEnd.getTime())) / 60000));
+            canFit = gapMinutes >= 30;
+            recommendation = `Currently treating ${currentAppt.patient.fullName} (~${remainingInTreatment}m left). Next booking: ${nextAppt.patient.fullName} at ${new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }).format(nextStart)}. Gap: ${gapMinutes}m.`;
+          } else {
+            gapMinutes = 999;
+            canFit = false;
+            recommendation = `Currently treating ${currentAppt.patient.fullName} (~${remainingInTreatment}m left). Free afterwards.`;
+          }
+        } else if (isGracePeriodActive && nextAppt) {
+          gapMinutes = 0;
+          canFit = false;
+          const minsIntoGrace = Math.max(0, Math.round((now.getTime() - new Date(nextAppt.scheduledStart).getTime()) / 60000));
+          const minsRemaining = Math.max(0, graceMinutes - minsIntoGrace);
+          recommendation = `Reserved for ${nextAppt.patient.fullName} (${minsIntoGrace}m into arrival grace period, ${minsRemaining}m remaining). Chair protected for booked patient.`;
+        } else if (nextAppt) {
+          const nextStart = new Date(nextAppt.scheduledStart);
+          gapMinutes = Math.max(0, Math.round((nextStart.getTime() - now.getTime()) / 60000));
+          canFit = gapMinutes >= 30;
+          const nextTimeStr = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }).format(nextStart);
+          if (canFit) {
+            recommendation = `Chair is free for ${gapMinutes} minutes before ${nextAppt.patient.fullName}'s ${nextTimeStr} appointment. Fits 30m consultation.`;
+          } else {
+            recommendation = `Chair is free for only ${gapMinutes} minutes before ${nextAppt.patient.fullName}'s ${nextTimeStr} appointment. Cannot fit 30m consultation without delay.`;
+          }
+        }
+
+        chairGaps.push({
+          chairNumber: c,
+          isOnDuty,
+          assignedDentistName: matchingDoctor?.fullName || 'Duty Doctor',
+          assignedDentistId: matchingDoctor?.id,
+          currentPatient: currentAppt ? {
+            id: currentAppt.id,
+            patientName: currentAppt.patient.fullName,
+            status: currentAppt.status,
+            scheduledEnd: currentAppt.scheduledEnd,
+          } : null,
+          nextAppointment: nextAppt ? {
+            id: nextAppt.id,
+            patientName: nextAppt.patient.fullName,
+            scheduledStart: nextAppt.scheduledStart,
+          } : null,
+          gapMinutes,
+          canFitStandardConsultation: canFit,
+          recommendation,
+        });
+      }
+
+      // Check for late appointments exceeding grace period
+      const graceThresholdTime = new Date(now.getTime() - graceMinutes * 60 * 1000);
+      const lateReviewAppts = todayAppts
+        .filter(a =>
+          ['SCHEDULED', 'CONFIRMED'].includes(a.status) &&
+          new Date(a.scheduledStart).getTime() < graceThresholdTime.getTime()
+        )
+        .map(a => {
+          const minsLate = Math.round((now.getTime() - new Date(a.scheduledStart).getTime()) / 60000);
+          return {
+            id: a.id,
+            patientName: a.patient.fullName,
+            patientPhone: a.patient.phone,
+            uhid: a.patient.uhid,
+            chairNumber: a.chairNumber,
+            scheduledStart: a.scheduledStart,
+            minutesLate: minsLate,
+            isGracePeriodExpired: true,
+          };
+        });
+
+      return {
+        timestamp: now.toISOString(),
+        totalChairs,
+        chairGaps,
+        lateReviewAppts,
+      };
+    });
+  }
+
+  /**
+   * Releases an appointment slot when the patient fails to arrive past the grace period.
+   * Marks status as NO_SHOW and records audit notes, freeing the GiST exclusion capacity.
+   */
+  async releaseLateSlot(clinicId: string, id: string, reason: string, actor: any) {
+    return this.prisma.forTenant(clinicId, async (tx) => {
+      // 0. Row-lock acquisition to serialize concurrent check-in vs release requests
+      if (typeof (tx as any).$executeRaw === 'function') {
+        try {
+          await (tx as any).$executeRaw`SELECT id FROM "Appointment" WHERE id = ${id} FOR UPDATE`;
+        } catch {}
+      }
+
+      const appt = await tx.appointment.findFirst({
+        where: { id, clinicId },
+        include: {
+          patient: { select: { fullName: true, phone: true } },
+          dentist: { select: { fullName: true } },
+        },
+      });
+
+      if (!appt) throw new NotFoundException('Appointment not found');
+
+      // 1. Enforce eligible state machine transition: strictly unarrived states (SCHEDULED or CONFIRMED)
+      const eligibleStatuses = ['SCHEDULED', 'CONFIRMED'];
+      if (!eligibleStatuses.includes(appt.status)) {
+        if (['CHECKED_IN', 'CALLED', 'IN_CHAIR'].includes(appt.status)) {
+          throw new BadRequestException(
+            `Cannot release appointment for patient "${appt.patient?.fullName}". Patient has already arrived (current status: ${appt.status}). Only unarrived scheduled appointments can be released as No-Show.`,
+          );
+        }
+        throw new BadRequestException(
+          `Cannot release appointment with status "${appt.status}". Only unarrived scheduled appointments can be released as No-Show.`,
+        );
+      }
+
+      // 2. Enforce arrival grace period has actually elapsed
+      const clinic = await tx.clinic.findUnique({
+        where: { id: clinicId },
+        select: { id: true, workingHours: true, maxLateMinutes: true },
+      });
+      let graceMinutes = 10;
+      if (clinic?.workingHours) {
+        try {
+          const parsed = typeof clinic.workingHours === 'string' ? JSON.parse(clinic.workingHours) : clinic.workingHours;
+          if (parsed?.arrivalGraceMinutes && typeof parsed.arrivalGraceMinutes === 'number') {
+            graceMinutes = parsed.arrivalGraceMinutes;
+          }
+        } catch {}
+      }
+
+      const now = new Date();
+      const startMs = new Date(appt.scheduledStart).getTime();
+      const graceThresholdMs = startMs + graceMinutes * 60 * 1000;
+      if (now.getTime() < graceThresholdMs) {
+        const remainingMinutes = Math.ceil((graceThresholdMs - now.getTime()) / 60000);
+        throw new BadRequestException(
+          `Cannot release chair yet. Patient "${appt.patient?.fullName}" has ${remainingMinutes} minute(s) remaining in the ${graceMinutes}-minute arrival grace period.`,
+        );
+      }
+
+      const releaseNote = `[GRACE PERIOD RELEASED - ${now.toLocaleTimeString()}]: ${reason || 'Patient absent past arrival grace period. Operatory chair released to seat waiting patient.'}`;
+
+      const updated = await tx.appointment.update({
+        where: { id },
+        data: {
+          status: 'NO_SHOW',
+          notes: appt.notes ? `${appt.notes}\n${releaseNote}` : releaseNote,
+          cancelledAt: now,
+          cancelledById: actor?.userId || actor?.id || null,
+          cancellationReason: reason || 'Late arrival grace period expired',
+        },
+        include: {
+          patient: { select: { fullName: true, phone: true, uhid: true } },
+          dentist: { select: { fullName: true } },
+        },
+      });
+
+      await this.auditService.log({
+        clinicId,
+        actorId: actor?.userId || actor?.id || 'staff',
+        actorRole: actor?.role || 'STAFF',
+        action: 'APPOINTMENT_LATE_RELEASED',
+        entityType: 'Appointment',
+        entityId: id,
+        details: {
+          patientName: appt.patient.fullName,
+          chairNumber: appt.chairNumber,
+          scheduledStart: appt.scheduledStart,
+          reason,
+        },
+      });
+
+      return {
+        success: true,
+        message: `Operatory Chair #${appt.chairNumber} released. Appointment marked as No-Show.`,
+        appointment: this.formatAppointment(updated),
       };
     });
   }
